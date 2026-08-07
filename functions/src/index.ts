@@ -1,4 +1,5 @@
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions/v2";
 import { FieldValue } from "firebase-admin/firestore";
 import {
@@ -16,6 +17,7 @@ import {
   nomeSegredoCertificado,
 } from "./lib/secrets";
 import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
+import { sincronizarEmpresa } from "./sefaz/sincronizacao";
 
 const opcoes = { region: REGIAO };
 
@@ -230,6 +232,84 @@ export const nfeTestarConexao = onCall(
       const msg = (e as Error).message || String(e);
       logger.error("nfeTestarConexao falhou", { companyId, ambiente, erro: msg });
       return { ok: false, ambiente, erro: msg };
+    }
+  },
+);
+
+/**
+ * ETAPA 3 — Milestone 2: sincronização real (baixa/guarda/parseia as NF-e).
+ * Faz o loop distNSU até esgotar, salva XML cru no Storage e metadados no
+ * Firestore, persistindo o NSU (retomável). Só admin/fiscal.
+ */
+export const nfeSincronizarAgora = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
+  async (req) => {
+    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const companyId = String(req.data?.companyId ?? "").trim();
+    if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
+
+    const snap = await db.collection("nfe_companies").doc(companyId).get();
+    if (!snap.exists) throw new HttpsError("not-found", "Empresa não encontrada.");
+    const emp = snap.data() as { cnpj: string; uf: string; ambiente?: string };
+
+    let cred: { pfxBase64: string; senha: string };
+    try {
+      cred = await lerSegredoCertificado(cnpjBase(emp.cnpj));
+    } catch {
+      throw new HttpsError("failed-precondition", "Certificado não instalado para esta empresa.");
+    }
+
+    try {
+      const { key, cert } = pfxParaPem(cred.pfxBase64, cred.senha);
+      const r = await sincronizarEmpresa(
+        { id: companyId, cnpj: emp.cnpj, uf: emp.uf, ambiente: emp.ambiente },
+        key,
+        cert,
+      );
+      await auditar(uid, "sefaz.sincronizar", {
+        companyId, novos: r.novos, ultNSU: r.ultNSU, maxNSU: r.maxNSU,
+      });
+      return { ok: true, ...r };
+    } catch (e) {
+      const msg = (e as Error).message || String(e);
+      logger.error("nfeSincronizarAgora falhou", { companyId, erro: msg });
+      return { ok: false, erro: msg };
+    }
+  },
+);
+
+/**
+ * Sincronização automática (sem navegador). A cada 6h, percorre as empresas
+ * ativas com certificado, respeitando o recuo do 656 (proximaSync).
+ */
+export const nfeSyncAgendado = onSchedule(
+  {
+    schedule: "every 6 hours",
+    timeZone: "America/Sao_Paulo",
+    region: REGIAO,
+    memory: "512MiB",
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const empresas = await db.collection("nfe_companies").where("ativo", "==", true).get();
+    for (const doc of empresas.docs) {
+      const emp = doc.data() as { cnpj: string; uf: string; ambiente?: string; temCertificado?: boolean };
+      if (!emp.temCertificado) continue;
+      const st = (await db.collection("nfe_sync_state").doc(doc.id).get()).data() as
+        | { proximaSync?: string | null }
+        | undefined;
+      if (st?.proximaSync && new Date(st.proximaSync).getTime() > Date.now()) continue;
+      try {
+        const cred = await lerSegredoCertificado(cnpjBase(emp.cnpj));
+        const { key, cert } = pfxParaPem(cred.pfxBase64, cred.senha);
+        await sincronizarEmpresa(
+          { id: doc.id, cnpj: emp.cnpj, uf: emp.uf, ambiente: emp.ambiente },
+          key,
+          cert,
+        );
+      } catch (e) {
+        logger.error("nfeSyncAgendado: empresa falhou", { companyId: doc.id, erro: (e as Error).message });
+      }
     }
   },
 );

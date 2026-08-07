@@ -5,6 +5,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   orderBy,
   query,
 } from "firebase/firestore";
@@ -89,6 +90,49 @@ export async function testarConexao(companyId: string): Promise<ResultadoConexao
   const fn = httpsCallable(functions, "nfeTestarConexao");
   const res = await fn({ companyId });
   return res.data as ResultadoConexao;
+}
+
+export interface ResultadoSync {
+  ok: boolean;
+  novos?: number;
+  iteracoes?: number;
+  cStat?: string | null;
+  xMotivo?: string | null;
+  ultNSU?: string;
+  maxNSU?: string;
+  bloqueado?: boolean;
+  erro?: string;
+}
+
+/** Dispara a sincronização real (baixa/guarda/parseia as NF-e) de uma empresa. */
+export async function sincronizarAgora(companyId: string): Promise<ResultadoSync> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeSincronizarAgora");
+  const res = await fn({ companyId });
+  return res.data as ResultadoSync;
+}
+
+export interface NfeDocumento {
+  id: string;
+  chNFe?: string | null;
+  cnpjEmit?: string | null;
+  xNomeEmit?: string | null;
+  vNF?: number | null;
+  dhEmi?: string | null;
+  nNF?: string | null;
+  serie?: string | null;
+  situacao?: string | null;
+  schema?: string;
+  temXmlCompleto?: boolean;
+  nsu?: string;
+}
+
+/** Lista as NF-e (documentos) mais recentes. */
+export async function listarDocumentos(max = 50): Promise<NfeDocumento[]> {
+  const { db } = fb();
+  const q = query(collection(db, "nfe_documents"), orderBy("dhEmi", "desc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as NfeDocumento[];
 }
 
 /** Lê um arquivo File como base64 puro (sem o prefixo data:). */

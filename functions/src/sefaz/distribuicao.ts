@@ -1,3 +1,4 @@
+import * as zlib from "node:zlib";
 import { UF_IBGE, urlDistribuicao } from "./endpoints";
 import { postSoap } from "./soap";
 
@@ -11,6 +12,12 @@ function tag(xml: string, nome: string): string | null {
   return m ? m[1] : null;
 }
 
+export interface DocZip {
+  nsu: string;
+  schema: string;
+  xml: string; // já descompactado (gzip+base64 → XML)
+}
+
 export interface ResultadoDistribuicao {
   httpStatus: number;
   cStat: string | null;
@@ -18,8 +25,29 @@ export interface ResultadoDistribuicao {
   ultNSU: string | null;
   maxNSU: string | null;
   verAplic: string | null;
+  docs: DocZip[];
   /** Trecho do XML de resposta (para diagnóstico; sem dados sensíveis do cert). */
   raw: string;
+}
+
+/** Extrai e descompacta cada <docZip> (gzip + base64) do lote de retorno. */
+function extrairDocs(xml: string): DocZip[] {
+  const out: DocZip[] = [];
+  const re = /<docZip\b([^>]*)>([\s\S]*?)<\/docZip>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const attrs = m[1];
+    const nsu = (attrs.match(/NSU="(\d+)"/) || [])[1] || "";
+    const schema = (attrs.match(/schema="([^"]*)"/) || [])[1] || "";
+    try {
+      const buf = Buffer.from(m[2].trim(), "base64");
+      const doc = zlib.gunzipSync(buf).toString("utf8");
+      out.push({ nsu, schema, xml: doc });
+    } catch {
+      // docZip malformado — ignora, o NSU segue registrado no avanço.
+    }
+  }
+  return out;
 }
 
 /**
@@ -70,6 +98,7 @@ export async function consultarDistribuicaoNSU(params: {
     ultNSU: tag(resp.body, "ultNSU"),
     maxNSU: tag(resp.body, "maxNSU"),
     verAplic: tag(resp.body, "verAplic"),
+    docs: extrairDocs(resp.body),
     raw: resp.body.slice(0, 1500),
   };
 }

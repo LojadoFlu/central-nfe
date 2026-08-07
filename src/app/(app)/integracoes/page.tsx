@@ -6,15 +6,22 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { listarEmpresas, testarConexao, type ResultadoConexao } from "@/lib/nfe/repo";
+import {
+  listarEmpresas,
+  testarConexao,
+  sincronizarAgora,
+  type ResultadoConexao,
+  type ResultadoSync,
+} from "@/lib/nfe/repo";
 import { formatCNPJ } from "@/lib/utils";
 import type { Company } from "@/lib/nfe/types";
-import { Plug, RefreshCw } from "lucide-react";
+import { Plug, RefreshCw, DownloadCloud } from "lucide-react";
 
 export default function IntegracoesPage() {
   const [empresas, setEmpresas] = useState<Company[] | null>(null);
-  const [testando, setTestando] = useState<string | null>(null);
-  const [resultados, setResultados] = useState<Record<string, ResultadoConexao>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [conexao, setConexao] = useState<Record<string, ResultadoConexao>>({});
+  const [sync, setSync] = useState<Record<string, ResultadoSync>>({});
 
   const carregar = useCallback(async () => {
     try {
@@ -29,23 +36,32 @@ export default function IntegracoesPage() {
   }, [carregar]);
 
   async function testar(id: string) {
-    setTestando(id);
+    setBusy(id + ":test");
     try {
       const r = await testarConexao(id);
-      setResultados((m) => ({ ...m, [id]: r }));
+      setConexao((m) => ({ ...m, [id]: r }));
     } catch (e) {
-      setResultados((m) => ({ ...m, [id]: { ok: false, erro: (e as Error).message } }));
+      setConexao((m) => ({ ...m, [id]: { ok: false, erro: (e as Error).message } }));
     } finally {
-      setTestando(null);
+      setBusy(null);
+    }
+  }
+
+  async function sincronizar(id: string) {
+    setBusy(id + ":sync");
+    try {
+      const r = await sincronizarAgora(id);
+      setSync((m) => ({ ...m, [id]: r }));
+    } catch (e) {
+      setSync((m) => ({ ...m, [id]: { ok: false, erro: (e as Error).message } }));
+    } finally {
+      setBusy(null);
     }
   }
 
   return (
     <div>
-      <PageHeader
-        title="Integrações"
-        description="NF-e / SEFAZ — teste de conexão (NFeDistribuicaoDFe)."
-      />
+      <PageHeader title="Integrações" description="NF-e / SEFAZ — conexão e sincronização." />
 
       {empresas === null ? (
         <Skeleton className="h-24" />
@@ -56,55 +72,83 @@ export default function IntegracoesPage() {
           </div>
           <p className="font-semibold">Nenhuma empresa cadastrada</p>
           <p className="max-w-sm text-sm text-muted-foreground">
-            Cadastre uma empresa e instale o certificado para testar a conexão com a SEFAZ.
+            Cadastre uma empresa e instale o certificado para conectar à SEFAZ.
           </p>
         </Card>
       ) : (
         <div className="space-y-3">
           {empresas.map((emp) => {
-            const r = resultados[emp.id];
+            const c = conexao[emp.id];
+            const s = sync[emp.id];
+            const semCert = !emp.temCertificado;
             return (
               <Card key={emp.id}>
                 <CardContent className="py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">{emp.razaoSocial}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {formatCNPJ(emp.cnpj)} · {emp.uf} ·{" "}
-                        {emp.ambiente === "producao" ? "Produção" : "Homologação"}
-                      </p>
-                    </div>
+                  <p className="truncate font-medium">{emp.razaoSocial}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {formatCNPJ(emp.cnpj)} · {emp.uf} ·{" "}
+                    {emp.ambiente === "producao" ? "Produção" : "Homologação"}
+                  </p>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={testando === emp.id || !emp.temCertificado}
+                      disabled={busy !== null || semCert}
                       onClick={() => testar(emp.id)}
-                      title={emp.temCertificado ? "" : "Instale o certificado primeiro"}
+                      title={semCert ? "Instale o certificado primeiro" : ""}
                     >
-                      <RefreshCw className={testando === emp.id ? "size-4 animate-spin" : "size-4"} />
-                      {testando === emp.id ? "Testando…" : "Testar conexão"}
+                      <RefreshCw className={busy === emp.id + ":test" ? "size-4 animate-spin" : "size-4"} />
+                      {busy === emp.id + ":test" ? "Testando…" : "Testar conexão"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={busy !== null || semCert}
+                      onClick={() => sincronizar(emp.id)}
+                      title={semCert ? "Instale o certificado primeiro" : ""}
+                    >
+                      <DownloadCloud className={busy === emp.id + ":sync" ? "size-4 animate-spin" : "size-4"} />
+                      {busy === emp.id + ":sync" ? "Sincronizando…" : "Sincronizar agora"}
                     </Button>
                   </div>
 
-                  {r ? (
+                  {c ? (
                     <div className="mt-3 rounded-md border border-border bg-muted/40 p-3 text-sm">
-                      {r.ok ? (
+                      {c.ok ? (
+                        <>
+                          <Badge variant={c.cStat === "137" || c.cStat === "138" ? "success" : "warning"}>
+                            Conexão · cStat {c.cStat ?? "—"}
+                          </Badge>
+                          <span className="ml-2 text-muted-foreground">{c.xMotivo ?? ""}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Badge variant="destructive">Falha na conexão</Badge>
+                          <p className="mt-1 break-words text-xs text-destructive">{c.erro}</p>
+                        </>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {s ? (
+                    <div className="mt-2 rounded-md border border-border bg-muted/40 p-3 text-sm">
+                      {s.ok ? (
                         <div className="space-y-1">
                           <div className="flex items-center gap-2">
-                            <Badge variant={r.cStat === "137" || r.cStat === "138" ? "success" : "warning"}>
-                              cStat {r.cStat ?? "—"}
+                            <Badge variant={s.bloqueado ? "warning" : "success"}>
+                              {s.bloqueado ? "Recuo (656)" : `${s.novos ?? 0} novos`}
                             </Badge>
-                            <span className="text-muted-foreground">{r.xMotivo ?? ""}</span>
+                            <span className="text-muted-foreground">{s.xMotivo ?? ""}</span>
                           </div>
                           <p className="tnum text-xs text-muted-foreground">
-                            ultNSU {r.ultNSU ?? "—"} · maxNSU {r.maxNSU ?? "—"} · HTTP {r.httpStatus ?? "—"}
+                            ultNSU {s.ultNSU ?? "—"} · maxNSU {s.maxNSU ?? "—"} · {s.iteracoes ?? 0} lote(s)
                           </p>
                         </div>
                       ) : (
-                        <div className="space-y-1">
-                          <Badge variant="destructive">Falha</Badge>
-                          <p className="break-words text-xs text-destructive">{r.erro}</p>
-                        </div>
+                        <>
+                          <Badge variant="destructive">Falha na sincronização</Badge>
+                          <p className="mt-1 break-words text-xs text-destructive">{s.erro}</p>
+                        </>
                       )}
                     </div>
                   ) : null}
@@ -116,9 +160,9 @@ export default function IntegracoesPage() {
       )}
 
       <p className="mt-4 text-xs text-muted-foreground">
-        Este teste faz uma única consulta <code>distDFeInt</code> (ultNSU=0) para validar
-        certificado + rede + SOAP. Em homologação, o retorno esperado é
-        <strong> cStat 137</strong> (nenhum documento) — o que já confirma a conexão.
+        <strong>Testar</strong> faz uma consulta única (ultNSU=0, sem gravar).{" "}
+        <strong>Sincronizar</strong> percorre os NSU, baixa e guarda os XMLs. Em homologação
+        o retorno é sempre "nenhum documento" (cStat 137) — dados reais só em produção.
       </p>
     </div>
   );
