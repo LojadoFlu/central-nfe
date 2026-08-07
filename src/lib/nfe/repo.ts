@@ -10,6 +10,7 @@ import {
   query,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
+import { getBytes, getDownloadURL, ref as storageRef } from "firebase/storage";
 import { getFirebase } from "@/lib/firebase/client";
 import type { Company, CertificateMeta } from "./types";
 
@@ -114,6 +115,7 @@ export async function sincronizarAgora(companyId: string): Promise<ResultadoSync
 
 export interface NfeDocumento {
   id: string;
+  companyId?: string;
   chNFe?: string | null;
   cnpjEmit?: string | null;
   xNomeEmit?: string | null;
@@ -125,6 +127,8 @@ export interface NfeDocumento {
   schema?: string;
   temXmlCompleto?: boolean;
   nsu?: string;
+  storagePath?: string;
+  hashSha256?: string;
 }
 
 /** Lista as NF-e (documentos) mais recentes. */
@@ -133,6 +137,26 @@ export async function listarDocumentos(max = 50): Promise<NfeDocumento[]> {
   const q = query(collection(db, "nfe_documents"), orderBy("dhEmi", "desc"), limit(max));
   const snap = await getDocs(q);
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as NfeDocumento[];
+}
+
+/** Obtém um documento (NF-e) pelo id. */
+export async function obterDocumento(id: string): Promise<NfeDocumento | null> {
+  const { db } = fb();
+  const d = await getDoc(doc(db, "nfe_documents", id));
+  return d.exists() ? ({ id: d.id, ...(d.data() as object) } as NfeDocumento) : null;
+}
+
+/** Lê o XML original (do Storage) como texto. */
+export async function baixarXmlTexto(storagePath: string): Promise<string> {
+  const { storage } = fb();
+  const bytes = await getBytes(storageRef(storage, storagePath));
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+/** URL de download do XML original (do Storage). */
+export async function urlDownloadXml(storagePath: string): Promise<string> {
+  const { storage } = fb();
+  return getDownloadURL(storageRef(storage, storagePath));
 }
 
 /** Lê um arquivo File como base64 puro (sem o prefixo data:). */

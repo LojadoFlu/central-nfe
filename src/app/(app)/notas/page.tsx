@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -50,7 +51,8 @@ export default function NotasPage() {
       ) : (
         <div className="space-y-3">
           {docs.map((d) => (
-            <Card key={d.id}>
+            <Card key={d.id} className="transition-colors hover:bg-accent/50">
+              <Link href={`/notas/${encodeURIComponent(d.id)}`} className="block">
               <CardContent className="py-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -73,6 +75,7 @@ export default function NotasPage() {
                   <p className="mt-2 break-all font-mono text-[10px] text-muted-foreground">{d.chNFe}</p>
                 ) : null}
               </CardContent>
+              </Link>
             </Card>
           ))}
         </div>
