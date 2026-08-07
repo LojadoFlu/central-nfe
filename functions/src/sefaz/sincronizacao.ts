@@ -32,7 +32,22 @@ export async function sincronizarEmpresa(
   const cnpj = somenteDigitos(emp.cnpj);
   const ambiente = emp.ambiente === "producao" ? "producao" : "homologacao";
   const stateRef = db.collection("nfe_sync_state").doc(companyId);
-  const st = (await stateRef.get()).data() as { ultNSU?: string; maxNSU?: string } | undefined;
+  const st = (await stateRef.get()).data() as
+    | { ultNSU?: string; maxNSU?: string; proximaSync?: string | null; ultimoCStat?: string }
+    | undefined;
+
+  // Trava de consumo indevido: se ainda estamos em recuo (656), não consulta.
+  if (st?.proximaSync && new Date(st.proximaSync).getTime() > Date.now()) {
+    return {
+      novos: 0,
+      iteracoes: 0,
+      cStat: st.ultimoCStat ?? "656",
+      xMotivo: `Em recuo até ${new Date(st.proximaSync).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}. Aguarde antes de nova consulta (regra da SEFAZ).`,
+      ultNSU: st.ultNSU || "0",
+      maxNSU: st.maxNSU || "0",
+      bloqueado: true,
+    };
+  }
 
   let ultNSU = st?.ultNSU || "0";
   let maxNSU = st?.maxNSU || "0";
