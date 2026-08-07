@@ -49,6 +49,15 @@ export function formatarDataHora(iso: string | undefined | null): string {
   });
 }
 
+/** Normaliza texto para busca (sem acento/caixa). */
+export function normalizar(s: string | undefined | null): string {
+  return (s || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
 /** Dias restantes até uma data (negativo = atrasado). */
 export function diasAte(iso: string | undefined | null): number | null {
   if (!iso) return null;
