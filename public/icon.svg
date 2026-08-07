@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0b3d2e"/>
+  <g fill="none" stroke="#ffffff" stroke-width="20" stroke-linejoin="round" stroke-linecap="round" opacity="0.28">
+    <path d="M150 96 h150 l66 66 v254 a12 12 0 0 1 -12 12 H150 a12 12 0 0 1 -12 -12 V108 a12 12 0 0 1 12 -12 Z"/>
+    <path d="M300 96 v66 h66"/>
+  </g>
+  <text x="256" y="300" fill="#ffffff" font-family="Helvetica, Arial, sans-serif" font-size="150" font-weight="700" text-anchor="middle">NF</text>
+  <text x="256" y="392" fill="#5ec89a" font-family="Helvetica, Arial, sans-serif" font-size="86" font-weight="700" text-anchor="middle">e</text>
+</svg>

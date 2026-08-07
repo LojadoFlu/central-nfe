@@ -1,0 +1,185 @@
+import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { logger } from "firebase-functions/v2";
+import { FieldValue } from "firebase-admin/firestore";
+import {
+  REGIAO,
+  db,
+  exigirRole,
+  somenteDigitos,
+  cnpjBase,
+  agoraISO,
+} from "./lib/base";
+import { lerMetadadosPfx } from "./lib/certificado";
+import { gravarSegredoCertificado, nomeSegredoCertificado } from "./lib/secrets";
+
+const opcoes = { region: REGIAO };
+
+/**
+ * Cria/atualiza uma empresa (CNPJ) do grupo. Só admin.
+ */
+export const nfeSalvarEmpresa = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin"]);
+  const d = req.data ?? {};
+
+  const cnpj = somenteDigitos(String(d.cnpj ?? ""));
+  if (cnpj.length !== 14) {
+    throw new HttpsError("invalid-argument", "CNPJ inválido (14 dígitos).");
+  }
+  const razaoSocial = String(d.razaoSocial ?? "").trim();
+  if (!razaoSocial) {
+    throw new HttpsError("invalid-argument", "Razão social obrigatória.");
+  }
+  const ambiente = d.ambiente === "producao" ? "producao" : "homologacao";
+  const id = String(d.id ?? cnpj);
+
+  const ref = db.collection("nfe_companies").doc(id);
+  const existe = (await ref.get()).exists;
+  const now = agoraISO();
+
+  await ref.set(
+    {
+      id,
+      cnpj,
+      razaoSocial,
+      nomeFantasia: String(d.nomeFantasia ?? "").trim() || undefined,
+      inscricaoEstadual: String(d.inscricaoEstadual ?? "").trim() || undefined,
+      uf: String(d.uf ?? "").trim().toUpperCase().slice(0, 2),
+      ambiente,
+      ativo: d.ativo === false ? false : true,
+      updatedAt: now,
+      ...(existe ? {} : { createdAt: now, createdBy: uid }),
+    },
+    { merge: true },
+  );
+
+  await auditar(uid, existe ? "empresa.atualizar" : "empresa.criar", { id, cnpj });
+  return { ok: true, id };
+});
+
+/**
+ * Cadastra/atualiza o certificado A1 de uma empresa.
+ * Recebe o PFX (base64) + senha, VALIDA abrindo o keystore, extrai metadados,
+ * grava o segredo no Secret Manager e persiste APENAS metadados no Firestore.
+ * A senha e o PFX nunca são logados nem retornados. Só admin.
+ */
+export const nfeCadastrarCertificado = onCall(
+  { ...opcoes, memory: "512MiB" },
+  async (req) => {
+    const { uid } = exigirRole(req, ["admin"]);
+    const d = req.data ?? {};
+
+    const companyId = String(d.companyId ?? "").trim();
+    const pfxBase64 = String(d.pfxBase64 ?? "");
+    const senha = String(d.senha ?? "");
+    if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
+    if (!pfxBase64) throw new HttpsError("invalid-argument", "Arquivo do certificado ausente.");
+    if (!senha) throw new HttpsError("invalid-argument", "Senha do certificado ausente.");
+
+    const empSnap = await db.collection("nfe_companies").doc(companyId).get();
+    if (!empSnap.exists) {
+      throw new HttpsError("not-found", "Empresa não encontrada.");
+    }
+    const empresa = empSnap.data() as { cnpj: string; razaoSocial?: string };
+
+    // Valida o PFX + senha e extrai metadados (lança se senha errada).
+    let meta;
+    try {
+      meta = lerMetadadosPfx(pfxBase64, senha);
+    } catch {
+      // Não logamos o erro cru para não vazar detalhes do arquivo/senha.
+      throw new HttpsError(
+        "invalid-argument",
+        "Não foi possível abrir o certificado. Verifique o arquivo e a senha.",
+      );
+    }
+
+    // Segurança: o CNPJ do certificado deve casar com o CNPJ base da empresa.
+    const baseEmpresa = cnpjBase(empresa.cnpj);
+    if (meta.cnpj && cnpjBase(meta.cnpj) !== baseEmpresa) {
+      throw new HttpsError(
+        "failed-precondition",
+        "O CNPJ do certificado não corresponde ao da empresa.",
+      );
+    }
+
+    // Grava o segredo (JSON { pfxBase64, senha }) no Secret Manager.
+    const base = baseEmpresa;
+    let secretRef: string;
+    try {
+      secretRef = await gravarSegredoCertificado(
+        base,
+        JSON.stringify({ pfxBase64, senha }),
+      );
+    } catch (e) {
+      logger.error("Falha ao gravar segredo do certificado", {
+        companyId,
+        // nunca logar pfx/senha
+        erro: (e as Error).message,
+      });
+      throw new HttpsError("internal", "Falha ao armazenar o certificado com segurança.");
+    }
+
+    // Situação a partir da validade.
+    const fim = new Date(meta.validadeFim);
+    const dias = Math.ceil((fim.getTime() - Date.now()) / 86_400_000);
+    const situacao = dias < 0 ? "vencido" : dias <= 30 ? "vencendo" : "valido";
+    const now = agoraISO();
+
+    await db.collection("nfe_certificates").doc(companyId).set(
+      {
+        id: companyId,
+        companyId,
+        cnpj: empresa.cnpj,
+        razaoSocial: empresa.razaoSocial ?? meta.titular,
+        numeroSerie: meta.numeroSerie,
+        emissor: meta.emissor,
+        validadeInicio: meta.validadeInicio,
+        validadeFim: meta.validadeFim,
+        secretRef, // referência, nunca o conteúdo
+        situacao,
+        updatedAt: now,
+        createdAt: now,
+        createdBy: uid,
+      },
+      { merge: true },
+    );
+
+    await db
+      .collection("nfe_companies")
+      .doc(companyId)
+      .set({ temCertificado: true, updatedAt: now }, { merge: true });
+
+    await auditar(uid, "certificado.cadastrar", {
+      companyId,
+      numeroSerie: meta.numeroSerie,
+      validadeFim: meta.validadeFim,
+      secretRef,
+    });
+
+    // Retorna só metadados — nunca o segredo.
+    return {
+      ok: true,
+      numeroSerie: meta.numeroSerie,
+      emissor: meta.emissor,
+      validadeInicio: meta.validadeInicio,
+      validadeFim: meta.validadeFim,
+      situacao,
+      diasRestantes: dias,
+    };
+  },
+);
+
+/** Registra evento de auditoria (rastreabilidade). */
+async function auditar(uid: string, acao: string, detalhe: Record<string, unknown>) {
+  await db.collection("audit_logs").add({
+    uid,
+    acao,
+    detalhe,
+    at: FieldValue.serverTimestamp(),
+    atISO: agoraISO(),
+  });
+}
+
+// Placeholder de referência (não deployar sem billing/Secret Manager):
+// nomeSegredoCertificado é reexportado para uso nas Etapas 3–4 (sync/manifestação).
+export const _internal = { nomeSegredoCertificado };

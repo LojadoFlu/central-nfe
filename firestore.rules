@@ -1,0 +1,96 @@
+rules_version = '2';
+
+// Central NF-e — Regras Firestore.
+// Princípio (herdado do crm-flu): o CLIENTE nunca escreve dado fiscal.
+// Toda escrita de negócio passa por Cloud Functions (Admin SDK, que ignora estas regras).
+// Segredos (certificado) NUNCA são legíveis pelo cliente.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAuth() {
+      return request.auth != null;
+    }
+    function role() {
+      return request.auth.token.role;
+    }
+    // admin > fiscal/financeiro > consulta
+    function hasRole(roles) {
+      return isAuth() && role() in roles;
+    }
+
+    // Perfil do próprio usuário (papel/permissões). Escrita só backend.
+    match /nfe_users/{uid} {
+      allow read: if isAuth() && (request.auth.uid == uid || hasRole(['admin']));
+      allow write: if false;
+    }
+
+    // Empresas/CNPJs — leitura por qualquer autenticado; escrita só backend.
+    match /nfe_companies/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
+    // Certificado: apenas METADADOS (validade, série, emissor). O .pfx/senha
+    // vivem no Secret Manager, nunca aqui. Ainda assim, leitura restrita e
+    // escrita bloqueada no cliente.
+    match /nfe_certificates/{id} {
+      allow read: if hasRole(['admin', 'fiscal']);
+      allow write: if false;
+    }
+
+    // Estado de sincronização (NSU) e logs de integração — leitura fiscal/admin.
+    match /nfe_sync_state/{id} {
+      allow read: if hasRole(['admin', 'fiscal']);
+      allow write: if false;
+    }
+    match /nfe_sync_logs/{id} {
+      allow read: if hasRole(['admin', 'fiscal']);
+      allow write: if false;
+    }
+
+    // Documentos fiscais e derivados — leitura por qualquer autenticado; escrita só backend.
+    match /nfe_documents/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /nfe_items/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /nfe_installments/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /nfe_payments/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /nfe_events/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /nfe_manifestations/{id} {
+      allow read: if hasRole(['admin', 'fiscal']);
+      allow write: if false;
+    }
+    match /nfe_suppliers/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /nfe_alerts/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
+    // Auditoria — leitura só admin, escrita só backend.
+    match /audit_logs/{id} {
+      allow read: if hasRole(['admin']);
+      allow write: if false;
+    }
+
+    // Fallback: nega tudo que não foi explicitamente liberado acima.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

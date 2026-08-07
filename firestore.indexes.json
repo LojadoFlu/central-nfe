@@ -1,0 +1,78 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "nfe_documents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "companyId", "order": "ASCENDING" },
+        { "fieldPath": "dhEmi", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "nfe_documents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "cnpjEmit", "order": "ASCENDING" },
+        { "fieldPath": "dhEmi", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "nfe_documents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "situacao", "order": "ASCENDING" },
+        { "fieldPath": "dhEmi", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "nfe_documents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "manifestStatus", "order": "ASCENDING" },
+        { "fieldPath": "dhEmi", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "nfe_installments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "companyId", "order": "ASCENDING" },
+        { "fieldPath": "situacao", "order": "ASCENDING" },
+        { "fieldPath": "vencimento", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "nfe_installments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "companyId", "order": "ASCENDING" },
+        { "fieldPath": "vencimento", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "nfe_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "descricaoBusca", "order": "ASCENDING" },
+        { "fieldPath": "dhEmi", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "nfe_items",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ncm", "order": "ASCENDING" },
+        { "fieldPath": "dhEmi", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "nfe_suppliers",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "companyId", "order": "ASCENDING" },
+        { "fieldPath": "totalComprado", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,22 @@
+# deps
+node_modules
+functions/node_modules
+
+# next
+.next
+out
+
+# env / segredos — NUNCA versionar
+.env
+.env.local
+.env*.local
+*.pfx
+*.p12
+*.pem
+serviceAccountKey*.json
+firebase-debug.log
+.firebase
+
+# testes / build
+coverage
+functions/lib

@@ -1,0 +1,23 @@
+{
+  "name": "central-nfe-functions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloud Functions da Central NF-e — integração SEFAZ, certificado e sincronização.",
+  "main": "lib/index.js",
+  "engines": { "node": "20" },
+  "scripts": {
+    "build": "tsc",
+    "serve": "npm run build && firebase emulators:start --only functions",
+    "deploy": "firebase deploy --only functions"
+  },
+  "dependencies": {
+    "@google-cloud/secret-manager": "^5.6.0",
+    "firebase-admin": "^12.5.0",
+    "firebase-functions": "^5.1.0",
+    "node-forge": "^1.3.1"
+  },
+  "devDependencies": {
+    "@types/node-forge": "^1.3.11",
+    "typescript": "^5.6.3"
+  }
+}
