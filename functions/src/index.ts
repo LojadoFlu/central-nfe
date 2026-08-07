@@ -10,7 +10,12 @@ import {
   agoraISO,
 } from "./lib/base";
 import { lerMetadadosPfx } from "./lib/certificado";
-import { gravarSegredoCertificado, nomeSegredoCertificado } from "./lib/secrets";
+import {
+  gravarSegredoCertificado,
+  lerSegredoCertificado,
+  nomeSegredoCertificado,
+} from "./lib/secrets";
+import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
 
 const opcoes = { region: REGIAO };
 
@@ -166,6 +171,65 @@ export const nfeCadastrarCertificado = onCall(
       situacao,
       diasRestantes: dias,
     };
+  },
+);
+
+/**
+ * ETAPA 3 — Milestone 1: teste de conexão com a SEFAZ (NFeDistribuicaoDFe).
+ * Faz UMA chamada distDFeInt (ultNSU=0) para validar mTLS + rede + SOAP.
+ * Não persiste nada ainda — só retorna o cabeçalho do retorno (cStat/xMotivo/NSU).
+ */
+export const nfeTestarConexao = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 60 },
+  async (req) => {
+    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const companyId = String(req.data?.companyId ?? "").trim();
+    if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
+
+    const snap = await db.collection("nfe_companies").doc(companyId).get();
+    if (!snap.exists) throw new HttpsError("not-found", "Empresa não encontrada.");
+    const emp = snap.data() as { cnpj: string; uf: string; ambiente?: string };
+
+    let cred: { pfxBase64: string; senha: string };
+    try {
+      cred = await lerSegredoCertificado(cnpjBase(emp.cnpj));
+    } catch {
+      throw new HttpsError(
+        "failed-precondition",
+        "Certificado não instalado para esta empresa. Instale antes de testar a conexão.",
+      );
+    }
+
+    const ambiente = emp.ambiente === "producao" ? "producao" : "homologacao";
+    try {
+      const r = await consultarDistribuicaoNSU({
+        ambiente,
+        uf: emp.uf,
+        cnpj: somenteDigitos(emp.cnpj),
+        ultNSU: "0",
+        pfx: Buffer.from(cred.pfxBase64, "base64"),
+        senha: cred.senha,
+      });
+      logger.info("nfeTestarConexao", {
+        companyId,
+        ambiente,
+        cStat: r.cStat,
+        xMotivo: r.xMotivo,
+        httpStatus: r.httpStatus,
+      });
+      await auditar(uid, "sefaz.testarConexao", {
+        companyId,
+        ambiente,
+        cStat: r.cStat,
+        maxNSU: r.maxNSU,
+      });
+      return { ok: true, ambiente, ...r };
+    } catch (e) {
+      // Retorna o erro (não lança) para a tela poder mostrar o diagnóstico.
+      const msg = (e as Error).message || String(e);
+      logger.error("nfeTestarConexao falhou", { companyId, ambiente, erro: msg });
+      return { ok: false, ambiente, erro: msg };
+    }
   },
 );
 

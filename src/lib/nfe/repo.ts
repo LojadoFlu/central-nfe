@@ -71,6 +71,26 @@ export async function cadastrarCertificado(input: {
   return res.data as RetornoCertificado;
 }
 
+export interface ResultadoConexao {
+  ok: boolean;
+  ambiente?: string;
+  cStat?: string | null;
+  xMotivo?: string | null;
+  ultNSU?: string | null;
+  maxNSU?: string | null;
+  verAplic?: string | null;
+  httpStatus?: number;
+  erro?: string;
+}
+
+/** Testa a conexão com a SEFAZ (uma chamada distDFeInt) para uma empresa. */
+export async function testarConexao(companyId: string): Promise<ResultadoConexao> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeTestarConexao");
+  const res = await fn({ companyId });
+  return res.data as ResultadoConexao;
+}
+
 /** Lê um arquivo File como base64 puro (sem o prefixo data:). */
 export function arquivoParaBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
