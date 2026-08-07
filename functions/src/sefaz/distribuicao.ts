@@ -32,8 +32,8 @@ export async function consultarDistribuicaoNSU(params: {
   uf: string;
   cnpj: string; // 14 dígitos
   ultNSU: string;
-  pfx: Buffer;
-  senha: string;
+  key: string; // PEM da chave privada
+  cert: string; // PEM do certificado (folha + cadeia)
 }): Promise<ResultadoDistribuicao> {
   const tpAmb = params.ambiente === "producao" ? "1" : "2";
   const cUF = UF_IBGE[(params.uf || "").toUpperCase()] || "";
@@ -59,8 +59,7 @@ export async function consultarDistribuicaoNSU(params: {
   const resp = await postSoap(
     urlDistribuicao(params.ambiente),
     envelope,
-    params.pfx,
-    params.senha,
+    { key: params.key, cert: params.cert },
     SOAP_ACTION,
   );
 

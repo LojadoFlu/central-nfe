@@ -9,7 +9,7 @@ import {
   cnpjBase,
   agoraISO,
 } from "./lib/base";
-import { lerMetadadosPfx } from "./lib/certificado";
+import { lerMetadadosPfx, pfxParaPem } from "./lib/certificado";
 import {
   gravarSegredoCertificado,
   lerSegredoCertificado,
@@ -202,13 +202,14 @@ export const nfeTestarConexao = onCall(
 
     const ambiente = emp.ambiente === "producao" ? "producao" : "homologacao";
     try {
+      const { key, cert } = pfxParaPem(cred.pfxBase64, cred.senha);
       const r = await consultarDistribuicaoNSU({
         ambiente,
         uf: emp.uf,
         cnpj: somenteDigitos(emp.cnpj),
         ultNSU: "0",
-        pfx: Buffer.from(cred.pfxBase64, "base64"),
-        senha: cred.senha,
+        key,
+        cert,
       });
       logger.info("nfeTestarConexao", {
         companyId,

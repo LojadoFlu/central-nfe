@@ -13,8 +13,7 @@ export interface RespostaSoap {
 export function postSoap(
   url: string,
   soapXml: string,
-  pfx: Buffer,
-  passphrase: string,
+  tls: { key: string; cert: string },
   soapAction: string,
 ): Promise<RespostaSoap> {
   const u = new URL(url);
@@ -24,8 +23,8 @@ export function postSoap(
     path: u.pathname + u.search,
     port: 443,
     method: "POST",
-    pfx,
-    passphrase,
+    key: tls.key,
+    cert: tls.cert,
     minVersion: "TLSv1.2",
     headers: {
       "Content-Type": `application/soap+xml; charset=utf-8; action="${soapAction}"`,
