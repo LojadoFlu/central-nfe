@@ -1,24 +1,22 @@
 import type { FirebaseOptions } from "firebase/app";
 
 /**
- * Config do Firebase (projeto DEDICADO da Central NF-e), lida de env públicas.
- * Preencha em `.env.local` (veja `.env.local.example`).
- * Nenhum segredo aqui — só identificadores públicos.
+ * Config do Firebase (projeto DEDICADO da Central NF-e).
+ * São identificadores PÚBLICOS — vão ao navegador de qualquer forma. A segurança
+ * vem das Security Rules + Auth, não de esconder a chave. Ficam fixos no código
+ * para evitar erros de digitação em variáveis de ambiente do deploy (Netlify).
  */
 export const firebaseConfig: FirebaseOptions = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  apiKey: "AIzaSyBTxo0QiSzHjPAET2ydSVnOW4uxCK2ZwzY",
+  authDomain: "central-nfe-1c8d8.firebaseapp.com",
+  projectId: "central-nfe-1c8d8",
+  storageBucket: "central-nfe-1c8d8.firebasestorage.app",
+  messagingSenderId: "1098789086301",
+  appId: "1:1098789086301:web:cdeec46d2a4569d2ba19b4",
 };
 
 /** Região das Cloud Functions. */
-export const REGIAO_FUNCTIONS =
-  process.env.NEXT_PUBLIC_FUNCTIONS_REGION || "southamerica-east1";
+export const REGIAO_FUNCTIONS = "southamerica-east1";
 
-/** Indica se o Firebase está configurado (evita quebrar build/preview). */
-export const isFirebaseConfigured = Boolean(
-  firebaseConfig.apiKey && firebaseConfig.projectId,
-);
+/** Config sempre presente (valores fixos acima). */
+export const isFirebaseConfigured = true;
