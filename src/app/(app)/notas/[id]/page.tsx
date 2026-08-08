@@ -18,6 +18,7 @@ import {
   type Item,
   type Parcela,
 } from "@/lib/nfe/repo";
+import { gerarDanfe } from "@/lib/nfe/danfe";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
 import { ArrowLeft, FileCode2, Download, FileText } from "lucide-react";
 
@@ -38,6 +39,7 @@ export default function NotaDetalhePage() {
   const [parcelas, setParcelas] = useState<Parcela[]>([]);
   const [xml, setXml] = useState<string | null>(null);
   const [carregandoXml, setCarregandoXml] = useState(false);
+  const [gerandoPdf, setGerandoPdf] = useState(false);
   const [erroXml, setErroXml] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
@@ -75,6 +77,21 @@ export default function NotaDetalhePage() {
       window.open(url, "_blank");
     } catch (e) {
       setErroXml((e as Error).message);
+    }
+  }
+
+  async function baixarDanfe() {
+    if (!doc?.storagePath) return;
+    setGerandoPdf(true);
+    setErroXml(null);
+    try {
+      const conteudo = xml ?? (await baixarXmlTexto(doc.storagePath));
+      if (!xml) setXml(conteudo);
+      gerarDanfe(conteudo, `DANFE-${doc.chNFe ?? doc.id}.pdf`);
+    } catch (e) {
+      setErroXml((e as Error).message);
+    } finally {
+      setGerandoPdf(false);
     }
   }
 
@@ -208,11 +225,12 @@ export default function NotaDetalhePage() {
             </Button>
             <Button
               size="sm"
-              disabled
-              title={doc.temXmlCompleto ? "Em breve" : "Requer XML completo (manifeste a nota primeiro)"}
+              onClick={baixarDanfe}
+              disabled={!doc.temXmlCompleto || gerandoPdf}
+              title={doc.temXmlCompleto ? "" : "Requer XML completo (manifeste a nota primeiro)"}
             >
               <FileText className="size-4" />
-              DANFE (PDF)
+              {gerandoPdf ? "Gerando…" : "DANFE (PDF)"}
             </Button>
           </div>
 
