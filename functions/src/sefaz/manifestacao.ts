@@ -92,8 +92,8 @@ export async function enviarManifestacao(params: {
   // Sem indentação entre tags (evita diferença de digest).
   const envEvento =
     `<envEvento xmlns="${NS_NFE}" versao="1.00">` +
-    `<idLote>1</idLote>` +
-    `<evento versao="1.00">` +
+    `<idLote>000000000000001</idLote>` +
+    `<evento xmlns="${NS_NFE}" versao="1.00">` +
     `<infEvento Id="${id}">` +
     `<cOrgao>91</cOrgao>` +
     `<tpAmb>${tpAmb}</tpAmb>` +
