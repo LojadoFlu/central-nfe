@@ -1,0 +1,319 @@
+"use client";
+
+import { jsPDF } from "jspdf";
+import JsBarcode from "jsbarcode";
+
+// DACTE — Documento Auxiliar do Conhecimento de Transporte Eletrônico.
+// Layout próximo do padrão oficial (MOC CT-e), gerado do XML completo (procCTe).
+
+function el(root: Element | Document, tag: string): Element | null {
+  return root.getElementsByTagName(tag)[0] ?? null;
+}
+function txt(root: Element | Document | null, tag: string): string {
+  if (!root) return "";
+  return el(root, tag)?.textContent?.trim() ?? "";
+}
+function moeda(v: string | number | null | undefined): string {
+  const n = typeof v === "number" ? v : Number(v ?? 0);
+  return Number.isFinite(n) ? n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "0,00";
+}
+function cnpjMask(d: string): string {
+  const s = (d || "").replace(/\D/g, "");
+  if (s.length === 14) return s.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
+  if (s.length === 11) return s.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4");
+  return d;
+}
+function cep(d: string): string {
+  const s = (d || "").replace(/\D/g, "");
+  return s.length === 8 ? s.replace(/^(\d{5})(\d{3})$/, "$1-$2") : d;
+}
+function dataBR(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+}
+function horaBR(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit" });
+}
+
+const MODAL: Record<string, string> = {
+  "01": "Rodoviário", "02": "Aéreo", "03": "Aquaviário", "04": "Ferroviário", "05": "Dutoviário", "06": "Multimodal",
+};
+const TP_SERV: Record<string, string> = {
+  "0": "Normal", "1": "Subcontratação", "2": "Redespacho", "3": "Redespacho Intermediário", "4": "Vinculado a Multimodal",
+};
+const TP_CTE: Record<string, string> = { "0": "Normal", "1": "Complemento de Valores", "2": "Anulação", "3": "Substituto" };
+
+/** Resolve o tomador do serviço (toma3 mapeia p/ rem/exped/receb/dest; toma4 é explícito). */
+function resolveTomador(dom: Document): { nome: string; cnpj: string; ie: string; mun: string; uf: string; papel: string } {
+  const toma4 = el(dom, "toma4");
+  if (toma4) {
+    return {
+      nome: txt(toma4, "xNome"),
+      cnpj: txt(toma4, "CNPJ") || txt(toma4, "CPF"),
+      ie: txt(toma4, "IE"),
+      mun: txt(toma4, "xMun"),
+      uf: txt(toma4, "UF"),
+      papel: "Outro",
+    };
+  }
+  const t = txt(el(dom, "toma3"), "toma");
+  const map: Record<string, [string, string]> = {
+    "0": ["rem", "Remetente"],
+    "1": ["exped", "Expedidor"],
+    "2": ["receb", "Recebedor"],
+    "3": ["dest", "Destinatário"],
+  };
+  const [tag, papel] = map[t] ?? ["dest", "Destinatário"];
+  const p = el(dom, tag);
+  return {
+    nome: txt(p, "xNome"),
+    cnpj: txt(p, "CNPJ") || txt(p, "CPF"),
+    ie: txt(p, "IE"),
+    mun: txt(p, "xMun"),
+    uf: txt(p, "UF"),
+    papel,
+  };
+}
+
+export function gerarDacte(xml: string, nomeArquivo: string): void {
+  const dom = new DOMParser().parseFromString(xml, "application/xml");
+  const infCte = el(dom, "infCte");
+  const chave = (infCte?.getAttribute("Id") ?? "").replace(/^CTe/, "");
+  const ide = el(dom, "ide");
+  const emit = el(dom, "emit");
+  const rem = el(dom, "rem");
+  const dest = el(dom, "dest");
+  const enderEmit = el(emit ?? dom, "enderEmit");
+  const vPrest = el(dom, "vPrest");
+  const infCarga = el(dom, "infCarga");
+  // O grupo ICMS envolve o nó específico (ICMS00/ICMS45/ICMSSN…); lemos os
+  // campos direto do bloco <ICMS> (CST/vBC/pICMS/vICMS ficam no filho).
+  const icms = el(dom, "ICMS");
+  const prot = el(dom, "protCTe") ?? el(dom, "infProt");
+  const tomador = resolveTomador(dom);
+
+  const comps = Array.from(dom.getElementsByTagName("Comp")).map((c) => ({
+    nome: txt(c, "xNome"),
+    valor: txt(c, "vComp"),
+  }));
+  const chNFes = Array.from(dom.getElementsByTagName("infNFe")).map((n) => txt(n, "chave")).filter(Boolean);
+
+  const doc = new jsPDF({ unit: "mm", format: "a4" });
+  const M = 6;
+  const R = 210 - M;
+  const Wt = R - M;
+
+  const rect = (x: number, y: number, w: number, h: number) => {
+    doc.setLineWidth(0.2);
+    doc.rect(x, y, w, h);
+  };
+  const cap = (x: number, y: number, t: string) => {
+    doc.setFont("helvetica", "normal").setFontSize(5);
+    doc.text(t, x + 1, y + 2.4);
+  };
+  const val = (
+    x: number, y: number, w: number, t: string,
+    size = 8, bold = false, align: "left" | "center" | "right" = "left",
+  ) => {
+    doc.setFont("helvetica", bold ? "bold" : "normal").setFontSize(size);
+    const px = align === "right" ? x + w - 1 : align === "center" ? x + w / 2 : x + 1;
+    doc.text(t ?? "", px, y, { align, maxWidth: w - 2 });
+  };
+  const field = (
+    x: number, y: number, w: number, h: number, label: string, value: string,
+    opts: { size?: number; bold?: boolean; align?: "left" | "center" | "right" } = {},
+  ) => {
+    rect(x, y, w, h);
+    cap(x, y, label);
+    val(x, y + h - 1.6, w, value, opts.size ?? 8, opts.bold, opts.align ?? "left");
+  };
+
+  let y = M;
+
+  // ---------- CABEÇALHO ----------
+  const hcab = 30;
+  const emitW = 74;
+  const midW = 52;
+  const chaveW = Wt - emitW - midW;
+
+  // Emitente (transportadora)
+  rect(M, y, emitW, hcab);
+  doc.setFont("helvetica", "bold").setFontSize(8.5);
+  doc.text(txt(emit, "xNome"), M + emitW / 2, y + 5, { align: "center", maxWidth: emitW - 4 });
+  doc.setFont("helvetica", "normal").setFontSize(6);
+  doc.text(`${txt(enderEmit, "xLgr")}, ${txt(enderEmit, "nro")}`, M + emitW / 2, y + 9.5, { align: "center", maxWidth: emitW - 4 });
+  doc.text(`${txt(enderEmit, "xBairro")} - ${txt(enderEmit, "xMun")}/${txt(enderEmit, "UF")}`, M + emitW / 2, y + 12.8, { align: "center", maxWidth: emitW - 4 });
+  doc.text(`CEP: ${cep(txt(enderEmit, "CEP"))}  Fone: ${txt(enderEmit, "fone")}`, M + emitW / 2, y + 16, { align: "center", maxWidth: emitW - 4 });
+  doc.text(`CNPJ: ${cnpjMask(txt(emit, "CNPJ"))}`, M + emitW / 2, y + 20, { align: "center" });
+  doc.text(`IE: ${txt(emit, "IE")}`, M + emitW / 2, y + 23.2, { align: "center" });
+  doc.setFont("helvetica", "bold").setFontSize(6.5);
+  doc.text("DACTE", M + emitW / 2, y + 27.5, { align: "center" });
+
+  // Bloco central (DACTE + metadados)
+  const mx = M + emitW;
+  rect(mx, y, midW, hcab);
+  doc.setFont("helvetica", "bold").setFontSize(10);
+  doc.text("DACTE", mx + midW / 2, y + 4.5, { align: "center" });
+  doc.setFont("helvetica", "normal").setFontSize(4.6);
+  doc.text("Documento Auxiliar do Conhecimento", mx + midW / 2, y + 7.5, { align: "center" });
+  doc.text("de Transporte Eletrônico", mx + midW / 2, y + 9.5, { align: "center" });
+  doc.setFontSize(6);
+  const modalTxt = MODAL[txt(ide, "modal")] ?? txt(ide, "modal");
+  doc.text(`Modal: ${modalTxt}`, mx + 2, y + 13.5);
+  doc.text(`Modelo: 57   Série: ${txt(ide, "serie")}`, mx + 2, y + 16.5);
+  doc.text(`Número: ${txt(ide, "nCT")}`, mx + 2, y + 19.5);
+  doc.text(`Folha: 1/1`, mx + 2, y + 22.5);
+  doc.text(`Emissão: ${dataBR(txt(ide, "dhEmi"))} ${horaBR(txt(ide, "dhEmi"))}`, mx + 2, y + 25.5);
+  doc.text(`Tipo CT-e: ${TP_CTE[txt(ide, "tpCTe")] ?? txt(ide, "tpCTe")}`, mx + 2, y + 28.5);
+
+  // Barcode + chave
+  const cx = mx + midW;
+  rect(cx, y, chaveW, hcab);
+  const canvas = barcodeCanvas(chave);
+  if (canvas) {
+    const bcH = 11;
+    const bcW = Math.min(chaveW - 4, (bcH * canvas.width) / canvas.height);
+    doc.addImage(canvas.toDataURL("image/png"), "PNG", cx + (chaveW - bcW) / 2, y + 2.5, bcW, bcH);
+  }
+  cap(cx, y + 14.5, "CHAVE DE ACESSO");
+  doc.setFont("courier", "bold").setFontSize(7);
+  doc.text(chave.replace(/(\d{4})/g, "$1 ").trim(), cx + chaveW / 2, y + 21, { align: "center", maxWidth: chaveW - 3 });
+  doc.setFont("helvetica", "normal").setFontSize(4.6);
+  doc.text("Consulte a autenticidade no portal nacional do CT-e", cx + chaveW / 2, y + 25, { align: "center" });
+  doc.text(`Tipo do Serviço: ${TP_SERV[txt(ide, "tpServ")] ?? txt(ide, "tpServ")}`, cx + chaveW / 2, y + 28.5, { align: "center" });
+  y += hcab;
+
+  // Protocolo
+  field(M, y, Wt, 6, "PROTOCOLO DE AUTORIZAÇÃO DE USO", `${txt(prot, "nProt")}  ${dataBR(txt(prot, "dhRecbto"))} ${horaBR(txt(prot, "dhRecbto"))}`, { size: 7, align: "center" });
+  y += 6;
+
+  // CFOP / natureza
+  field(M, y, Wt * 0.7, 6, "CFOP — NATUREZA DA PRESTAÇÃO", `${txt(ide, "CFOP")} — ${txt(ide, "natOp")}`, { size: 7 });
+  field(M + Wt * 0.7, y, Wt * 0.3, 6, "INSCRIÇÃO ESTADUAL", txt(emit, "IE"), { size: 7 });
+  y += 6;
+
+  // Início / Término da prestação
+  field(M, y, Wt * 0.5, 6, "INÍCIO DA PRESTAÇÃO", `${txt(ide, "xMunIni")} / ${txt(ide, "UFIni")}`, { size: 7 });
+  field(M + Wt * 0.5, y, Wt * 0.5, 6, "TÉRMINO DA PRESTAÇÃO", `${txt(ide, "xMunFim")} / ${txt(ide, "UFFim")}`, { size: 7 });
+  y += 6;
+
+  // Tomador
+  doc.setFont("helvetica", "bold").setFontSize(5.5);
+  doc.text(`TOMADOR DO SERVIÇO (${tomador.papel})`, M, y + 2);
+  y += 2.5;
+  field(M, y, Wt * 0.56, 6, "NOME / RAZÃO SOCIAL", tomador.nome, { size: 7 });
+  field(M + Wt * 0.56, y, Wt * 0.24, 6, "CNPJ / CPF", cnpjMask(tomador.cnpj), { size: 7 });
+  field(M + Wt * 0.8, y, Wt * 0.2, 6, "MUNICÍPIO / UF", `${tomador.mun}${tomador.uf ? "/" + tomador.uf : ""}`, { size: 7 });
+  y += 6;
+
+  // Remetente / Destinatário
+  const half = Wt / 2;
+  field(M, y, half, 6, "REMETENTE", txt(rem, "xNome"), { size: 7 });
+  field(M + half, y, half, 6, "DESTINATÁRIO", txt(dest, "xNome"), { size: 7 });
+  y += 6;
+  field(M, y, half * 0.5, 6, "CNPJ/CPF", cnpjMask(txt(rem, "CNPJ") || txt(rem, "CPF")), { size: 6.5 });
+  field(M + half * 0.5, y, half * 0.5, 6, "MUN/UF", `${txt(el(rem ?? dom, "enderReme"), "xMun")}/${txt(el(rem ?? dom, "enderReme"), "UF")}`, { size: 6.5 });
+  field(M + half, y, half * 0.5, 6, "CNPJ/CPF", cnpjMask(txt(dest, "CNPJ") || txt(dest, "CPF")), { size: 6.5 });
+  field(M + half + half * 0.5, y, half * 0.5, 6, "MUN/UF", `${txt(el(dest ?? dom, "enderDest"), "xMun")}/${txt(el(dest ?? dom, "enderDest"), "UF")}`, { size: 6.5 });
+  y += 6;
+
+  // Carga
+  doc.setFont("helvetica", "bold").setFontSize(5.5);
+  doc.text("INFORMAÇÕES DA CARGA", M, y + 2);
+  y += 2.5;
+  field(M, y, Wt * 0.6, 6, "PRODUTO PREDOMINANTE", txt(infCarga, "proPred"), { size: 7 });
+  field(M + Wt * 0.6, y, Wt * 0.4, 6, "VALOR TOTAL DA CARGA", `R$ ${moeda(txt(infCarga, "vCarga"))}`, { size: 7, align: "right" });
+  y += 6;
+
+  // Componentes do valor da prestação + totais
+  doc.setFont("helvetica", "bold").setFontSize(5.5);
+  doc.text("COMPONENTES DO VALOR DA PRESTAÇÃO DO SERVIÇO", M, y + 2);
+  y += 2.5;
+  const compsW = Wt * 0.62;
+  const compH = Math.max(12, Math.ceil(comps.length / 2) * 4 + 2);
+  rect(M, y, compsW, compH);
+  doc.setFont("helvetica", "normal").setFontSize(6);
+  const colW = compsW / 2;
+  comps.forEach((c, i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    const px = M + col * colW + 1.5;
+    const py = y + 3.5 + row * 4;
+    doc.text(`${c.nome}:`, px, py, { maxWidth: colW - 20 });
+    doc.text(`R$ ${moeda(c.valor)}`, M + col * colW + colW - 1.5, py, { align: "right" });
+  });
+  // Totais (direita)
+  const totX = M + compsW;
+  const totW = Wt - compsW;
+  field(totX, y, totW, compH / 2, "VALOR TOTAL DA PRESTAÇÃO", `R$ ${moeda(txt(vPrest, "vTPrest"))}`, { size: 8, bold: true, align: "right" });
+  field(totX, y + compH / 2, totW, compH / 2, "VALOR A RECEBER", `R$ ${moeda(txt(vPrest, "vRec"))}`, { size: 8, bold: true, align: "right" });
+  y += compH;
+
+  // Impostos (ICMS)
+  doc.setFont("helvetica", "bold").setFontSize(5.5);
+  doc.text("INFORMAÇÕES RELATIVAS AO IMPOSTO (ICMS)", M, y + 2);
+  y += 2.5;
+  const q4 = Wt / 4;
+  field(M, y, q4, 6, "SITUAÇÃO TRIBUTÁRIA (CST)", txt(icms, "CST") || txt(icms, "CSOSN") || "—", { size: 6.5, align: "center" });
+  field(M + q4, y, q4, 6, "BASE DE CÁLCULO", moeda(txt(icms, "vBC")), { size: 6.5, align: "right" });
+  field(M + 2 * q4, y, q4, 6, "ALÍQUOTA ICMS", `${txt(icms, "pICMS") || "0"}%`, { size: 6.5, align: "right" });
+  field(M + 3 * q4, y, q4, 6, "VALOR ICMS", moeda(txt(icms, "vICMS")), { size: 6.5, align: "right" });
+  y += 6;
+
+  // Documentos originários (NF-e)
+  doc.setFont("helvetica", "bold").setFontSize(5.5);
+  doc.text(`DOCUMENTOS ORIGINÁRIOS (NF-e: ${chNFes.length})`, M, y + 2);
+  y += 2.5;
+  const docsH = chNFes.length ? Math.min(24, 3 + Math.ceil(chNFes.length / 2) * 3.2) : 8;
+  rect(M, y, Wt, docsH);
+  doc.setFont("courier", "normal").setFontSize(5.6);
+  chNFes.slice(0, 14).forEach((ch, i) => {
+    const col = i % 2;
+    const row = Math.floor(i / 2);
+    doc.text(ch, M + 2 + col * (Wt / 2), y + 3.5 + row * 3.2, { maxWidth: Wt / 2 - 3 });
+  });
+  if (chNFes.length > 14) {
+    doc.setFont("helvetica", "italic").setFontSize(5.5);
+    doc.text(`… e mais ${chNFes.length - 14} documento(s). Ver XML completo.`, M + 2, y + docsH - 1.5);
+  }
+  y += docsH;
+
+  // Observações
+  const obs = txt(dom, "xObs") || txt(dom, "xCaracAd") || txt(dom, "xCaracSer");
+  rect(M, y, Wt, 16);
+  cap(M, y, "OBSERVAÇÕES");
+  if (obs) {
+    doc.setFont("helvetica", "normal").setFontSize(6);
+    doc.text(doc.splitTextToSize(obs, Wt - 4).slice(0, 6), M + 1.5, y + 5);
+  }
+
+  abrirOuSalvar(doc, nomeArquivo);
+}
+
+function barcodeCanvas(chave: string): HTMLCanvasElement | null {
+  try {
+    const canvas = document.createElement("canvas");
+    JsBarcode(canvas, chave, { format: "CODE128C", displayValue: false, height: 90, width: 3, margin: 0 });
+    return canvas;
+  } catch {
+    return null;
+  }
+}
+
+function abrirOuSalvar(doc: jsPDF, nomeArquivo: string): void {
+  const blob = doc.output("blob");
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank");
+  if (!win) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nomeArquivo;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}

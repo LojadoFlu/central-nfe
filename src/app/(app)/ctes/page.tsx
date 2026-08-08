@@ -20,8 +20,9 @@ import {
   type ResultadoSync,
 } from "@/lib/nfe/repo";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { gerarDacte } from "@/lib/nfe/dacte";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora, normalizar } from "@/lib/utils";
-import { Container, ChevronDown, RefreshCw, FileCode2, Download } from "lucide-react";
+import { Container, ChevronDown, RefreshCw, FileCode2, Download, FileText } from "lucide-react";
 
 const COMPANY_ID = "59255964000123";
 const TP_CTE: Record<string, string> = { "0": "Normal", "1": "Complemento", "2": "Anulação", "3": "Substituto" };
@@ -89,6 +90,17 @@ export default function CtesPage() {
     if (!c.storagePath) return;
     try {
       window.open(await urlDownloadXml(c.storagePath), "_blank");
+    } catch (e) {
+      setErro((e as Error).message);
+    }
+  }
+  async function gerarDactePdf(c: CteDocumento) {
+    if (!c.storagePath) return;
+    setErro(null);
+    try {
+      const xml = xmls[c.id] ?? (await baixarXmlTexto(c.storagePath));
+      if (!xmls[c.id]) setXmls((p) => ({ ...p, [c.id]: xml }));
+      gerarDacte(xml, `DACTE-${c.chCTe ?? c.id}.pdf`);
     } catch (e) {
       setErro((e as Error).message);
     }
@@ -197,6 +209,14 @@ export default function CtesPage() {
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => baixarXml(c)} disabled={!c.storagePath}>
                           <Download className="size-4" /> Baixar XML
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => gerarDactePdf(c)}
+                          disabled={!c.temXmlCompleto}
+                          title={c.temXmlCompleto ? "" : "Disponível apenas para CT-e com XML completo"}
+                        >
+                          <FileText className="size-4" /> DACTE (PDF)
                         </Button>
                       </div>
 
