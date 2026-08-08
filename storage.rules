@@ -17,6 +17,12 @@ service firebase.storage {
       allow write, delete: if false; // só backend
     }
 
+    // /cte/{cnpj}/{ano}/{mes}/{chave}.xml  — XML original dos CT-e (fretes).
+    match /cte/{allPaths=**} {
+      allow read: if isAuth();
+      allow write, delete: if false; // só backend
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }
