@@ -525,6 +525,52 @@ export const nfeBaixarParcela = onCall(opcoes, async (req) => {
   return { ok: true, statusPagamento: pago ? "pago" : "nao_informado" };
 });
 
+/**
+ * Baixa em lote: marca várias parcelas como pagas de uma vez (mesma data/obs).
+ * Lê o valor real de cada parcela no servidor (valorPago = valor). Só admin/financeiro.
+ */
+export const nfeBaixarParcelasLote = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const ids: string[] = Array.isArray(d.parcelaIds)
+    ? [...new Set((d.parcelaIds as unknown[]).map((x) => String(x).trim()).filter((s) => s !== ""))]
+    : [];
+  if (ids.length === 0) throw new HttpsError("invalid-argument", "Nenhuma parcela informada.");
+  if (ids.length > 400) throw new HttpsError("invalid-argument", "Máximo de 400 parcelas por lote.");
+
+  const now = agoraISO();
+  const dataPagamento = /^\d{4}-\d{2}-\d{2}$/.test(String(d.dataPagamento ?? ""))
+    ? String(d.dataPagamento)
+    : now.slice(0, 10);
+  const obsPagamento = String(d.obsPagamento ?? "").trim().slice(0, 300) || null;
+
+  const refs = ids.map((id) => db.collection("nfe_installments").doc(id));
+  const snaps = await db.getAll(...refs);
+  const batch = db.batch();
+  let total = 0;
+  for (const snap of snaps) {
+    if (!snap.exists) continue;
+    const p = snap.data() as { valor?: number };
+    batch.set(
+      snap.ref,
+      {
+        statusPagamento: "pago",
+        dataPagamento,
+        valorPago: typeof p.valor === "number" ? p.valor : null,
+        obsPagamento,
+        baixadoPor: uid,
+        baixadoEm: now,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+    total++;
+  }
+  await batch.commit();
+  await auditar(uid, "financeiro.baixarLote", { total, dataPagamento });
+  return { ok: true, total };
+});
+
 /** Registra evento de auditoria (rastreabilidade). */
 async function auditar(uid: string, acao: string, detalhe: Record<string, unknown>) {
   await db.collection("audit_logs").add({

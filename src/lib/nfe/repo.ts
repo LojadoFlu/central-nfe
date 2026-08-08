@@ -213,6 +213,18 @@ export async function baixarParcela(input: {
   return res.data as { ok: boolean; statusPagamento: string };
 }
 
+/** Baixa em lote: marca várias parcelas como pagas (mesma data/obs). */
+export async function baixarParcelasLote(input: {
+  parcelaIds: string[];
+  dataPagamento?: string;
+  obsPagamento?: string;
+}): Promise<{ ok: boolean; total: number }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeBaixarParcelasLote");
+  const res = await fn(input);
+  return res.data as { ok: boolean; total: number };
+}
+
 export interface Item {
   id: string;
   chNFe?: string;
