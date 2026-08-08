@@ -4,19 +4,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   listarDocumentos,
   listarParcelas,
   listarItens,
   listarEmpresas,
+  listarDespesasFixas,
   type NfeDocumento,
   type Parcela,
   type Item,
+  type DespesaFixa,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { formatBRL, formatCNPJ, formatarData, diasAte } from "@/lib/utils";
-import { Download } from "lucide-react";
+import { Download, X } from "lucide-react";
 
 type Relatorio = {
   headers: string[];
@@ -30,9 +33,28 @@ const TIPOS = [
   { key: "vencidas", label: "Contas vencidas" },
   { key: "produtos", label: "Produtos comprados" },
   { key: "compras_empresa", label: "Compras por empresa" },
+  { key: "despesas_fixas", label: "Despesas fixas" },
 ] as const;
 
 type TipoKey = (typeof TIPOS)[number]["key"];
+
+const CATEGORIAS: { key: string; label: string }[] = [
+  { key: "aluguel", label: "Aluguel" },
+  { key: "condominio", label: "Condomínio" },
+  { key: "energia", label: "Energia" },
+  { key: "agua", label: "Água" },
+  { key: "internet", label: "Internet" },
+  { key: "telefone", label: "Telefone" },
+  { key: "contabilidade", label: "Contabilidade" },
+  { key: "software", label: "Software/Sistema" },
+  { key: "salarios", label: "Salários" },
+  { key: "impostos", label: "Impostos/Taxas" },
+  { key: "outros", label: "Outros" },
+];
+const CAT_LABEL = Object.fromEntries(CATEGORIAS.map((c) => [c.key, c.label]));
+const REC_LABEL: Record<string, string> = {
+  mensal: "Mensal", bimestral: "Bimestral", trimestral: "Trimestral", semestral: "Semestral", anual: "Anual",
+};
 
 function baixarCSV(nome: string, r: Relatorio) {
   const esc = (s: string) => `"${(s ?? "").replace(/"/g, '""')}"`;
@@ -54,27 +76,62 @@ export default function RelatoriosPage() {
   const [parcelas, setParcelas] = useState<Parcela[]>([]);
   const [itens, setItens] = useState<Item[]>([]);
   const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [despesasFixas, setDespesasFixas] = useState<DespesaFixa[]>([]);
   const [tipo, setTipo] = useState<TipoKey>("compras_periodo");
 
+  // Filtros
+  const [de, setDe] = useState("");
+  const [ate, setAte] = useState("");
+  const [forn, setForn] = useState("");
+  const [cat, setCat] = useState("");
+
   const carregar = useCallback(async () => {
-    const [ds, ps, its, emps] = await Promise.all([
+    const [ds, ps, its, emps, dfs] = await Promise.all([
       listarDocumentos(300),
       listarParcelas(300),
       listarItens(1000),
       listarEmpresas(),
+      listarDespesasFixas(),
     ]);
     setDocs(ds);
     setParcelas(ps);
     setItens(its);
     setEmpresas(emps);
+    setDespesasFixas(dfs);
   }, []);
 
   useEffect(() => {
     void carregar();
   }, [carregar]);
 
+  // Fornecedores distintos (das notas) para o filtro.
+  const fornecedores = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of docs ?? []) if (d.cnpjEmit) m.set(d.cnpjEmit, d.xNomeEmit ?? d.cnpjEmit);
+    return [...m.entries()].map(([cnpj, nome]) => ({ cnpj, nome })).sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [docs]);
+
+  const passaPeriodo = useCallback(
+    (iso: string | null | undefined) => {
+      if (!de && !ate) return true;
+      if (!iso) return false;
+      const d = iso.slice(0, 10);
+      if (de && d < de) return false;
+      if (ate && d > ate) return false;
+      return true;
+    },
+    [de, ate],
+  );
+
+  const usaFornecedor = tipo !== "compras_empresa" && tipo !== "despesas_fixas";
+  const usaCategoria = tipo === "despesas_fixas";
+  const usaPeriodo = tipo !== "despesas_fixas";
+
   const relatorio: Relatorio = useMemo(() => {
-    const D = docs ?? [];
+    const D = (docs ?? []).filter(
+      (d) => (!forn || (d.cnpjEmit ?? "") === forn) && passaPeriodo(d.dhEmi),
+    );
+
     if (tipo === "compras_periodo") {
       return {
         headers: ["Fornecedor", "CNPJ", "NF", "Emissão", "Valor"],
@@ -107,7 +164,9 @@ export default function RelatoriosPage() {
       const venc = tipo === "vencidas";
       const rows = parcelas
         .filter((p) => {
-          if (p.statusPagamento === "pago") return false; // já baixada
+          if (p.statusPagamento === "pago") return false;
+          if (forn && (p.cnpjEmit ?? "") !== forn) return false;
+          if (!passaPeriodo(p.vencimento)) return false;
           const dias = diasAte(p.vencimento);
           return dias !== null && (venc ? dias < 0 : dias >= 0);
         })
@@ -128,8 +187,11 @@ export default function RelatoriosPage() {
       };
     }
     if (tipo === "produtos") {
+      const its = itens.filter(
+        (it) => (!forn || (it.cnpjEmit ?? "") === forn) && passaPeriodo(it.dhEmi),
+      );
       const m = new Map<string, { prod: string; forn: string; qtd: number; total: number }>();
-      for (const it of itens) {
+      for (const it of its) {
         const k = `${it.cnpjEmit ?? ""}|${it.descricao ?? ""}`;
         const g = m.get(k) ?? { prod: it.descricao ?? "—", forn: it.xNomeEmit ?? "—", qtd: 0, total: 0 };
         g.qtd += it.quantidade ?? 0;
@@ -141,11 +203,25 @@ export default function RelatoriosPage() {
         rows: [...m.values()]
           .sort((a, b) => b.total - a.total)
           .map((g) => [
-            g.prod,
-            g.forn,
-            g.qtd.toLocaleString("pt-BR"),
-            formatBRL(g.qtd ? g.total / g.qtd : 0),
-            formatBRL(g.total),
+            g.prod, g.forn, g.qtd.toLocaleString("pt-BR"),
+            formatBRL(g.qtd ? g.total / g.qtd : 0), formatBRL(g.total),
+          ]),
+      };
+    }
+    if (tipo === "despesas_fixas") {
+      const dfs = despesasFixas.filter((d) => !cat || d.categoria === cat);
+      return {
+        headers: ["Empresa", "Despesa", "Categoria", "Recorrência", "Dia venc.", "Valor previsto", "Situação"],
+        rows: dfs
+          .sort((a, b) => (b.valor ?? 0) - (a.valor ?? 0))
+          .map((d) => [
+            d.empresaNome ?? "—",
+            d.nome,
+            CAT_LABEL[d.categoria ?? "outros"] ?? d.categoria ?? "—",
+            REC_LABEL[d.recorrencia ?? "mensal"] ?? "Mensal",
+            d.diaVencimento != null ? String(d.diaVencimento) : "—",
+            formatBRL(d.valor),
+            d.ativo === false ? "Inativa" : "Ativa",
           ]),
       };
     }
@@ -165,15 +241,16 @@ export default function RelatoriosPage() {
         .sort((a, b) => b[1].total - a[1].total)
         .map(([c, g]) => [nomeEmp.get(c) ?? c, String(g.qtd), formatBRL(g.total)]),
     };
-  }, [tipo, docs, parcelas, itens, empresas]);
+  }, [tipo, docs, parcelas, itens, empresas, despesasFixas, forn, cat, passaPeriodo]);
 
   const labelAtual = TIPOS.find((t) => t.key === tipo)?.label ?? "";
+  const temFiltro = de || ate || forn || cat;
 
   return (
     <div>
       <PageHeader
         title="Relatórios"
-        description="Compras, vencimentos e produtos — exportáveis em CSV."
+        description="Compras, vencimentos, produtos e despesas — exportáveis em CSV."
         action={
           docs && relatorio.rows.length > 0 ? (
             <Button size="sm" variant="outline" onClick={() => baixarCSV(labelAtual, relatorio)}>
@@ -197,24 +274,82 @@ export default function RelatoriosPage() {
         ))}
       </div>
 
+      {/* Filtros */}
+      <Card className="mb-4 p-3">
+        <div className="flex flex-wrap items-end gap-3">
+          {usaPeriodo ? (
+            <>
+              <div className="space-y-1">
+                <label className="block text-xs text-muted-foreground">De</label>
+                <Input type="date" value={de} onChange={(e) => setDe(e.target.value)} className="h-9 w-40" />
+              </div>
+              <div className="space-y-1">
+                <label className="block text-xs text-muted-foreground">Até</label>
+                <Input type="date" value={ate} onChange={(e) => setAte(e.target.value)} className="h-9 w-40" />
+              </div>
+            </>
+          ) : null}
+
+          {usaFornecedor ? (
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground">Fornecedor</label>
+              <select
+                value={forn}
+                onChange={(e) => setForn(e.target.value)}
+                className="h-9 w-56 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Todos</option>
+                {fornecedores.map((f) => (
+                  <option key={f.cnpj} value={f.cnpj}>{f.nome}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          {usaCategoria ? (
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground">Tipo de despesa</label>
+              <select
+                value={cat}
+                onChange={(e) => setCat(e.target.value)}
+                className="h-9 w-48 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Todas</option>
+                {CATEGORIAS.map((c) => (
+                  <option key={c.key} value={c.key}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
+          {temFiltro ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => { setDe(""); setAte(""); setForn(""); setCat(""); }}
+            >
+              <X className="size-4" /> Limpar
+            </Button>
+          ) : null}
+        </div>
+      </Card>
+
       {docs === null ? (
         <Skeleton className="h-64" />
       ) : relatorio.rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Sem dados para este relatório ainda.</p>
+        <p className="text-sm text-muted-foreground">Sem dados para este relatório com os filtros atuais.</p>
       ) : (
         <Card className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase text-muted-foreground">
                 {relatorio.headers.map((h) => (
-                  <th key={h} className="whitespace-nowrap px-3 py-2 font-medium">
-                    {h}
-                  </th>
+                  <th key={h} className="whitespace-nowrap px-3 py-2 font-medium">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {relatorio.rows.slice(0, 300).map((row, i) => (
+              {relatorio.rows.slice(0, 400).map((row, i) => (
                 <tr key={i} className="border-b border-border/50 last:border-0">
                   {row.map((cell, j) => (
                     <td key={j} className={`whitespace-nowrap px-3 py-2 ${j >= relatorio.headers.length - 1 ? "tnum text-right font-medium" : ""}`}>
@@ -229,7 +364,8 @@ export default function RelatoriosPage() {
       )}
 
       <p className="mt-3 text-xs text-muted-foreground">
-        {relatorio.rows.length} linha(s). Exporte em CSV (abre no Excel). Base: notas sincronizadas.
+        {relatorio.rows.length} linha(s). Exporte em CSV (abre no Excel). Filtros de período e fornecedor aplicam às
+        compras/contas; tipo de despesa aplica ao relatório de despesas fixas.
       </p>
     </div>
   );
