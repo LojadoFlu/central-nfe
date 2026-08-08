@@ -163,6 +163,19 @@ export async function listarDocumentos(max = 50): Promise<NfeDocumento[]> {
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as NfeDocumento[];
 }
 
+/** Documentos (NF-e) de um fornecedor (por CNPJ do emitente). */
+export async function documentosDoFornecedor(cnpjEmit: string): Promise<NfeDocumento[]> {
+  const { db } = fb();
+  const q = query(
+    collection(db, "nfe_documents"),
+    where("cnpjEmit", "==", cnpjEmit),
+    orderBy("dhEmi", "desc"),
+    limit(300),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as NfeDocumento[];
+}
+
 /** Obtém um documento (NF-e) pelo id. */
 export async function obterDocumento(id: string): Promise<NfeDocumento | null> {
   const { db } = fb();
