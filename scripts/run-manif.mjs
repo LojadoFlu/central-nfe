@@ -11,7 +11,7 @@ const ex = await (await fetch(`https://identitytoolkit.googleapis.com/v1/account
 })).json();
 if (!ex.idToken) { console.log("TOKEN_FAIL", ex.error); process.exit(1); }
 const url = "https://southamerica-east1-central-nfe-1c8d8.cloudfunctions.net/nfeManifestar";
-const body = { data: { companyId: "59255964000123", chNFe: "35260657655941000180550010000017191445326722", tpEvento: "210210" } };
+const body = { data: { companyId: "59255964000123", chNFe: "33260828587707000165550040001760161915783128", tpEvento: "210210" } };
 console.log("Enviando Ciência da Operação...");
 const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${ex.idToken}` }, body: JSON.stringify(body) });
 const txt = await r.text();

@@ -4,7 +4,7 @@ import { postSoap } from "./soap";
 
 const NS_NFE = "http://www.portalfiscal.inf.br/nfe";
 const NS_WSDL = "http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4";
-const SOAP_ACTION = `${NS_WSDL}/nfeRecepcaoEvento`;
+const SOAP_ACTION = `${NS_WSDL}/nfeRecepcaoEventoNF`;
 
 const C14N = "http://www.w3.org/TR/2001/REC-xml-c14n-20010315";
 const ENVELOPED = "http://www.w3.org/2000/09/xmldsig#enveloped-signature";
