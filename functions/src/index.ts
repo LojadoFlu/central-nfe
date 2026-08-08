@@ -26,6 +26,7 @@ import {
   type TpEvento,
 } from "./sefaz/manifestacao";
 import { consultarDistribuicaoCTeNSU, sincronizarCTe } from "./sefaz/cte";
+import { consultarDFeNfseRaw, decodeArquivoXml, sincronizarNfse } from "./sefaz/nfse";
 
 const opcoes = { region: REGIAO };
 
@@ -358,6 +359,108 @@ export const cteSincronizarAgora = onCall(
 );
 
 /**
+ * NFS-e Nacional (serviços) — SONDAGEM do contrato do ADN. Faz um GET /DFe/{nsu}
+ * real e devolve o status HTTP + trecho cru da resposta (JSON), para ajustar o
+ * parser ao schema oficial antes do sync definitivo. Só admin/fiscal.
+ */
+export const nfseSondarContrato = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 60 },
+  async (req) => {
+    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const companyId = String(req.data?.companyId ?? "").trim();
+    const nsu = String(req.data?.nsu ?? "0").replace(/\D/g, "") || "0";
+    const ambiente = req.data?.ambiente === "producao" ? "producao" : "homologacao";
+    if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
+
+    const snap = await db.collection("nfe_companies").doc(companyId).get();
+    if (!snap.exists) throw new HttpsError("not-found", "Empresa não encontrada.");
+    const emp = snap.data() as { cnpj: string };
+
+    let cred: { pfxBase64: string; senha: string };
+    try {
+      cred = await lerSegredoCertificado(cnpjBase(emp.cnpj));
+    } catch {
+      throw new HttpsError("failed-precondition", "Certificado não instalado para esta empresa.");
+    }
+
+    try {
+      const { key, cert } = pfxParaPem(cred.pfxBase64, cred.senha);
+      const r = await consultarDFeNfseRaw({ ambiente, nsu, key, cert });
+      logger.info("nfseSondarContrato", { companyId, ambiente, nsu, httpStatus: r.httpStatus, len: r.body.length });
+      await auditar(uid, "nfse.sondar", { companyId, ambiente, nsu, httpStatus: r.httpStatus });
+
+      // Decodifica o 1º documento (base64+gzip → XML) para inspeção do schema.
+      let primeiroXml: string | null = null;
+      let status: string | null = null;
+      let qtd = 0;
+      let campos: string[] = [];
+      try {
+        const j = JSON.parse(r.body) as {
+          StatusProcessamento?: string;
+          LoteDFe?: Array<Record<string, unknown>>;
+        };
+        status = j.StatusProcessamento ?? null;
+        const lote = Array.isArray(j.LoteDFe) ? j.LoteDFe : [];
+        qtd = lote.length;
+        if (lote[0]) campos = Object.keys(lote[0]);
+        const b64 = lote[0]?.ArquivoXml as string | undefined;
+        if (b64) primeiroXml = decodeArquivoXml(b64).slice(0, 4000);
+      } catch {
+        // resposta não-JSON — retorna o corpo cru abaixo.
+      }
+
+      return {
+        ok: true,
+        ambiente,
+        nsu,
+        httpStatus: r.httpStatus,
+        status,
+        qtd,
+        camposItem: campos,
+        bodyHead: r.body.slice(0, 500),
+        primeiroXml,
+      };
+    } catch (e) {
+      const msg = (e as Error).message || String(e);
+      logger.error("nfseSondarContrato falhou", { companyId, ambiente, erro: msg });
+      return { ok: false, ambiente, nsu, erro: msg };
+    }
+  },
+);
+
+/** NFS-e Nacional — sincronização real (baixa/parseia/guarda os serviços). Só admin/fiscal. */
+export const nfseSincronizarAgora = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
+  async (req) => {
+    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const companyId = String(req.data?.companyId ?? "").trim();
+    if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
+
+    const snap = await db.collection("nfe_companies").doc(companyId).get();
+    if (!snap.exists) throw new HttpsError("not-found", "Empresa não encontrada.");
+    const emp = snap.data() as { cnpj: string; ambiente?: string };
+
+    let cred: { pfxBase64: string; senha: string };
+    try {
+      cred = await lerSegredoCertificado(cnpjBase(emp.cnpj));
+    } catch {
+      throw new HttpsError("failed-precondition", "Certificado não instalado para esta empresa.");
+    }
+
+    try {
+      const { key, cert } = pfxParaPem(cred.pfxBase64, cred.senha);
+      const r = await sincronizarNfse({ id: companyId, cnpj: emp.cnpj, ambiente: emp.ambiente }, key, cert);
+      await auditar(uid, "nfse.sincronizar", { companyId, novos: r.novos, ultNSU: r.ultNSU });
+      return { ok: true, ...r };
+    } catch (e) {
+      const msg = (e as Error).message || String(e);
+      logger.error("nfseSincronizarAgora falhou", { companyId, erro: msg });
+      return { ok: false, erro: msg };
+    }
+  },
+);
+
+/**
  * Sincronização automática (sem navegador). A cada 6h, percorre as empresas
  * ativas com certificado, respeitando o recuo do 656 (proximaSync).
  */
@@ -388,6 +491,12 @@ export const nfeSyncAgendado = onSchedule(
           await sincronizarCTe(alvo, key, cert);
         } catch (e) {
           logger.error("nfeSyncAgendado: CT-e falhou", { companyId: doc.id, erro: (e as Error).message });
+        }
+        // NFS-e Nacional (serviços) — ADN, NSU próprio.
+        try {
+          await sincronizarNfse(alvo, key, cert);
+        } catch (e) {
+          logger.error("nfeSyncAgendado: NFS-e falhou", { companyId: doc.id, erro: (e as Error).message });
         }
       } catch (e) {
         logger.error("nfeSyncAgendado: empresa falhou", { companyId: doc.id, erro: (e as Error).message });

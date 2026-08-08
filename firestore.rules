@@ -110,6 +110,24 @@ service cloud.firestore {
       allow read: if hasRole(['admin', 'fiscal']);
       allow write: if false;
     }
+
+    // NFS-e Nacional (serviços) — mesmo padrão do CT-e.
+    match /nfse_documents/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /nfse_events/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /nfse_sync_state/{id} {
+      allow read: if hasRole(['admin', 'fiscal']);
+      allow write: if false;
+    }
+    match /nfse_sync_logs/{id} {
+      allow read: if hasRole(['admin', 'fiscal']);
+      allow write: if false;
+    }
     match /nfe_alerts/{id} {
       allow read: if isAuth();
       allow write: if false;

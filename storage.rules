@@ -23,6 +23,12 @@ service firebase.storage {
       allow write, delete: if false; // só backend
     }
 
+    // /nfse/{cnpj}/{ano}/{mes}/{chave}.xml — XML original das NFS-e (serviços).
+    match /nfse/{allPaths=**} {
+      allow read: if isAuth();
+      allow write, delete: if false; // só backend
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

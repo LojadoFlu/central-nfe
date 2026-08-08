@@ -268,6 +268,51 @@ export async function sincronizarCTeAgora(companyId: string): Promise<ResultadoS
   return res.data as ResultadoSync;
 }
 
+// ---- NFS-e (serviços) ----
+
+export interface NfseDocumento {
+  id: string;
+  companyId?: string;
+  chNFSe?: string | null;
+  cnpjPrest?: string | null;
+  xNomePrest?: string | null;
+  vServ?: number | null;
+  vLiq?: number | null;
+  dhEmi?: string | null;
+  nNFSe?: string | null;
+  municipio?: string | null;
+  xTribNac?: string | null;
+  xDescServ?: string | null;
+  cStat?: string | null;
+  nsu?: string;
+  storagePath?: string;
+}
+
+/** Lista as NFS-e (serviços) mais recentes. */
+export async function listarNfses(max = 300): Promise<NfseDocumento[]> {
+  const { db } = fb();
+  const q = query(collection(db, "nfse_documents"), orderBy("dhEmi", "desc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as NfseDocumento[];
+}
+
+/** Estado de sincronização de NFS-e de uma empresa. */
+export async function obterNfseSyncState(companyId: string): Promise<SyncEstado | null> {
+  const { db } = fb();
+  const d = await getDoc(doc(db, "nfse_sync_state", companyId));
+  return d.exists() ? ({ id: d.id, ...(d.data() as object) } as SyncEstado) : null;
+}
+
+/** Dispara a sincronização real de NFS-e de uma empresa. */
+export async function sincronizarNfseAgora(
+  companyId: string,
+): Promise<{ ok: boolean; novos?: number; status?: string | null; ultNSU?: string; erro?: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfseSincronizarAgora");
+  const res = await fn({ companyId });
+  return res.data as { ok: boolean; novos?: number; status?: string | null; ultNSU?: string; erro?: string };
+}
+
 // ---- Acordos (renegociação de dívidas com fornecedores) ----
 
 export interface ParcelaAcordo {
