@@ -6,6 +6,15 @@ export function urlDistribuicao(ambiente: "homologacao" | "producao"): string {
     : "https://hom1.nfe.fazenda.gov.br/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx";
 }
 
+// Recepção de eventos (manifestação) — ATENÇÃO: hosts ANTIGOS www.nfe/hom.nfe
+// (diferente da distribuição, que usa www1/hom1). Confirmar na Relação de
+// Serviços Web oficial antes de produção.
+export function urlRecepcaoEvento(ambiente: "homologacao" | "producao"): string {
+  return ambiente === "producao"
+    ? "https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx"
+    : "https://hom.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
+}
+
 // Código IBGE da UF (cUFAutor).
 export const UF_IBGE: Record<string, string> = {
   RO: "11", AC: "12", AM: "13", RR: "14", PA: "15", AP: "16", TO: "17",

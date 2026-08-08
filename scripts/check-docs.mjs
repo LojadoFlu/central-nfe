@@ -1,0 +1,11 @@
+import { initializeApp, cert } from "firebase-admin/app";
+import { getFirestore } from "firebase-admin/firestore";
+import { readFileSync } from "node:fs";
+initializeApp({ credential: cert(JSON.parse(readFileSync("./serviceAccountKey.json","utf8"))) });
+const db = getFirestore();
+const snap = await db.collection("nfe_documents").get();
+let completo=0, resumo=0; const situacoes={};
+snap.forEach(d=>{ const x=d.data(); x.temXmlCompleto?completo++:resumo++; const s=x.situacao||"?"; situacoes[s]=(situacoes[s]||0)+1; });
+const ev = await db.collection("nfe_events").get();
+console.log(JSON.stringify({ nfe_documents: snap.size, completo, resumo, nfe_events: ev.size, situacoes }, null, 2));
+process.exit(0);

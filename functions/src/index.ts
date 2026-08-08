@@ -19,6 +19,12 @@ import {
 import { getStorage } from "firebase-admin/storage";
 import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
 import { sincronizarEmpresa, gravarItensEParcelas } from "./sefaz/sincronizacao";
+import {
+  enviarManifestacao,
+  DESC_EVENTO,
+  EVENTO_CONCLUSIVO,
+  type TpEvento,
+} from "./sefaz/manifestacao";
 
 const opcoes = { region: REGIAO };
 
@@ -363,6 +369,96 @@ export const nfeReprocessarItens = onCall(
     }
     await auditar(uid, "nfe.reprocessarItens", { companyId, docs, itens, parcelas, erros });
     return { ok: true, docs, itens, parcelas, erros };
+  },
+);
+
+/**
+ * Manifestação do destinatário (evento oficial à SEFAZ). Só admin/fiscal.
+ * Eventos conclusivos exigem confirmação explícita (garantida na UI); a
+ * Ciência é provisória. Op. não Realizada (210240) exige xJust 15–255.
+ */
+export const nfeManifestar = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 60 },
+  async (req) => {
+    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const d = req.data ?? {};
+    const companyId = String(d.companyId ?? "").trim();
+    const chNFe = somenteDigitos(String(d.chNFe ?? ""));
+    const tpEvento = String(d.tpEvento ?? "") as TpEvento;
+    const xJust = String(d.xJust ?? "").trim();
+
+    if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
+    if (chNFe.length !== 44) throw new HttpsError("invalid-argument", "Chave de acesso inválida.");
+    if (!DESC_EVENTO[tpEvento]) throw new HttpsError("invalid-argument", "Tipo de evento inválido.");
+    if (tpEvento === "210240" && (xJust.length < 15 || xJust.length > 255)) {
+      throw new HttpsError("invalid-argument", "Justificativa deve ter entre 15 e 255 caracteres.");
+    }
+
+    const empSnap = await db.collection("nfe_companies").doc(companyId).get();
+    if (!empSnap.exists) throw new HttpsError("not-found", "Empresa não encontrada.");
+    const emp = empSnap.data() as { cnpj: string; ambiente?: string };
+
+    let cred: { pfxBase64: string; senha: string };
+    try {
+      cred = await lerSegredoCertificado(cnpjBase(emp.cnpj));
+    } catch {
+      throw new HttpsError("failed-precondition", "Certificado não instalado para esta empresa.");
+    }
+
+    const ambiente = emp.ambiente === "producao" ? "producao" : "homologacao";
+    const now = agoraISO();
+    try {
+      const { key, cert } = pfxParaPem(cred.pfxBase64, cred.senha);
+      const r = await enviarManifestacao({
+        ambiente,
+        cnpj: somenteDigitos(emp.cnpj),
+        chNFe,
+        tpEvento,
+        xJust: tpEvento === "210240" ? xJust : undefined,
+        key,
+        cert,
+      });
+
+      // Registra a manifestação (sempre, mesmo se rejeitada — rastreabilidade).
+      await db.collection("nfe_manifestations").add({
+        companyId,
+        chNFe,
+        tpEvento,
+        descEvento: DESC_EVENTO[tpEvento],
+        conclusivo: EVENTO_CONCLUSIVO[tpEvento],
+        xJust: tpEvento === "210240" ? xJust : null,
+        cStat: r.cStatEvento,
+        xMotivo: r.xMotivoEvento,
+        nProt: r.nProt,
+        dhRegEvento: r.dhRegEvento,
+        ok: r.ok,
+        uid,
+        ambiente,
+        at: now,
+      });
+
+      // Atualiza o status de manifestação da nota, se aceito.
+      if (r.ok) {
+        await db.collection("nfe_documents").doc(chNFe).set(
+          {
+            manifestStatus: DESC_EVENTO[tpEvento],
+            manifestTpEvento: tpEvento,
+            manifestEm: now,
+            updatedAt: now,
+          },
+          { merge: true },
+        );
+      }
+
+      await auditar(uid, "sefaz.manifestar", {
+        companyId, chNFe, tpEvento, cStat: r.cStatEvento, nProt: r.nProt,
+      });
+      return { ...r };
+    } catch (e) {
+      const msg = (e as Error).message || String(e);
+      logger.error("nfeManifestar falhou", { companyId, chNFe, tpEvento, erro: msg });
+      return { ok: false, erro: msg };
+    }
   },
 );
 

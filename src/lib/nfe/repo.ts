@@ -114,9 +114,32 @@ export async function sincronizarAgora(companyId: string): Promise<ResultadoSync
   return res.data as ResultadoSync;
 }
 
+export interface ResultadoManifestacao {
+  ok: boolean;
+  cStatLote?: string | null;
+  cStatEvento?: string | null;
+  xMotivoEvento?: string | null;
+  nProt?: string | null;
+  erro?: string;
+}
+
+/** Envia um evento de manifestação do destinatário à SEFAZ. */
+export async function manifestar(input: {
+  companyId: string;
+  chNFe: string;
+  tpEvento: string;
+  xJust?: string;
+}): Promise<ResultadoManifestacao> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeManifestar");
+  const res = await fn(input);
+  return res.data as ResultadoManifestacao;
+}
+
 export interface NfeDocumento {
   id: string;
   companyId?: string;
+  manifestStatus?: string;
   chNFe?: string | null;
   cnpjEmit?: string | null;
   xNomeEmit?: string | null;
