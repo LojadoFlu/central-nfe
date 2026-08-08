@@ -29,11 +29,12 @@ function dataBR(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
 }
 
-function barcodeDataUrl(chave: string): string | null {
+function barcodeCanvas(chave: string): HTMLCanvasElement | null {
   try {
     const canvas = document.createElement("canvas");
-    JsBarcode(canvas, chave, { format: "CODE128C", displayValue: false, height: 45, width: 1.4, margin: 0 });
-    return canvas.toDataURL("image/png");
+    // Alta resolução (width por módulo alto) para não borrar ao ampliar no PDF.
+    JsBarcode(canvas, chave, { format: "CODE128C", displayValue: false, height: 90, width: 3, margin: 0 });
+    return canvas;
   } catch {
     return null;
   }
@@ -71,10 +72,14 @@ export function gerarDanfe(xml: string, nomeArquivo: string): void {
   doc.text(`Modelo ${txt(ide, "mod")}`, W - M, y + 14, { align: "right" });
 
   y += 18;
-  // Código de barras + chave
-  const bc = barcodeDataUrl(chave);
-  if (bc) doc.addImage(bc, "PNG", M, y, W - 2 * M, 12);
-  y += 13;
+  // Código de barras (Code128C da chave), centralizado e com proporção preservada.
+  const canvas = barcodeCanvas(chave);
+  if (canvas) {
+    const bcH = 15;
+    const bcW = Math.min(W - 2 * M, (bcH * canvas.width) / canvas.height);
+    doc.addImage(canvas.toDataURL("image/png"), "PNG", (W - bcW) / 2, y, bcW, bcH);
+  }
+  y += 17;
   doc.setFontSize(7).setFont("helvetica", "normal");
   doc.text("CHAVE DE ACESSO", W / 2, y, { align: "center" });
   doc.setFont("courier", "bold").setFontSize(8);
