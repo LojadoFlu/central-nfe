@@ -16,8 +16,9 @@ import {
   lerSegredoCertificado,
   nomeSegredoCertificado,
 } from "./lib/secrets";
+import { getStorage } from "firebase-admin/storage";
 import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
-import { sincronizarEmpresa } from "./sefaz/sincronizacao";
+import { sincronizarEmpresa, gravarItensEParcelas } from "./sefaz/sincronizacao";
 
 const opcoes = { region: REGIAO };
 
@@ -311,6 +312,57 @@ export const nfeSyncAgendado = onSchedule(
         logger.error("nfeSyncAgendado: empresa falhou", { companyId: doc.id, erro: (e as Error).message });
       }
     }
+  },
+);
+
+/**
+ * Backfill: reprocessa as NF-e COMPLETAS já baixadas, lendo o XML do Storage e
+ * extraindo itens (nfe_items) e parcelas (nfe_installments). Idempotente.
+ */
+export const nfeReprocessarItens = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
+  async (req) => {
+    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const companyId = String(req.data?.companyId ?? "").trim();
+    if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
+
+    const snap = await db.collection("nfe_documents").where("companyId", "==", companyId).get();
+    let docs = 0;
+    let itens = 0;
+    let parcelas = 0;
+    let erros = 0;
+    for (const d of snap.docs) {
+      const data = d.data() as {
+        temXmlCompleto?: boolean;
+        storagePath?: string;
+        chNFe?: string;
+        cnpjEmit?: string | null;
+        xNomeEmit?: string | null;
+        dhEmi?: string | null;
+      };
+      if (!data.temXmlCompleto || !data.storagePath || !data.chNFe) continue;
+      try {
+        const [buf] = await getStorage().bucket().file(data.storagePath).download();
+        const r = await gravarItensEParcelas(
+          {
+            companyId,
+            chNFe: data.chNFe,
+            cnpjEmit: data.cnpjEmit ?? null,
+            xNomeEmit: data.xNomeEmit ?? null,
+            dhEmi: data.dhEmi ?? null,
+          },
+          buf.toString("utf8"),
+        );
+        docs++;
+        itens += r.itens;
+        parcelas += r.parcelas;
+      } catch (e) {
+        erros++;
+        logger.error("nfeReprocessarItens: doc falhou", { id: d.id, erro: (e as Error).message });
+      }
+    }
+    await auditar(uid, "nfe.reprocessarItens", { companyId, docs, itens, parcelas, erros });
+    return { ok: true, docs, itens, parcelas, erros };
   },
 );
 

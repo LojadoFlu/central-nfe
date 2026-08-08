@@ -12,9 +12,13 @@ import {
   obterDocumento,
   baixarXmlTexto,
   urlDownloadXml,
+  itensDoDocumento,
+  parcelasDoDocumento,
   type NfeDocumento,
+  type Item,
+  type Parcela,
 } from "@/lib/nfe/repo";
-import { formatBRL, formatCNPJ, formatarDataHora } from "@/lib/utils";
+import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
 import { ArrowLeft, FileCode2, Download, FileText } from "lucide-react";
 
 function Linha({ rotulo, valor }: { rotulo: string; valor: React.ReactNode }) {
@@ -30,12 +34,21 @@ export default function NotaDetalhePage() {
   const params = useParams<{ id: string }>();
   const id = decodeURIComponent(params.id);
   const [doc, setDoc] = useState<NfeDocumento | null | undefined>(undefined);
+  const [itens, setItens] = useState<Item[]>([]);
+  const [parcelas, setParcelas] = useState<Parcela[]>([]);
   const [xml, setXml] = useState<string | null>(null);
   const [carregandoXml, setCarregandoXml] = useState(false);
   const [erroXml, setErroXml] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
-    setDoc(await obterDocumento(id));
+    const [d, its, pcs] = await Promise.all([
+      obterDocumento(id),
+      itensDoDocumento(id),
+      parcelasDoDocumento(id),
+    ]);
+    setDoc(d);
+    setItens(its);
+    setParcelas(pcs);
   }, [id]);
 
   useEffect(() => {
@@ -127,6 +140,56 @@ export default function NotaDetalhePage() {
           />
         </CardContent>
       </Card>
+
+      {/* Financeiro (parcelas) */}
+      {parcelas.length > 0 ? (
+        <Card className="mb-4">
+          <CardContent className="py-4">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Financeiro · {parcelas.length} parcela{parcelas.length > 1 ? "s" : ""}
+            </h2>
+            <div className="divide-y divide-border">
+              {parcelas.map((p) => (
+                <div key={p.id} className="flex items-center justify-between py-2 text-sm">
+                  <span className="text-muted-foreground">
+                    Parcela {p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
+                  </span>
+                  <span className="font-medium tnum">{formatBRL(p.valor)}</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Situação de pagamento não é inferida do XML (depende de conciliação futura).
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Produtos (itens) */}
+      {itens.length > 0 ? (
+        <Card className="mb-4">
+          <CardContent className="py-4">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Produtos · {itens.length} {itens.length > 1 ? "itens" : "item"}
+            </h2>
+            <div className="space-y-2">
+              {itens.map((it) => (
+                <div key={it.id} className="rounded-md border border-border p-2.5 text-sm">
+                  <p className="font-medium">{it.descricao ?? "—"}</p>
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground tnum">
+                    <span>
+                      {it.quantidade ?? "—"} {it.unidade ?? ""} × {formatBRL(it.valorUnitario)}
+                    </span>
+                    <span className="font-medium text-foreground">{formatBRL(it.valorTotal)}</span>
+                    {it.ncm ? <span>NCM {it.ncm}</span> : null}
+                    {it.cfop ? <span>CFOP {it.cfop}</span> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* Documento (XML / DANFE) */}
       <Card>

@@ -9,8 +9,14 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { buttonVariants } from "@/components/ui/button";
-import { cn, formatBRL, formatCNPJ, formatarData, normalizar } from "@/lib/utils";
-import { listarEmpresas, listarDocumentos, type NfeDocumento } from "@/lib/nfe/repo";
+import { cn, formatBRL, formatCNPJ, formatarData, normalizar, diasAte } from "@/lib/utils";
+import {
+  listarEmpresas,
+  listarDocumentos,
+  listarParcelas,
+  type NfeDocumento,
+  type Parcela,
+} from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { FileText } from "lucide-react";
 
@@ -23,13 +29,19 @@ function mesmoMes(iso: string | null | undefined, ref: Date): boolean {
 export default function InicioPage() {
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
+  const [parcelas, setParcelas] = useState<Parcela[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   const [fornecedor, setFornecedor] = useState("");
 
   const carregar = useCallback(async () => {
-    const [emps, ds] = await Promise.all([listarEmpresas(), listarDocumentos(200)]);
+    const [emps, ds, ps] = await Promise.all([
+      listarEmpresas(),
+      listarDocumentos(200),
+      listarParcelas(300),
+    ]);
     setEmpresas(emps);
     setDocs(ds);
+    setParcelas(ps);
   }, []);
 
   useEffect(() => {
@@ -52,8 +64,17 @@ export default function InicioPage() {
     const agora = new Date();
     const doMes = filtrados.filter((d) => mesmoMes(d.dhEmi, agora));
     const comprasMes = doMes.reduce((s, d) => s + (d.vNF ?? 0), 0);
-    return { comprasMes, notasMes: doMes.length, total: filtrados.length };
-  }, [filtrados]);
+    let aVencer = 0;
+    let vencido = 0;
+    for (const p of parcelas) {
+      if (empresaId && p.companyId !== empresaId) continue;
+      const dias = diasAte(p.vencimento);
+      if (dias === null) continue;
+      if (dias < 0) vencido += p.valor ?? 0;
+      else aVencer += p.valor ?? 0;
+    }
+    return { comprasMes, notasMes: doMes.length, total: filtrados.length, aVencer, vencido };
+  }, [filtrados, parcelas, empresaId]);
 
   const carregando = docs === null;
 
@@ -87,8 +108,8 @@ export default function InicioPage() {
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatCard label="Compras do mês" value={carregando ? "…" : formatBRL(resumo.comprasMes)} />
         <StatCard label="Notas do mês" value={carregando ? "…" : String(resumo.notasMes)} />
-        <StatCard label="A vencer" value="—" tone="warning" hint="requer parcelas" />
-        <StatCard label="Vencidas" value="—" tone="destructive" hint="requer parcelas" />
+        <StatCard label="A vencer" value={carregando ? "…" : formatBRL(resumo.aVencer)} tone="warning" />
+        <StatCard label="Vencidas" value={carregando ? "…" : formatBRL(resumo.vencido)} tone="destructive" />
       </div>
 
       {/* Últimas notas (filtradas) */}

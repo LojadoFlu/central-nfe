@@ -2,7 +2,7 @@ import * as crypto from "node:crypto";
 import { getStorage } from "firebase-admin/storage";
 import { db, somenteDigitos } from "../lib/base";
 import { consultarDistribuicaoNSU, type DocZip } from "./distribuicao";
-import { parseDoc, normalizarBusca } from "./parser";
+import { parseDoc, parseItens, parseParcelas, normalizarBusca } from "./parser";
 
 const MAX_ITER_POR_RUN = 20; // teto por execução (respeita timeout e evita loops)
 const RECUO_656_MS = 60 * 60 * 1000; // 1h de recuo no consumo indevido
@@ -151,6 +151,7 @@ async function salvarDoc(companyId: string, cnpj: string, d: DocZip): Promise<vo
 
   // NF-e (resumo ou completa). id = chave (idempotente: procNFe enriquece resNFe).
   const id = p.chNFe || `nsu_${d.nsu}`;
+  const completo = (d.schema || "").toLowerCase().includes("procnfe");
   await db.collection("nfe_documents").doc(id).set(
     {
       companyId,
@@ -165,7 +166,7 @@ async function salvarDoc(companyId: string, cnpj: string, d: DocZip): Promise<vo
       situacao: p.situacao,
       schema: d.schema,
       // completo se veio procNFe; senão é só resumo (aguarda manifestação/produção)
-      temXmlCompleto: (d.schema || "").toLowerCase().includes("procnfe"),
+      temXmlCompleto: completo,
       nsu: d.nsu,
       storagePath,
       hashSha256: hash,
@@ -174,4 +175,79 @@ async function salvarDoc(companyId: string, cnpj: string, d: DocZip): Promise<vo
     },
     { merge: true },
   );
+
+  // Se completa, extrai itens e parcelas (contas a pagar + produtos).
+  if (completo && p.chNFe) {
+    await gravarItensEParcelas(
+      { companyId, chNFe: p.chNFe, cnpjEmit: p.cnpjEmit, xNomeEmit: p.xNomeEmit, dhEmi: p.dhEmi },
+      d.xml,
+    );
+  }
+}
+
+/** Extrai e grava itens (nfe_items) e parcelas (nfe_installments) de uma NF-e completa. */
+export async function gravarItensEParcelas(
+  meta: {
+    companyId: string;
+    chNFe: string;
+    cnpjEmit: string | null;
+    xNomeEmit: string | null;
+    dhEmi: string | null;
+  },
+  xml: string,
+): Promise<{ itens: number; parcelas: number }> {
+  const itens = parseItens(xml);
+  const parcelas = parseParcelas(xml);
+  const now = new Date().toISOString();
+  const cnpjEmit = meta.cnpjEmit ? somenteDigitos(meta.cnpjEmit) : null;
+  const batch = db.batch();
+
+  for (const it of itens) {
+    batch.set(
+      db.collection("nfe_items").doc(`${meta.chNFe}_${it.nItem}`),
+      {
+        companyId: meta.companyId,
+        chNFe: meta.chNFe,
+        cnpjEmit,
+        xNomeEmit: meta.xNomeEmit,
+        dhEmi: meta.dhEmi,
+        descricao: it.xProd,
+        descricaoBusca: normalizarBusca(it.xProd),
+        cProd: it.cProd,
+        ean: it.cEAN,
+        ncm: it.ncm,
+        cest: it.cest,
+        cfop: it.cfop,
+        unidade: it.uCom,
+        quantidade: it.qCom,
+        valorUnitario: it.vUnCom,
+        valorTotal: it.vProd,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  }
+
+  for (const pc of parcelas) {
+    const nDup = pc.nDup || "1";
+    batch.set(
+      db.collection("nfe_installments").doc(`${meta.chNFe}_${nDup}`),
+      {
+        companyId: meta.companyId,
+        chNFe: meta.chNFe,
+        cnpjEmit,
+        xNomeEmit: meta.xNomeEmit,
+        nDup,
+        vencimento: pc.dVenc,
+        valor: pc.vDup,
+        // "pago" NUNCA é inferido do XML — depende de conciliação futura.
+        statusPagamento: "nao_informado",
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  }
+
+  if (itens.length || parcelas.length) await batch.commit();
+  return { itens: itens.length, parcelas: parcelas.length };
 }

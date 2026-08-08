@@ -8,6 +8,7 @@ import {
   limit,
   orderBy,
   query,
+  where,
 } from "firebase/firestore";
 import { httpsCallable } from "firebase/functions";
 import { getBytes, getDownloadURL, ref as storageRef } from "firebase/storage";
@@ -144,6 +145,61 @@ export async function obterDocumento(id: string): Promise<NfeDocumento | null> {
   const { db } = fb();
   const d = await getDoc(doc(db, "nfe_documents", id));
   return d.exists() ? ({ id: d.id, ...(d.data() as object) } as NfeDocumento) : null;
+}
+
+export interface Parcela {
+  id: string;
+  companyId?: string;
+  chNFe?: string;
+  cnpjEmit?: string | null;
+  xNomeEmit?: string | null;
+  nDup?: string;
+  vencimento?: string | null;
+  valor?: number | null;
+  statusPagamento?: string;
+}
+
+export interface Item {
+  id: string;
+  chNFe?: string;
+  cnpjEmit?: string | null;
+  xNomeEmit?: string | null;
+  dhEmi?: string | null;
+  descricao?: string | null;
+  cProd?: string | null;
+  ean?: string | null;
+  ncm?: string | null;
+  cfop?: string | null;
+  unidade?: string | null;
+  quantidade?: number | null;
+  valorUnitario?: number | null;
+  valorTotal?: number | null;
+}
+
+/** Lista parcelas (contas a pagar) ordenadas por vencimento. */
+export async function listarParcelas(max = 300): Promise<Parcela[]> {
+  const { db } = fb();
+  const q = query(collection(db, "nfe_installments"), orderBy("vencimento", "asc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Parcela[];
+}
+
+/** Parcelas de uma NF-e específica. */
+export async function parcelasDoDocumento(chNFe: string): Promise<Parcela[]> {
+  const { db } = fb();
+  const q = query(collection(db, "nfe_installments"), where("chNFe", "==", chNFe));
+  const snap = await getDocs(q);
+  return (snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Parcela[]).sort((a, b) =>
+    (a.nDup ?? "").localeCompare(b.nDup ?? ""),
+  );
+}
+
+/** Itens (produtos) de uma NF-e específica. */
+export async function itensDoDocumento(chNFe: string): Promise<Item[]> {
+  const { db } = fb();
+  const q = query(collection(db, "nfe_items"), where("chNFe", "==", chNFe));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Item[];
 }
 
 /** Lê o XML original (do Storage) como texto. */

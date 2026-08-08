@@ -91,6 +91,71 @@ export function parseDoc(xml: string, schema: string): DocParsed {
   };
 }
 
+function num(s: string | null): number | null {
+  if (s == null || s === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+export interface ItemParsed {
+  nItem: string;
+  cProd: string | null;
+  cEAN: string | null;
+  xProd: string | null;
+  ncm: string | null;
+  cest: string | null;
+  cfop: string | null;
+  uCom: string | null;
+  qCom: number | null;
+  vUnCom: number | null;
+  vProd: number | null;
+}
+
+/** Extrai os itens (<det><prod>) de uma NF-e completa (procNFe). */
+export function parseItens(xml: string): ItemParsed[] {
+  const out: ItemParsed[] = [];
+  const re = /<det\b[^>]*nItem="(\d+)"[^>]*>([\s\S]*?)<\/det>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    const prod = bloco(m[2], "prod") ?? m[2];
+    out.push({
+      nItem: m[1],
+      cProd: pick(prod, "cProd"),
+      cEAN: pick(prod, "cEAN"),
+      xProd: pick(prod, "xProd"),
+      ncm: pick(prod, "NCM"),
+      cest: pick(prod, "CEST"),
+      cfop: pick(prod, "CFOP"),
+      uCom: pick(prod, "uCom"),
+      qCom: num(pick(prod, "qCom")),
+      vUnCom: num(pick(prod, "vUnCom")),
+      vProd: num(pick(prod, "vProd")),
+    });
+  }
+  return out;
+}
+
+export interface ParcelaParsed {
+  nDup: string | null;
+  dVenc: string | null; // yyyy-MM-dd
+  vDup: number | null;
+}
+
+/** Extrai as duplicatas/parcelas (<cobr><dup>) de uma NF-e completa. */
+export function parseParcelas(xml: string): ParcelaParsed[] {
+  const out: ParcelaParsed[] = [];
+  const re = /<dup>([\s\S]*?)<\/dup>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(xml)) !== null) {
+    out.push({
+      nDup: pick(m[1], "nDup"),
+      dVenc: pick(m[1], "dVenc"),
+      vDup: num(pick(m[1], "vDup")),
+    });
+  }
+  return out;
+}
+
 /** Normaliza texto para busca (sem acento/caixa) — usado em xNomeEmit. */
 export function normalizarBusca(s: string | null | undefined): string {
   return (s || "")
