@@ -189,5 +189,18 @@ export function gerarDanfe(xml: string, nomeArquivo: string): void {
     doc.text(linhas, M, afterY + 4);
   }
 
-  doc.save(nomeArquivo);
+  // Abre o PDF numa nova aba (visualizar → salvar/imprimir/compartilhar).
+  // Se o pop-up for bloqueado, cai para download direto.
+  const blob = doc.output("blob");
+  const url = URL.createObjectURL(blob);
+  const win = window.open(url, "_blank");
+  if (!win) {
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nomeArquivo;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
