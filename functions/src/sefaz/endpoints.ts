@@ -11,8 +11,8 @@ export function urlDistribuicao(ambiente: "homologacao" | "producao"): string {
 // Serviços Web oficial antes de produção.
 export function urlRecepcaoEvento(ambiente: "homologacao" | "producao"): string {
   return ambiente === "producao"
-    ? "https://www.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx"
-    : "https://hom.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
+    ? "https://www1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx"
+    : "https://hom1.nfe.fazenda.gov.br/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx";
 }
 
 // Código IBGE da UF (cUFAutor).

@@ -1,6 +1,36 @@
 import * as https from "node:https";
 import { URL } from "node:url";
 
+/** GET simples com mTLS (diagnóstico, ex.: baixar o WSDL). */
+export function getComCert(
+  url: string,
+  tls: { key: string; cert: string },
+): Promise<{ httpStatus: number; body: string }> {
+  const u = new URL(url);
+  const options: https.RequestOptions = {
+    host: u.hostname,
+    path: u.pathname + u.search,
+    port: 443,
+    method: "GET",
+    key: tls.key,
+    cert: tls.cert,
+    minVersion: "TLSv1.2",
+    timeout: 30000,
+  };
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c) => chunks.push(c as Buffer));
+      res.on("end", () =>
+        resolve({ httpStatus: res.statusCode || 0, body: Buffer.concat(chunks).toString("utf8") }),
+      );
+    });
+    req.on("timeout", () => req.destroy(new Error("Timeout.")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 export interface RespostaSoap {
   httpStatus: number;
   body: string;

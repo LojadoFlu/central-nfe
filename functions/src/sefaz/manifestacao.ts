@@ -40,11 +40,18 @@ function dhEvento(): string {
   return d.toISOString().replace(/\.\d{3}Z$/, "-03:00");
 }
 
+/** Extrai apenas o primeiro certificado (folha) de um PEM com cadeia. */
+function primeiroCert(pem: string): string {
+  const m = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+  return m ? m[0] : pem;
+}
+
 /** Assina o elemento infEvento (dentro do envEvento) com XML-DSig (RSA-SHA1). */
 function assinar(envEventoXml: string, key: string, cert: string): string {
   const sig = new SignedXml({
     privateKey: key,
-    publicCert: cert,
+    // Só o certificado folha no KeyInfo (o schema da NF-e rejeita a cadeia).
+    publicCert: primeiroCert(cert),
     signatureAlgorithm: RSA_SHA1,
     canonicalizationAlgorithm: C14N,
   });
