@@ -24,6 +24,9 @@ export function formatCNPJ(cnpj: string | undefined | null): string {
 /** Data ISO → dd/MM/aaaa (pt-BR). Vazio → "—". */
 export function formatarData(iso: string | undefined | null): string {
   if (!iso) return "—";
+  // Data "pura" (YYYY-MM-DD): formata direto, sem converter fuso (evita off-by-one).
+  const so = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  if (so) return `${so[3]}/${so[2]}/${so[1]}`;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("pt-BR", {
@@ -61,7 +64,9 @@ export function normalizar(s: string | undefined | null): string {
 /** Dias restantes até uma data (negativo = atrasado). */
 export function diasAte(iso: string | undefined | null): number | null {
   if (!iso) return null;
-  const d = new Date(iso);
+  // Data "pura" (YYYY-MM-DD): interpreta no fuso local (evita off-by-one).
+  const so = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const d = so ? new Date(Number(so[1]), Number(so[2]) - 1, Number(so[3])) : new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   const hoje = new Date();
   const ms = d.setHours(0, 0, 0, 0) - hoje.setHours(0, 0, 0, 0);
