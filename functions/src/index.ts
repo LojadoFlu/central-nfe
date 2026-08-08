@@ -681,6 +681,94 @@ export const nfeExcluirAcordo = onCall(opcoes, async (req) => {
   return { ok: true };
 });
 
+/**
+ * Cria/atualiza uma DESPESA FIXA recorrente (aluguel, luz, internet, contabilidade…).
+ * Guarda valor mensal previsto + dia de vencimento. Só admin/financeiro.
+ */
+export const nfeSalvarDespesaFixa = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const id = String(d.id ?? "").trim();
+  const nome = String(d.nome ?? "").trim().slice(0, 120);
+  if (!nome) throw new HttpsError("invalid-argument", "Nome da despesa obrigatório.");
+  const valor = Number(d.valor);
+  if (!Number.isFinite(valor) || valor < 0) throw new HttpsError("invalid-argument", "Valor inválido.");
+
+  const diaNum = Math.floor(Number(d.diaVencimento));
+  const diaVencimento = Number.isInteger(diaNum) && diaNum >= 1 && diaNum <= 31 ? diaNum : null;
+  const now = agoraISO();
+
+  const ref = id
+    ? db.collection("nfe_fixed_expenses").doc(id)
+    : db.collection("nfe_fixed_expenses").doc();
+  const existe = id ? (await ref.get()).exists : false;
+
+  await ref.set(
+    {
+      id: ref.id,
+      nome,
+      categoria: String(d.categoria ?? "outros").trim().slice(0, 40) || "outros",
+      valor,
+      diaVencimento,
+      beneficiario: String(d.beneficiario ?? "").trim().slice(0, 120) || null,
+      observacao: String(d.observacao ?? "").trim().slice(0, 300) || null,
+      ativo: d.ativo === false ? false : true,
+      updatedAt: now,
+      ...(existe ? {} : { createdAt: now, createdBy: uid, pagamentos: {} }),
+    },
+    { merge: true },
+  );
+
+  await auditar(uid, existe ? "despesaFixa.atualizar" : "despesaFixa.criar", { id: ref.id, nome, valor });
+  return { ok: true, id: ref.id };
+});
+
+/** Marca uma despesa fixa como paga (ou reabre) num mês (YYYY-MM). Só admin/financeiro. */
+export const nfePagarDespesaFixa = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const id = String(d.id ?? "").trim();
+  const mes = String(d.mes ?? "");
+  const pago = d.pago !== false;
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  if (!/^\d{4}-\d{2}$/.test(mes)) throw new HttpsError("invalid-argument", "Mês inválido (YYYY-MM).");
+
+  const ref = db.collection("nfe_fixed_expenses").doc(id);
+  if (!(await ref.get()).exists) throw new HttpsError("not-found", "Despesa não encontrada.");
+  const now = agoraISO();
+  const campo = `pagamentos.${mes}`;
+
+  if (pago) {
+    const data = /^\d{4}-\d{2}-\d{2}$/.test(String(d.data ?? "")) ? String(d.data) : `${mes}-01`;
+    const valor = Number(d.valor);
+    await ref.update({
+      [campo]: {
+        pago: true,
+        data,
+        valor: Number.isFinite(valor) && valor > 0 ? valor : null,
+        por: uid,
+        em: now,
+      },
+      updatedAt: now,
+    });
+  } else {
+    await ref.update({ [campo]: FieldValue.delete(), updatedAt: now });
+  }
+
+  await auditar(uid, pago ? "despesaFixa.pagar" : "despesaFixa.reabrir", { id, mes });
+  return { ok: true };
+});
+
+/** Exclui uma despesa fixa. Só admin/financeiro. */
+export const nfeExcluirDespesaFixa = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const id = String(req.data?.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  await db.collection("nfe_fixed_expenses").doc(id).delete();
+  await auditar(uid, "despesaFixa.excluir", { id });
+  return { ok: true };
+});
+
 /** Registra evento de auditoria (rastreabilidade). */
 async function auditar(uid: string, acao: string, detalhe: Record<string, unknown>) {
   await db.collection("audit_logs").add({

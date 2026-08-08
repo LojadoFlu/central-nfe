@@ -281,6 +281,78 @@ export async function excluirAcordo(acordoId: string): Promise<{ ok: boolean }> 
   return res.data as { ok: boolean };
 }
 
+// ---- Despesas fixas (recorrentes) ----
+
+export interface PagamentoDespesa {
+  pago: boolean;
+  data?: string;
+  valor?: number | null;
+}
+
+export interface DespesaFixa {
+  id: string;
+  nome: string;
+  categoria?: string;
+  valor: number;
+  diaVencimento?: number | null;
+  beneficiario?: string | null;
+  observacao?: string | null;
+  ativo?: boolean;
+  pagamentos?: Record<string, PagamentoDespesa>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Lista as despesas fixas (ativas primeiro, depois por nome). */
+export async function listarDespesasFixas(): Promise<DespesaFixa[]> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, "nfe_fixed_expenses"));
+  const arr = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as DespesaFixa[];
+  return arr.sort((a, b) => {
+    if ((a.ativo !== false) !== (b.ativo !== false)) return a.ativo !== false ? -1 : 1;
+    return (a.nome ?? "").localeCompare(b.nome ?? "");
+  });
+}
+
+/** Cria/atualiza uma despesa fixa. */
+export async function salvarDespesaFixa(input: {
+  id?: string;
+  nome: string;
+  categoria?: string;
+  valor: number;
+  diaVencimento?: number;
+  beneficiario?: string;
+  observacao?: string;
+  ativo?: boolean;
+}): Promise<{ ok: boolean; id: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeSalvarDespesaFixa");
+  const res = await fn(input);
+  return res.data as { ok: boolean; id: string };
+}
+
+/** Marca uma despesa fixa como paga (ou reabre) num mês (YYYY-MM). */
+export async function pagarDespesaFixa(input: {
+  id: string;
+  mes: string;
+  pago: boolean;
+  data?: string;
+  valor?: number;
+}): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfePagarDespesaFixa");
+  const res = await fn(input);
+  return res.data as { ok: boolean };
+}
+
+/** Exclui uma despesa fixa. */
+export async function excluirDespesaFixa(id: string): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeExcluirDespesaFixa");
+  const res = await fn({ id });
+  return res.data as { ok: boolean };
+}
+
 /** Baixa em lote: marca várias parcelas como pagas (mesma data/obs). */
 export async function baixarParcelasLote(input: {
   parcelaIds: string[];

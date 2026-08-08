@@ -67,6 +67,7 @@ export default function AcordosPage() {
   const [expandido, setExpandido] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [ocupado, setOcupado] = useState<string | null>(null); // "acordoId:idx" ou "del:id"
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
 
   // Formulário
   const [formAberto, setFormAberto] = useState(false);
@@ -211,11 +212,11 @@ export default function AcordosPage() {
   }
 
   async function remover(a: Acordo) {
-    if (!confirm(`Excluir o acordo com ${a.nomeFornecedor}? Esta ação não pode ser desfeita.`)) return;
     setOcupado(`del:${a.id}`);
     setErro(null);
     try {
       await excluirAcordo(a.id);
+      setConfirmDel(null);
       await carregar();
     } catch (e) {
       setErro((e as Error).message);
@@ -468,20 +469,36 @@ export default function AcordosPage() {
                       ) : null}
 
                       {podeEditar ? (
-                        <div className="flex gap-2 pt-2">
-                          <Button size="sm" variant="outline" onClick={() => abrirEdicao(a)}>
-                            <Pencil className="size-4" /> Editar
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-destructive"
-                            disabled={ocupado === `del:${a.id}`}
-                            onClick={() => remover(a)}
-                          >
-                            <Trash2 className="size-4" /> Excluir
-                          </Button>
-                        </div>
+                        confirmDel === a.id ? (
+                          <div className="flex flex-wrap items-center gap-2 pt-2">
+                            <span className="text-xs text-destructive">Excluir este acordo? Não pode ser desfeito.</span>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={ocupado === `del:${a.id}`}
+                              onClick={() => remover(a)}
+                            >
+                              {ocupado === `del:${a.id}` ? "Excluindo…" : "Sim, excluir"}
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setConfirmDel(null)}>
+                              Não
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2 pt-2">
+                            <Button size="sm" variant="outline" onClick={() => abrirEdicao(a)}>
+                              <Pencil className="size-4" /> Editar
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-destructive"
+                              onClick={() => setConfirmDel(a.id)}
+                            >
+                              <Trash2 className="size-4" /> Excluir
+                            </Button>
+                          </div>
+                        )
                       ) : null}
                     </div>
                   ) : null}

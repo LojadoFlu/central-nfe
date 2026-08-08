@@ -84,6 +84,13 @@ service cloud.firestore {
       allow read: if isAuth();
       allow write: if false;
     }
+
+    // Despesas fixas recorrentes (aluguel, luz, internet…) — leitura por
+    // autenticado; escrita só backend (admin/financeiro via callable).
+    match /nfe_fixed_expenses/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
     match /nfe_alerts/{id} {
       allow read: if isAuth();
       allow write: if false;
