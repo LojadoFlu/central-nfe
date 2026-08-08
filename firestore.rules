@@ -91,6 +91,25 @@ service cloud.firestore {
       allow read: if isAuth();
       allow write: if false;
     }
+
+    // CT-e (fretes) — documentos, eventos, estado/logs de sync. Leitura por
+    // autenticado (estado/logs restritos a fiscal/admin); escrita só backend.
+    match /cte_documents/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /cte_events/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /cte_sync_state/{id} {
+      allow read: if hasRole(['admin', 'fiscal']);
+      allow write: if false;
+    }
+    match /cte_sync_logs/{id} {
+      allow read: if hasRole(['admin', 'fiscal']);
+      allow write: if false;
+    }
     match /nfe_alerts/{id} {
       allow read: if isAuth();
       allow write: if false;

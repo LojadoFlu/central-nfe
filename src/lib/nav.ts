@@ -12,6 +12,7 @@ import {
   Settings,
   Handshake,
   Receipt,
+  Container,
   type LucideIcon,
 } from "lucide-react";
 import type { Role } from "./auth/roles";
@@ -34,6 +35,7 @@ export const PRIMARY_NAV: NavItem[] = [
 
 /** Itens secundários — ficam em "Mais" (mobile) e na sidebar (desktop). */
 export const SECONDARY_NAV: NavItem[] = [
+  { label: "Fretes (CT-e)", href: "/ctes", icon: Container },
   { label: "Acordos", href: "/acordos", icon: Handshake, roles: ["admin", "financeiro"] },
   { label: "Despesas fixas", href: "/despesas", icon: Receipt, roles: ["admin", "financeiro"] },
   { label: "Empresas", href: "/empresas", icon: Building2, roles: ["admin"] },

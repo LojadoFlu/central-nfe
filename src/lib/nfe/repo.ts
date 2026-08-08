@@ -213,6 +213,61 @@ export async function baixarParcela(input: {
   return res.data as { ok: boolean; statusPagamento: string };
 }
 
+// ---- CT-e (fretes) ----
+
+export interface CteDocumento {
+  id: string;
+  companyId?: string;
+  chCTe?: string | null;
+  cnpjEmit?: string | null;
+  xNomeEmit?: string | null;
+  vTPrest?: number | null;
+  dhEmi?: string | null;
+  nCT?: string | null;
+  serie?: string | null;
+  tpCTe?: string | null;
+  ufIni?: string | null;
+  ufFim?: string | null;
+  xNomeRem?: string | null;
+  xNomeDest?: string | null;
+  situacao?: string | null;
+  schema?: string;
+  temXmlCompleto?: boolean;
+  nsu?: string;
+  storagePath?: string;
+}
+
+/** Lista os CT-e (fretes) mais recentes. */
+export async function listarCTes(max = 300): Promise<CteDocumento[]> {
+  const { db } = fb();
+  const q = query(collection(db, "cte_documents"), orderBy("dhEmi", "desc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as CteDocumento[];
+}
+
+/** Estado de sincronização de CT-e de uma empresa. */
+export async function obterCteSyncState(companyId: string): Promise<SyncEstado | null> {
+  const { db } = fb();
+  const d = await getDoc(doc(db, "cte_sync_state", companyId));
+  return d.exists() ? ({ id: d.id, ...(d.data() as object) } as SyncEstado) : null;
+}
+
+/** Testa a conexão com o CTeDistribuicaoDFe. */
+export async function testarConexaoCTe(companyId: string): Promise<ResultadoConexao> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "cteTestarConexao");
+  const res = await fn({ companyId });
+  return res.data as ResultadoConexao;
+}
+
+/** Dispara a sincronização real de CT-e de uma empresa. */
+export async function sincronizarCTeAgora(companyId: string): Promise<ResultadoSync> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "cteSincronizarAgora");
+  const res = await fn({ companyId });
+  return res.data as ResultadoSync;
+}
+
 // ---- Acordos (renegociação de dívidas com fornecedores) ----
 
 export interface ParcelaAcordo {
