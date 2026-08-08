@@ -193,6 +193,24 @@ export interface Parcela {
   vencimento?: string | null;
   valor?: number | null;
   statusPagamento?: string;
+  dataPagamento?: string | null;
+  valorPago?: number | null;
+  obsPagamento?: string | null;
+  baixadoEm?: string | null;
+}
+
+/** Marca uma parcela como paga (baixa) ou reabre. Passa pelo backend. */
+export async function baixarParcela(input: {
+  parcelaId: string;
+  pago: boolean;
+  dataPagamento?: string;
+  valorPago?: number;
+  obsPagamento?: string;
+}): Promise<{ ok: boolean; statusPagamento: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeBaixarParcela");
+  const res = await fn(input);
+  return res.data as { ok: boolean; statusPagamento: string };
 }
 
 export interface Item {

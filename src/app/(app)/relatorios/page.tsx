@@ -107,6 +107,7 @@ export default function RelatoriosPage() {
       const venc = tipo === "vencidas";
       const rows = parcelas
         .filter((p) => {
+          if (p.statusPagamento === "pago") return false; // já baixada
           const dias = diasAte(p.vencimento);
           return dias !== null && (venc ? dias < 0 : dias >= 0);
         })

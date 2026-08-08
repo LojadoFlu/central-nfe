@@ -15,6 +15,7 @@ import {
   itensDoDocumento,
   parcelasDoDocumento,
   manifestar,
+  baixarParcela,
   type NfeDocumento,
   type Item,
   type Parcela,
@@ -22,10 +23,10 @@ import {
 } from "@/lib/nfe/repo";
 import { gerarDanfe } from "@/lib/nfe/danfe";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { podeManifestar } from "@/lib/auth/roles";
+import { podeManifestar, podeAlterarFinanceiro } from "@/lib/auth/roles";
 import { Textarea } from "@/components/ui/textarea";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
-import { ArrowLeft, FileCode2, Download, FileText, ShieldCheck } from "lucide-react";
+import { ArrowLeft, FileCode2, Download, FileText, ShieldCheck, Check, RotateCcw } from "lucide-react";
 
 const EVENTOS: { tp: string; label: string; conclusivo: boolean }[] = [
   { tp: "210210", label: "Ciência da Operação", conclusivo: false },
@@ -58,6 +59,22 @@ export default function NotaDetalhePage() {
   const [xJust, setXJust] = useState("");
   const [manifestando, setManifestando] = useState(false);
   const [resManif, setResManif] = useState<ResultadoManifestacao | null>(null);
+  const [baixando, setBaixando] = useState<string | null>(null);
+  const podeBaixar = podeAlterarFinanceiro(role);
+
+  async function alternarPagamento(p: Parcela, pago: boolean) {
+    setBaixando(p.id);
+    try {
+      await baixarParcela({
+        parcelaId: p.id,
+        pago,
+        ...(pago ? { valorPago: p.valor ?? undefined } : {}),
+      });
+      await carregar();
+    } finally {
+      setBaixando(null);
+    }
+  }
 
   const carregar = useCallback(async () => {
     const [d, its, pcs] = await Promise.all([
@@ -304,17 +321,42 @@ export default function NotaDetalhePage() {
               Financeiro · {parcelas.length} parcela{parcelas.length > 1 ? "s" : ""}
             </h2>
             <div className="divide-y divide-border">
-              {parcelas.map((p) => (
-                <div key={p.id} className="flex items-center justify-between py-2 text-sm">
-                  <span className="text-muted-foreground">
-                    Parcela {p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
-                  </span>
-                  <span className="font-medium tnum">{formatBRL(p.valor)}</span>
-                </div>
-              ))}
+              {parcelas.map((p) => {
+                const paga = p.statusPagamento === "pago";
+                const ocupado = baixando === p.id;
+                return (
+                  <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
+                    <div className="min-w-0">
+                      <span className="text-muted-foreground">
+                        Parcela {p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
+                      </span>
+                      {paga ? (
+                        <span className="ml-2 text-xs text-success">Pago em {formatarData(p.dataPagamento)}</span>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium tnum">{formatBRL(p.valor)}</span>
+                      {paga ? (
+                        <Badge variant="success">Paga</Badge>
+                      ) : null}
+                      {podeBaixar ? (
+                        <Button
+                          size="sm"
+                          variant={paga ? "ghost" : "outline"}
+                          disabled={ocupado}
+                          onClick={() => alternarPagamento(p, !paga)}
+                        >
+                          {paga ? <RotateCcw className="size-4" /> : <Check className="size-4" />}
+                          {ocupado ? "…" : paga ? "Reabrir" : "Marcar pago"}
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              Situação de pagamento não é inferida do XML (depende de conciliação futura).
+              “Pago” nunca é inferido do XML — é uma baixa manual, registrada com autor e data.
             </p>
           </CardContent>
         </Card>

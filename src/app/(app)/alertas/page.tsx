@@ -111,6 +111,7 @@ export default function AlertasPage() {
     let proxN = 0;
     let proxV = 0;
     for (const p of parcelas) {
+      if (p.statusPagamento === "pago") continue; // baixada — fora dos alertas
       const dias = diasAte(p.vencimento);
       if (dias === null) continue;
       if (dias < 0) {

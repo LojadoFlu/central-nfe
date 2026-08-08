@@ -462,6 +462,69 @@ export const nfeManifestar = onCall(
   },
 );
 
+/**
+ * Baixa (conciliação) de uma parcela: marca como paga ou reabre.
+ * IMPORTANTE: "pago" NUNCA é inferido do XML — é sempre uma ação manual,
+ * registrada com autor e horário. Só admin/financeiro.
+ */
+export const nfeBaixarParcela = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const parcelaId = String(d.parcelaId ?? "").trim();
+  if (!parcelaId) throw new HttpsError("invalid-argument", "parcelaId obrigatório.");
+  const pago = d.pago !== false; // default = marcar como paga
+
+  const ref = db.collection("nfe_installments").doc(parcelaId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError("not-found", "Parcela não encontrada.");
+  const now = agoraISO();
+
+  if (pago) {
+    const valorPago =
+      d.valorPago != null && Number.isFinite(Number(d.valorPago)) ? Number(d.valorPago) : null;
+    // dataPagamento em YYYY-MM-DD; default = hoje.
+    const dataPagamento = /^\d{4}-\d{2}-\d{2}$/.test(String(d.dataPagamento ?? ""))
+      ? String(d.dataPagamento)
+      : now.slice(0, 10);
+    const obsPagamento = String(d.obsPagamento ?? "").trim().slice(0, 300) || null;
+    await ref.set(
+      {
+        statusPagamento: "pago",
+        dataPagamento,
+        valorPago,
+        obsPagamento,
+        baixadoPor: uid,
+        baixadoEm: now,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  } else {
+    // Reabre: volta a "nao_informado" e limpa os campos da baixa.
+    await ref.set(
+      {
+        statusPagamento: "nao_informado",
+        dataPagamento: FieldValue.delete(),
+        valorPago: FieldValue.delete(),
+        obsPagamento: FieldValue.delete(),
+        baixadoPor: FieldValue.delete(),
+        baixadoEm: FieldValue.delete(),
+        reabertoPor: uid,
+        reabertoEm: now,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  }
+
+  await auditar(uid, pago ? "financeiro.baixarParcela" : "financeiro.reabrirParcela", {
+    parcelaId,
+    valorPago: d.valorPago ?? null,
+    dataPagamento: pago ? String(d.dataPagamento ?? "") : null,
+  });
+  return { ok: true, statusPagamento: pago ? "pago" : "nao_informado" };
+});
+
 /** Registra evento de auditoria (rastreabilidade). */
 async function auditar(uid: string, acao: string, detalhe: Record<string, unknown>) {
   await db.collection("audit_logs").add({
