@@ -683,6 +683,10 @@ export const nfeSalvarAcordo = onCall(opcoes, async (req) => {
   const valorAcordado = parcelas.reduce((s: number, p: { valor: number }) => s + p.valor, 0);
   const valorOriginal = Number(d.valorOriginal);
 
+  const companyIdIn = String(d.companyId ?? "").trim();
+  const empresa = await resolverEmpresa(companyIdIn);
+  if (companyIdIn && !empresa) throw new HttpsError("invalid-argument", "Empresa inválida.");
+
   const ref = id
     ? db.collection("nfe_agreements").doc(id)
     : db.collection("nfe_agreements").doc();
@@ -691,6 +695,8 @@ export const nfeSalvarAcordo = onCall(opcoes, async (req) => {
   await ref.set(
     {
       id: ref.id,
+      companyId: empresa?.id ?? null,
+      empresaNome: empresa?.nome ?? null,
       cnpjFornecedor: somenteDigitos(String(d.cnpjFornecedor ?? "")) || null,
       nomeFornecedor,
       descricao: String(d.descricao ?? "").trim().slice(0, 200) || null,
@@ -773,6 +779,10 @@ export const nfeSalvarDespesaFixa = onCall(opcoes, async (req) => {
   const diaVencimento = Number.isInteger(diaNum) && diaNum >= 1 && diaNum <= 31 ? diaNum : null;
   const now = agoraISO();
 
+  const companyIdIn = String(d.companyId ?? "").trim();
+  const empresa = await resolverEmpresa(companyIdIn);
+  if (companyIdIn && !empresa) throw new HttpsError("invalid-argument", "Empresa inválida.");
+
   const ref = id
     ? db.collection("nfe_fixed_expenses").doc(id)
     : db.collection("nfe_fixed_expenses").doc();
@@ -781,9 +791,18 @@ export const nfeSalvarDespesaFixa = onCall(opcoes, async (req) => {
   await ref.set(
     {
       id: ref.id,
+      companyId: empresa?.id ?? null,
+      empresaNome: empresa?.nome ?? null,
       nome,
       categoria: String(d.categoria ?? "outros").trim().slice(0, 40) || "outros",
       valor,
+      recorrencia: ["mensal", "bimestral", "trimestral", "semestral", "anual"].includes(String(d.recorrencia))
+        ? String(d.recorrencia)
+        : "mensal",
+      mesBase:
+        Number.isInteger(Number(d.mesBase)) && Number(d.mesBase) >= 1 && Number(d.mesBase) <= 12
+          ? Number(d.mesBase)
+          : null,
       diaVencimento,
       beneficiario: String(d.beneficiario ?? "").trim().slice(0, 120) || null,
       observacao: String(d.observacao ?? "").trim().slice(0, 300) || null,
@@ -809,18 +828,21 @@ export const nfePagarDespesaFixa = onCall(opcoes, async (req) => {
   if (!/^\d{4}-\d{2}$/.test(mes)) throw new HttpsError("invalid-argument", "Mês inválido (YYYY-MM).");
 
   const ref = db.collection("nfe_fixed_expenses").doc(id);
-  if (!(await ref.get()).exists) throw new HttpsError("not-found", "Despesa não encontrada.");
+  const dsnap = await ref.get();
+  if (!dsnap.exists) throw new HttpsError("not-found", "Despesa não encontrada.");
+  const previsto = (dsnap.data() as { valor?: number }).valor ?? null;
   const now = agoraISO();
   const campo = `pagamentos.${mes}`;
 
   if (pago) {
     const data = /^\d{4}-\d{2}-\d{2}$/.test(String(d.data ?? "")) ? String(d.data) : `${mes}-01`;
-    const valor = Number(d.valor);
+    const valor = Number(d.valor); // valor REAL pago (pode diferir do previsto)
     await ref.update({
       [campo]: {
         pago: true,
         data,
-        valor: Number.isFinite(valor) && valor > 0 ? valor : null,
+        valor: Number.isFinite(valor) && valor > 0 ? valor : previsto,
+        previsto,
         por: uid,
         em: now,
       },
@@ -843,6 +865,15 @@ export const nfeExcluirDespesaFixa = onCall(opcoes, async (req) => {
   await auditar(uid, "despesaFixa.excluir", { id });
   return { ok: true };
 });
+
+/** Resolve a empresa (nfe_companies) para associar a registros manuais. */
+async function resolverEmpresa(companyId: string): Promise<{ id: string; nome: string } | null> {
+  if (!companyId) return null;
+  const snap = await db.collection("nfe_companies").doc(companyId).get();
+  if (!snap.exists) return null;
+  const e = snap.data() as { razaoSocial?: string; nomeFantasia?: string };
+  return { id: companyId, nome: e.nomeFantasia || e.razaoSocial || companyId };
+}
 
 /** Registra evento de auditoria (rastreabilidade). */
 async function auditar(uid: string, acao: string, detalhe: Record<string, unknown>) {

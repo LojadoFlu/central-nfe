@@ -280,6 +280,8 @@ export interface ParcelaAcordo {
 
 export interface Acordo {
   id: string;
+  companyId?: string | null;
+  empresaNome?: string | null;
   cnpjFornecedor?: string | null;
   nomeFornecedor: string;
   descricao?: string | null;
@@ -302,6 +304,7 @@ export async function listarAcordos(): Promise<Acordo[]> {
 /** Cria/atualiza um acordo. */
 export async function salvarAcordo(input: {
   id?: string;
+  companyId?: string;
   cnpjFornecedor?: string;
   nomeFornecedor: string;
   descricao?: string;
@@ -341,14 +344,21 @@ export async function excluirAcordo(acordoId: string): Promise<{ ok: boolean }> 
 export interface PagamentoDespesa {
   pago: boolean;
   data?: string;
-  valor?: number | null;
+  valor?: number | null; // valor REAL pago
+  previsto?: number | null; // valor previsto na hora da baixa
 }
+
+export type Recorrencia = "mensal" | "bimestral" | "trimestral" | "semestral" | "anual";
 
 export interface DespesaFixa {
   id: string;
+  companyId?: string | null;
+  empresaNome?: string | null;
   nome: string;
   categoria?: string;
-  valor: number;
+  valor: number; // valor previsto
+  recorrencia?: Recorrencia;
+  mesBase?: number | null; // 1-12, âncora para recorrências não mensais
   diaVencimento?: number | null;
   beneficiario?: string | null;
   observacao?: string | null;
@@ -372,9 +382,12 @@ export async function listarDespesasFixas(): Promise<DespesaFixa[]> {
 /** Cria/atualiza uma despesa fixa. */
 export async function salvarDespesaFixa(input: {
   id?: string;
+  companyId?: string;
   nome: string;
   categoria?: string;
   valor: number;
+  recorrencia?: Recorrencia;
+  mesBase?: number;
   diaVencimento?: number;
   beneficiario?: string;
   observacao?: string;

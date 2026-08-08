@@ -15,9 +15,11 @@ import {
   baixarParcelaAcordo,
   listarDocumentos,
   listarParcelas,
+  listarEmpresas,
   type Acordo,
   type ParcelaAcordo,
 } from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { podeAlterarFinanceiro } from "@/lib/auth/roles";
 import { formatBRL, formatCNPJ, formatarData, diasAte } from "@/lib/utils";
@@ -61,6 +63,8 @@ export default function AcordosPage() {
   const { role } = useAuth();
   const podeEditar = podeAlterarFinanceiro(role);
   const [acordos, setAcordos] = useState<Acordo[] | null>(null);
+  const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [filtroEmp, setFiltroEmp] = useState(""); // "" = todas
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [dividaPorCnpj, setDividaPorCnpj] = useState<Map<string, number>>(new Map());
   const [erro, setErro] = useState<string | null>(null);
@@ -72,6 +76,7 @@ export default function AcordosPage() {
   // Formulário
   const [formAberto, setFormAberto] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const [fEmpresa, setFEmpresa] = useState("");
   const [fNome, setFNome] = useState("");
   const [fCnpj, setFCnpj] = useState("");
   const [fDescricao, setFDescricao] = useState("");
@@ -85,8 +90,14 @@ export default function AcordosPage() {
   const carregar = useCallback(async () => {
     setErro(null);
     try {
-      const [ac, docs, parcelas] = await Promise.all([listarAcordos(), listarDocumentos(300), listarParcelas(300)]);
+      const [ac, docs, parcelas, emps] = await Promise.all([
+        listarAcordos(),
+        listarDocumentos(300),
+        listarParcelas(300),
+        listarEmpresas(),
+      ]);
       setAcordos(ac);
+      setEmpresas(emps);
       // Fornecedores distintos (para sugestão)
       const mapa = new Map<string, string>();
       for (const d of docs) if (d.cnpjEmit && d.xNomeEmit) mapa.set(d.cnpjEmit, d.xNomeEmit);
@@ -111,6 +122,7 @@ export default function AcordosPage() {
 
   function resetForm() {
     setEditId(null);
+    setFEmpresa(empresas.length === 1 ? empresas[0].id : "");
     setFNome("");
     setFCnpj("");
     setFDescricao("");
@@ -128,6 +140,7 @@ export default function AcordosPage() {
 
   function abrirEdicao(a: Acordo) {
     setEditId(a.id);
+    setFEmpresa(a.companyId ?? "");
     setFNome(a.nomeFornecedor);
     setFCnpj(a.cnpjFornecedor ?? "");
     setFDescricao(a.descricao ?? "");
@@ -182,6 +195,7 @@ export default function AcordosPage() {
     try {
       await salvarAcordo({
         id: editId ?? undefined,
+        companyId: fEmpresa || undefined,
         nomeFornecedor: fNome.trim(),
         cnpjFornecedor: fCnpj || undefined,
         descricao: fDescricao.trim() || undefined,
@@ -226,6 +240,7 @@ export default function AcordosPage() {
   }
 
   const dividaSelec = fCnpj ? dividaPorCnpj.get(fCnpj) ?? 0 : 0;
+  const visiveis = (acordos ?? []).filter((a) => !filtroEmp || (a.companyId ?? "") === filtroEmp);
 
   return (
     <div>
@@ -255,6 +270,24 @@ export default function AcordosPage() {
                 <X className="size-4" /> Fechar
               </Button>
             </div>
+
+            {empresas.length > 0 ? (
+              <div className="space-y-1.5">
+                <label className="text-xs text-muted-foreground">Empresa</label>
+                <select
+                  value={fEmpresa}
+                  onChange={(e) => setFEmpresa(e.target.value)}
+                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                >
+                  <option value="">— Selecione a empresa —</option>
+                  {empresas.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.nomeFantasia || e.razaoSocial}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
 
             <div className="space-y-1.5">
               <label className="text-xs text-muted-foreground">Fornecedor</label>
@@ -382,19 +415,35 @@ export default function AcordosPage() {
         </Card>
       ) : null}
 
+      {/* Filtro por empresa */}
+      {empresas.length > 1 && !formAberto ? (
+        <select
+          value={filtroEmp}
+          onChange={(e) => setFiltroEmp(e.target.value)}
+          className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Todas as empresas</option>
+          {empresas.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.nomeFantasia || e.razaoSocial}
+            </option>
+          ))}
+        </select>
+      ) : null}
+
       {/* Lista */}
       {acordos === null ? (
         <div className="space-y-3">
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />
         </div>
-      ) : acordos.length === 0 ? (
+      ) : visiveis.length === 0 ? (
         <ModulePlaceholder icon={Handshake} title="Nenhum acordo" etapa="Renegociações">
           Registre aqui os acordos feitos com fornecedores para dívidas em atraso: valores e datas de pagamento.
         </ModulePlaceholder>
       ) : (
         <div className="space-y-3">
-          {acordos.map((a) => {
+          {visiveis.map((a) => {
             const r = resumoAcordo(a);
             const aberto = expandido === a.id;
             const proxDias = r.proxima ? diasAte(r.proxima.vencimento) : null;
@@ -412,6 +461,9 @@ export default function AcordosPage() {
                         <Badge variant={r.quitado ? "success" : "warning"}>{r.quitado ? "Quitado" : "Ativo"}</Badge>
                       </div>
                       {a.descricao ? <p className="text-xs text-muted-foreground">{a.descricao}</p> : null}
+                      {a.empresaNome ? (
+                        <p className="mt-0.5 text-[11px] font-medium text-primary">{a.empresaNome}</p>
+                      ) : null}
                       <p className="mt-1 text-xs text-muted-foreground">
                         {r.pagasN}/{r.totalN} parcelas pagas · {formatBRL(r.pago)} de {formatBRL(r.total)}
                         {!r.quitado && r.proxima
