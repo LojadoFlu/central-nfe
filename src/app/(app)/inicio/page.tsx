@@ -14,8 +14,10 @@ import {
   listarEmpresas,
   listarDocumentos,
   listarParcelas,
+  listarNfses,
   type NfeDocumento,
   type Parcela,
+  type NfseDocumento,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { FileText } from "lucide-react";
@@ -30,18 +32,21 @@ export default function InicioPage() {
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
   const [parcelas, setParcelas] = useState<Parcela[]>([]);
+  const [nfses, setNfses] = useState<NfseDocumento[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   const [fornecedor, setFornecedor] = useState("");
 
   const carregar = useCallback(async () => {
-    const [emps, ds, ps] = await Promise.all([
+    const [emps, ds, ps, ns] = await Promise.all([
       listarEmpresas(),
       listarDocumentos(200),
       listarParcelas(300),
+      listarNfses(300),
     ]);
     setEmpresas(emps);
     setDocs(ds);
     setParcelas(ps);
+    setNfses(ns);
   }, []);
 
   useEffect(() => {
@@ -73,8 +78,14 @@ export default function InicioPage() {
       if (dias < 0) vencido += p.valor ?? 0;
       else aVencer += p.valor ?? 0;
     }
-    return { comprasMes, notasMes: doMes.length, total: filtrados.length, aVencer, vencido };
-  }, [filtrados, parcelas, empresaId]);
+    // Serviços (NFS-e) do mês — respeita o filtro de empresa.
+    let servicosMes = 0;
+    for (const n of nfses) {
+      if (empresaId && n.companyId !== empresaId) continue;
+      if (mesmoMes(n.dhEmi, agora)) servicosMes += n.vServ ?? n.vLiq ?? 0;
+    }
+    return { comprasMes, notasMes: doMes.length, total: filtrados.length, aVencer, vencido, servicosMes };
+  }, [filtrados, parcelas, empresaId, nfses]);
 
   const carregando = docs === null;
 
@@ -105,8 +116,11 @@ export default function InicioPage() {
       </div>
 
       {/* Cards */}
-      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
         <StatCard label="Compras do mês" value={carregando ? "…" : formatBRL(resumo.comprasMes)} />
+        <Link href="/nfses" className="rounded-lg">
+          <StatCard label="Serviços do mês" value={carregando ? "…" : formatBRL(resumo.servicosMes)} tone="success" />
+        </Link>
         <StatCard label="Notas do mês" value={carregando ? "…" : String(resumo.notasMes)} />
         <StatCard label="A vencer" value={carregando ? "…" : formatBRL(resumo.aVencer)} tone="warning" />
         <StatCard label="Vencidas" value={carregando ? "…" : formatBRL(resumo.vencido)} tone="destructive" />

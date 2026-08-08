@@ -18,8 +18,9 @@ import {
   type SyncEstado,
 } from "@/lib/nfe/repo";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { gerarDanfse } from "@/lib/nfe/danfse";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora, normalizar } from "@/lib/utils";
-import { Wrench, ChevronDown, RefreshCw, FileCode2, Download } from "lucide-react";
+import { Wrench, ChevronDown, RefreshCw, FileCode2, Download, FileText } from "lucide-react";
 
 const COMPANY_ID = "59255964000123";
 
@@ -82,6 +83,17 @@ export default function NfsesPage() {
     if (!c.storagePath) return;
     try {
       window.open(await urlDownloadXml(c.storagePath), "_blank");
+    } catch (e) {
+      setErro((e as Error).message);
+    }
+  }
+  async function gerarDanfsePdf(c: NfseDocumento) {
+    if (!c.storagePath) return;
+    setErro(null);
+    try {
+      const xml = xmls[c.id] ?? (await baixarXmlTexto(c.storagePath));
+      if (!xmls[c.id]) setXmls((p) => ({ ...p, [c.id]: xml }));
+      gerarDanfse(xml, `DANFSe-${c.chNFSe ?? c.id}.pdf`);
     } catch (e) {
       setErro((e as Error).message);
     }
@@ -197,6 +209,9 @@ export default function NfsesPage() {
                         </Button>
                         <Button size="sm" variant="outline" onClick={() => baixarXml(c)} disabled={!c.storagePath}>
                           <Download className="size-4" /> Baixar XML
+                        </Button>
+                        <Button size="sm" onClick={() => gerarDanfsePdf(c)} disabled={!c.storagePath}>
+                          <FileText className="size-4" /> DANFSe (PDF)
                         </Button>
                       </div>
 
