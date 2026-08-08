@@ -305,7 +305,7 @@ export default function DespesasPage() {
 
             {empresas.length > 0 ? (
               <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground">Empresa</label>
+                <label className="block text-xs text-muted-foreground">Empresa</label>
                 <select value={fEmpresa} onChange={(e) => setFEmpresa(e.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
                   <option value="">— Selecione a empresa —</option>
                   {empresas.map((e) => (
@@ -316,37 +316,37 @@ export default function DespesasPage() {
             ) : null}
 
             <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">Nome</label>
+              <label className="block text-xs text-muted-foreground">Nome</label>
               <Input placeholder="Ex.: Condomínio loja Barra" value={fNome} onChange={(e) => setFNome(e.target.value)} maxLength={120} />
             </div>
 
             <div className="flex flex-wrap gap-3">
               <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground">Categoria</label>
+                <label className="block text-xs text-muted-foreground">Categoria</label>
                 <select value={fCategoria} onChange={(e) => setFCategoria(e.target.value)} className="h-10 w-44 rounded-md border border-input bg-background px-3 text-sm">
                   {CATEGORIAS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                 </select>
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground">Valor previsto (R$)</label>
-                <Input type="number" step="0.01" inputMode="decimal" value={fValor} onChange={(e) => setFValor(e.target.value)} className="w-36" />
+                <label className="block text-xs text-muted-foreground">Valor previsto (R$)</label>
+                <Input type="number" step="0.01" inputMode="decimal" value={fValor} onChange={(e) => setFValor(e.target.value)} className="h-10 w-36" />
               </div>
               <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground">Dia venc.</label>
-                <Input type="number" inputMode="numeric" min={1} max={31} placeholder="10" value={fDia} onChange={(e) => setFDia(e.target.value)} className="w-24" />
+                <label className="block text-xs text-muted-foreground">Dia venc.</label>
+                <Input type="number" inputMode="numeric" min={1} max={31} placeholder="10" value={fDia} onChange={(e) => setFDia(e.target.value)} className="h-10 w-24" />
               </div>
             </div>
 
             <div className="flex flex-wrap gap-3">
               <div className="space-y-1.5">
-                <label className="text-xs text-muted-foreground">Recorrência</label>
+                <label className="block text-xs text-muted-foreground">Recorrência</label>
                 <select value={fRecorrencia} onChange={(e) => setFRecorrencia(e.target.value)} className="h-10 w-40 rounded-md border border-input bg-background px-3 text-sm">
                   {RECORRENCIAS.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
                 </select>
               </div>
               {fRecorrencia !== "mensal" ? (
                 <div className="space-y-1.5">
-                  <label className="text-xs text-muted-foreground">Mês de referência</label>
+                  <label className="block text-xs text-muted-foreground">Mês de referência</label>
                   <select value={fMesBase} onChange={(e) => setFMesBase(e.target.value)} className="h-10 w-32 rounded-md border border-input bg-background px-3 text-sm">
                     {MESES.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
                   </select>
@@ -355,11 +355,11 @@ export default function DespesasPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">Beneficiário (opcional)</label>
+              <label className="block text-xs text-muted-foreground">Beneficiário (opcional)</label>
               <Input placeholder="Ex.: Administradora, Light, Vivo…" value={fBenef} onChange={(e) => setFBenef(e.target.value)} maxLength={120} />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs text-muted-foreground">Observação (opcional)</label>
+              <label className="block text-xs text-muted-foreground">Observação (opcional)</label>
               <Input value={fObs} onChange={(e) => setFObs(e.target.value)} maxLength={300} />
             </div>
             <label className="flex items-center gap-2 text-sm">
