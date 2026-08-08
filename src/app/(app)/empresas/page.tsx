@@ -13,18 +13,27 @@ import { podeGerirCertificado } from "@/lib/auth/roles";
 import { listarEmpresas, salvarEmpresa } from "@/lib/nfe/repo";
 import { formatCNPJ } from "@/lib/utils";
 import type { Company } from "@/lib/nfe/types";
-import { Building2, Plus } from "lucide-react";
+import { Building2, Plus, Pencil } from "lucide-react";
 
-const VAZIO = { razaoSocial: "", cnpj: "", uf: "", ambiente: "homologacao" as const };
+interface FormEmpresa {
+  id?: string;
+  razaoSocial: string;
+  nomeFantasia: string;
+  cnpj: string;
+  uf: string;
+  ambiente: "producao" | "homologacao";
+}
+const VAZIO: FormEmpresa = { razaoSocial: "", nomeFantasia: "", cnpj: "", uf: "", ambiente: "producao" };
 
 export default function EmpresasPage() {
   const { role } = useAuth();
   const podeEditar = podeGerirCertificado(role); // admin
   const [empresas, setEmpresas] = useState<Company[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  const [form, setForm] = useState(VAZIO);
+  const [form, setForm] = useState<FormEmpresa>(VAZIO);
   const [mostrarForm, setMostrarForm] = useState(false);
   const [salvando, setSalvando] = useState(false);
+  const editando = !!form.id;
 
   const carregar = useCallback(async () => {
     setErro(null);
@@ -39,6 +48,22 @@ export default function EmpresasPage() {
   useEffect(() => {
     void carregar();
   }, [carregar]);
+
+  function abrirNova() {
+    setForm(VAZIO);
+    setMostrarForm(true);
+  }
+  function abrirEdicao(emp: Company) {
+    setForm({
+      id: emp.id,
+      razaoSocial: emp.razaoSocial ?? "",
+      nomeFantasia: emp.nomeFantasia ?? "",
+      cnpj: emp.cnpj ?? "",
+      uf: emp.uf ?? "",
+      ambiente: emp.ambiente === "producao" ? "producao" : "homologacao",
+    });
+    setMostrarForm(true);
+  }
 
   async function onSalvar(e: React.FormEvent) {
     e.preventDefault();
@@ -60,12 +85,11 @@ export default function EmpresasPage() {
     <div>
       <PageHeader
         title="Empresas"
-        description="CNPJs do grupo consultados na SEFAZ."
+        description="CNPJs do grupo consultados na SEFAZ. Cada empresa tem seu certificado."
         action={
-          podeEditar ? (
-            <Button size="sm" onClick={() => setMostrarForm((v) => !v)}>
-              <Plus className="size-4" />
-              Nova
+          podeEditar && !mostrarForm ? (
+            <Button size="sm" onClick={abrirNova}>
+              <Plus className="size-4" /> Nova
             </Button>
           ) : undefined
         }
@@ -88,6 +112,15 @@ export default function EmpresasPage() {
                   required
                 />
               </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="nomeFantasia">Nome fantasia (opcional)</Label>
+                <Input
+                  id="nomeFantasia"
+                  value={form.nomeFantasia}
+                  onChange={(e) => setForm({ ...form, nomeFantasia: e.target.value })}
+                  placeholder="Como a empresa aparece nas listas"
+                />
+              </div>
               <div className="space-y-1.5">
                 <Label htmlFor="cnpj">CNPJ</Label>
                 <Input
@@ -97,7 +130,11 @@ export default function EmpresasPage() {
                   onChange={(e) => setForm({ ...form, cnpj: e.target.value })}
                   placeholder="00.000.000/0000-00"
                   required
+                  disabled={editando}
                 />
+                {editando ? (
+                  <p className="text-xs text-muted-foreground">O CNPJ não pode ser alterado.</p>
+                ) : null}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="uf">UF</Label>
@@ -110,15 +147,26 @@ export default function EmpresasPage() {
                   required
                 />
               </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="ambiente">Ambiente</Label>
+                <select
+                  id="ambiente"
+                  value={form.ambiente}
+                  onChange={(e) => setForm({ ...form, ambiente: e.target.value as FormEmpresa["ambiente"] })}
+                  className="flex h-11 w-full rounded-md border border-input bg-background px-3 text-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:text-sm"
+                >
+                  <option value="producao">Produção (traz notas reais)</option>
+                  <option value="homologacao">Homologação (testes — sem notas reais)</option>
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  Para receber os documentos reais da SEFAZ, use <strong>Produção</strong>.
+                </p>
+              </div>
               <div className="flex items-end gap-2 sm:col-span-2">
                 <Button type="submit" disabled={salvando}>
-                  {salvando ? "Salvando…" : "Salvar empresa"}
+                  {salvando ? "Salvando…" : editando ? "Salvar alterações" : "Salvar empresa"}
                 </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setMostrarForm(false)}
-                >
+                <Button type="button" variant="ghost" onClick={() => { setMostrarForm(false); setForm(VAZIO); }}>
                   Cancelar
                 </Button>
               </div>
@@ -139,8 +187,7 @@ export default function EmpresasPage() {
           </div>
           <p className="font-semibold">Nenhuma empresa cadastrada</p>
           <p className="max-w-sm text-sm text-muted-foreground">
-            Cadastre o primeiro CNPJ para depois instalar o certificado e
-            sincronizar as NF-e.
+            Cadastre o primeiro CNPJ para depois instalar o certificado e sincronizar as NF-e.
           </p>
         </Card>
       ) : (
@@ -152,7 +199,7 @@ export default function EmpresasPage() {
                   <Building2 className="size-5" />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{emp.razaoSocial}</p>
+                  <p className="truncate font-medium">{emp.nomeFantasia || emp.razaoSocial}</p>
                   <p className="text-sm text-muted-foreground">
                     {formatCNPJ(emp.cnpj)} · {emp.uf}
                   </p>
@@ -165,11 +212,21 @@ export default function EmpresasPage() {
                     {emp.temCertificado ? "Com certificado" : "Sem certificado"}
                   </Badge>
                 </div>
+                {podeEditar ? (
+                  <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => abrirEdicao(emp)}>
+                    <Pencil className="size-4" />
+                  </Button>
+                ) : null}
               </CardContent>
             </Card>
           ))}
         </div>
       )}
+
+      <p className="mt-4 text-xs text-muted-foreground">
+        Fluxo: cadastre a empresa (Produção) → instale o certificado A1 dela em <strong>Certificado</strong> →
+        sincronize em <strong>Integrações</strong> (ou aguarde a automática de 6h).
+      </p>
     </div>
   );
 }
