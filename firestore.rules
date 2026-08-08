@@ -77,6 +77,13 @@ service cloud.firestore {
       allow read: if isAuth();
       allow write: if false;
     }
+
+    // Acordos de renegociação com fornecedores — leitura por autenticado;
+    // escrita só backend (admin/financeiro via callable).
+    match /nfe_agreements/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
     match /nfe_alerts/{id} {
       allow read: if isAuth();
       allow write: if false;

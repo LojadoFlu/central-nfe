@@ -32,12 +32,20 @@ function hojeISO(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+/** "2026-08" → "Ago/2026". */
+function mesLabel(ym: string): string {
+  const [y, m] = ym.split("-");
+  return `${MESES[Number(m) - 1] ?? m}/${y}`;
+}
+
 export default function FinanceiroPage() {
   const { role } = useAuth();
   const podeBaixar = podeAlterarFinanceiro(role);
   const [parcelas, setParcelas] = useState<Parcela[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<"todas" | "a_vencer" | "vencida" | "paga">("todas");
+  const [forn, setForn] = useState(""); // cnpjEmit selecionado ("" = todos)
   const [salvando, setSalvando] = useState<string | null>(null); // id ou "lote"
 
   // Baixa individual (form expandido)
@@ -142,22 +150,51 @@ export default function FinanceiroPage() {
     }
   }
 
+  // Fornecedores distintos (para o filtro).
+  const fornecedores = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of parcelas ?? []) {
+      const c = p.cnpjEmit ?? "";
+      if (c) m.set(c, p.xNomeEmit ?? c);
+    }
+    return [...m.entries()].map(([cnpj, nome]) => ({ cnpj, nome })).sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [parcelas]);
+
+  // Base filtrada por fornecedor (alimenta totais, resumo e lista).
+  const base = useMemo(
+    () => (parcelas ?? []).filter((p) => !forn || (p.cnpjEmit ?? "") === forn),
+    [parcelas, forn],
+  );
+
   const totais = useMemo(() => {
     let aVencer = 0;
     let vencido = 0;
     let pago = 0;
-    for (const p of parcelas ?? []) {
+    for (const p of base) {
       const { s } = situacao(p);
       if (s === "a_vencer") aVencer += p.valor ?? 0;
       else if (s === "vencida") vencido += p.valor ?? 0;
       else if (s === "paga") pago += p.valorPago ?? p.valor ?? 0;
     }
     return { aVencer, vencido, pago };
-  }, [parcelas]);
+  }, [base]);
+
+  // Pagamentos por mês (pela data de pagamento), respeitando o fornecedor.
+  const mesAtual = hojeISO().slice(0, 7);
+  const porMes = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of base) {
+      if (p.statusPagamento !== "pago" || !p.dataPagamento) continue;
+      const k = p.dataPagamento.slice(0, 7);
+      m.set(k, (m.get(k) ?? 0) + (p.valorPago ?? p.valor ?? 0));
+    }
+    return [...m.entries()].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6);
+  }, [base]);
+  const pagoNoMes = porMes.find(([k]) => k === mesAtual)?.[1] ?? 0;
 
   const lista = useMemo(() => {
-    return (parcelas ?? []).filter((p) => filtro === "todas" || situacao(p).s === filtro);
-  }, [parcelas, filtro]);
+    return base.filter((p) => filtro === "todas" || situacao(p).s === filtro);
+  }, [base, filtro]);
 
   // Total selecionado (para a barra de lote).
   const totalSel = useMemo(() => {
@@ -188,11 +225,56 @@ export default function FinanceiroPage() {
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p>
       ) : null}
 
+      {/* Filtro por fornecedor */}
+      {fornecedores.length > 0 ? (
+        <div className="mb-3">
+          <select
+            value={forn}
+            onChange={(e) => setForn(e.target.value)}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Todos os fornecedores</option>
+            {fornecedores.map((f) => (
+              <option key={f.cnpj} value={f.cnpj}>
+                {f.nome}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-3 gap-3">
         <StatCard label="A vencer" value={parcelas === null ? "…" : formatBRL(totais.aVencer)} tone="warning" />
         <StatCard label="Vencidas" value={parcelas === null ? "…" : formatBRL(totais.vencido)} tone="destructive" />
         <StatCard label="Pagas" value={parcelas === null ? "…" : formatBRL(totais.pago)} tone="success" />
       </div>
+
+      {/* Resumo de pagamentos por mês */}
+      {porMes.length > 0 ? (
+        <Card className="mt-3">
+          <CardContent className="py-4">
+            <div className="mb-2 flex items-baseline justify-between">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                Pagamentos por mês
+              </h2>
+              <span className="text-sm text-muted-foreground">
+                {mesLabel(mesAtual)}: <strong className="text-foreground tnum">{formatBRL(pagoNoMes)}</strong>
+              </span>
+            </div>
+            <div className="divide-y divide-border">
+              {porMes.map(([ym, v]) => (
+                <div key={ym} className="flex items-center justify-between py-1.5 text-sm">
+                  <span className={ym === mesAtual ? "font-medium" : "text-muted-foreground"}>
+                    {mesLabel(ym)}
+                    {ym === mesAtual ? " · este mês" : ""}
+                  </span>
+                  <span className="font-medium tnum">{formatBRL(v)}</span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <div className="my-4 flex gap-2">
         {(["todas", "a_vencer", "vencida", "paga"] as const).map((f) => (
@@ -408,10 +490,17 @@ export default function FinanceiroPage() {
       ) : null}
 
       {!selMode ? (
-        <p className="mt-4 text-xs text-muted-foreground">
-          A baixa é manual e registrada com autor e data (auditoria). Parcelas pagas saem dos alertas de atraso.
-          Use “Selecionar” para dar baixa em várias de uma vez.
-        </p>
+        <div className="mt-4 space-y-2">
+          <p className="text-xs text-muted-foreground">
+            A baixa é manual e registrada com autor e data (auditoria). Parcelas pagas saem dos alertas de atraso.
+            Use “Selecionar” para dar baixa em várias de uma vez.
+          </p>
+          {podeBaixar ? (
+            <Link href="/acordos" className="inline-block text-sm font-medium text-primary hover:underline">
+              Acordos com fornecedores →
+            </Link>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );

@@ -213,6 +213,74 @@ export async function baixarParcela(input: {
   return res.data as { ok: boolean; statusPagamento: string };
 }
 
+// ---- Acordos (renegociação de dívidas com fornecedores) ----
+
+export interface ParcelaAcordo {
+  n: number;
+  valor: number;
+  vencimento: string; // YYYY-MM-DD
+  statusPagamento: "pendente" | "pago";
+  dataPagamento?: string | null;
+}
+
+export interface Acordo {
+  id: string;
+  cnpjFornecedor?: string | null;
+  nomeFornecedor: string;
+  descricao?: string | null;
+  observacao?: string | null;
+  parcelas: ParcelaAcordo[];
+  valorAcordado?: number;
+  valorOriginal?: number | null;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Lista os acordos (mais recentes primeiro). */
+export async function listarAcordos(): Promise<Acordo[]> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, "nfe_agreements"));
+  const arr = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Acordo[];
+  return arr.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+}
+
+/** Cria/atualiza um acordo. */
+export async function salvarAcordo(input: {
+  id?: string;
+  cnpjFornecedor?: string;
+  nomeFornecedor: string;
+  descricao?: string;
+  observacao?: string;
+  valorOriginal?: number;
+  parcelas: Array<{ valor: number; vencimento: string; statusPagamento?: string; dataPagamento?: string }>;
+}): Promise<{ ok: boolean; id: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeSalvarAcordo");
+  const res = await fn(input);
+  return res.data as { ok: boolean; id: string };
+}
+
+/** Marca uma parcela de acordo como paga ou reabre. */
+export async function baixarParcelaAcordo(input: {
+  acordoId: string;
+  indice: number;
+  pago: boolean;
+  dataPagamento?: string;
+}): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeBaixarParcelaAcordo");
+  const res = await fn(input);
+  return res.data as { ok: boolean };
+}
+
+/** Exclui um acordo. */
+export async function excluirAcordo(acordoId: string): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeExcluirAcordo");
+  const res = await fn({ acordoId });
+  return res.data as { ok: boolean };
+}
+
 /** Baixa em lote: marca várias parcelas como pagas (mesma data/obs). */
 export async function baixarParcelasLote(input: {
   parcelaIds: string[];

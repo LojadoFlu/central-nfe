@@ -571,6 +571,116 @@ export const nfeBaixarParcelasLote = onCall(opcoes, async (req) => {
   return { ok: true, total };
 });
 
+/**
+ * Cria/atualiza um ACORDO de renegociação com um fornecedor (dívidas atrasadas).
+ * Guarda as parcelas renegociadas (valor + vencimento + status). Só admin/financeiro.
+ */
+export const nfeSalvarAcordo = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const id = String(d.id ?? "").trim();
+  const nomeFornecedor = String(d.nomeFornecedor ?? "").trim().slice(0, 120);
+  if (!nomeFornecedor) throw new HttpsError("invalid-argument", "Fornecedor obrigatório.");
+
+  const parcelasIn = Array.isArray(d.parcelas) ? d.parcelas : [];
+  if (parcelasIn.length === 0) throw new HttpsError("invalid-argument", "Inclua ao menos uma parcela.");
+  if (parcelasIn.length > 60) throw new HttpsError("invalid-argument", "Máximo de 60 parcelas.");
+
+  const now = agoraISO();
+  const parcelas = parcelasIn.map((p: Record<string, unknown>, i: number) => {
+    const valor = Number(p.valor);
+    if (!Number.isFinite(valor) || valor <= 0) {
+      throw new HttpsError("invalid-argument", `Valor inválido na parcela ${i + 1}.`);
+    }
+    const vencimento = String(p.vencimento ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(vencimento)) {
+      throw new HttpsError("invalid-argument", `Vencimento inválido na parcela ${i + 1}.`);
+    }
+    const pago = p.statusPagamento === "pago";
+    const dataPagamento =
+      pago && /^\d{4}-\d{2}-\d{2}$/.test(String(p.dataPagamento ?? ""))
+        ? String(p.dataPagamento)
+        : pago
+          ? now.slice(0, 10)
+          : null;
+    return { n: i + 1, valor, vencimento, statusPagamento: pago ? "pago" : "pendente", dataPagamento };
+  });
+  const valorAcordado = parcelas.reduce((s: number, p: { valor: number }) => s + p.valor, 0);
+  const valorOriginal = Number(d.valorOriginal);
+
+  const ref = id
+    ? db.collection("nfe_agreements").doc(id)
+    : db.collection("nfe_agreements").doc();
+  const existe = id ? (await ref.get()).exists : false;
+
+  await ref.set(
+    {
+      id: ref.id,
+      cnpjFornecedor: somenteDigitos(String(d.cnpjFornecedor ?? "")) || null,
+      nomeFornecedor,
+      descricao: String(d.descricao ?? "").trim().slice(0, 200) || null,
+      observacao: String(d.observacao ?? "").trim().slice(0, 500) || null,
+      parcelas,
+      valorAcordado,
+      valorOriginal: Number.isFinite(valorOriginal) && valorOriginal > 0 ? valorOriginal : null,
+      updatedAt: now,
+      ...(existe ? {} : { createdAt: now, createdBy: uid }),
+    },
+    { merge: true },
+  );
+
+  await auditar(uid, existe ? "acordo.atualizar" : "acordo.criar", {
+    id: ref.id,
+    nomeFornecedor,
+    valorAcordado,
+    parcelas: parcelas.length,
+  });
+  return { ok: true, id: ref.id };
+});
+
+/** Marca uma parcela de um acordo como paga ou reabre. Só admin/financeiro. */
+export const nfeBaixarParcelaAcordo = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const id = String(d.acordoId ?? "").trim();
+  const idx = Number(d.indice);
+  const pago = d.pago !== false;
+  if (!id) throw new HttpsError("invalid-argument", "acordoId obrigatório.");
+
+  const ref = db.collection("nfe_agreements").doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError("not-found", "Acordo não encontrado.");
+  const data = snap.data() as { parcelas?: Array<Record<string, unknown>> };
+  const parcelas = Array.isArray(data.parcelas) ? [...data.parcelas] : [];
+  if (!Number.isInteger(idx) || idx < 0 || idx >= parcelas.length) {
+    throw new HttpsError("invalid-argument", "Parcela inexistente.");
+  }
+  const now = agoraISO();
+  const dataPagamento = pago
+    ? /^\d{4}-\d{2}-\d{2}$/.test(String(d.dataPagamento ?? ""))
+      ? String(d.dataPagamento)
+      : now.slice(0, 10)
+    : null;
+  parcelas[idx] = {
+    ...parcelas[idx],
+    statusPagamento: pago ? "pago" : "pendente",
+    dataPagamento,
+  };
+  await ref.set({ parcelas, updatedAt: now }, { merge: true });
+  await auditar(uid, pago ? "acordo.baixarParcela" : "acordo.reabrirParcela", { id, indice: idx });
+  return { ok: true };
+});
+
+/** Exclui um acordo. Só admin/financeiro. */
+export const nfeExcluirAcordo = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const id = String(req.data?.acordoId ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "acordoId obrigatório.");
+  await db.collection("nfe_agreements").doc(id).delete();
+  await auditar(uid, "acordo.excluir", { id });
+  return { ok: true };
+});
+
 /** Registra evento de auditoria (rastreabilidade). */
 async function auditar(uid: string, acao: string, detalhe: Record<string, unknown>) {
   await db.collection("audit_logs").add({
