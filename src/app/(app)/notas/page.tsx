@@ -5,20 +5,38 @@ import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { listarDocumentos, type NfeDocumento } from "@/lib/nfe/repo";
-import { formatBRL, formatCNPJ, formatarData } from "@/lib/utils";
-import { FileText } from "lucide-react";
+import {
+  listarDocumentos,
+  sincronizarAgora,
+  obterSyncState,
+  type NfeDocumento,
+  type SyncEstado,
+  type ResultadoSync,
+} from "@/lib/nfe/repo";
+import { useAuth } from "@/lib/auth/auth-provider";
+import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
+import { FileText, RefreshCw } from "lucide-react";
+
+const COMPANY_ID = "59255964000123";
 
 export default function NotasPage() {
+  const { role } = useAuth();
+  const podeSincronizar = role === "admin" || role === "fiscal";
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
+  const [estado, setEstado] = useState<SyncEstado | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [sincronizando, setSincronizando] = useState(false);
+  const [resultado, setResultado] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
     setErro(null);
     try {
-      setDocs(await listarDocumentos());
+      const [ds, st] = await Promise.all([listarDocumentos(), obterSyncState(COMPANY_ID)]);
+      setDocs(ds);
+      setEstado(st);
     } catch (e) {
       setErro((e as Error).message);
       setDocs([]);
@@ -29,12 +47,56 @@ export default function NotasPage() {
     void carregar();
   }, [carregar]);
 
+  async function sincronizar() {
+    setSincronizando(true);
+    setResultado(null);
+    setErro(null);
+    try {
+      const r: ResultadoSync = await sincronizarAgora(COMPANY_ID);
+      if (r.ok) {
+        setResultado(
+          r.bloqueado
+            ? `Em recuo da SEFAZ (656). ${r.xMotivo ?? ""}`
+            : `${r.novos ?? 0} nova(s) nota(s)/evento(s). cStat ${r.cStat ?? "—"}.`,
+        );
+        await carregar();
+      } else {
+        setErro(r.erro ?? "Falha na sincronização.");
+      }
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setSincronizando(false);
+    }
+  }
+
   return (
     <div>
-      <PageHeader title="Notas" description="NF-e emitidas contra as empresas do grupo." />
+      <PageHeader
+        title="Notas"
+        description="NF-e emitidas contra as empresas do grupo."
+        action={
+          podeSincronizar ? (
+            <Button size="sm" variant="outline" disabled={sincronizando} onClick={sincronizar}>
+              <RefreshCw className={`size-4 ${sincronizando ? "animate-spin" : ""}`} />
+              {sincronizando ? "Sincronizando…" : "Sincronizar"}
+            </Button>
+          ) : undefined
+        }
+      />
 
       {erro ? (
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p>
+      ) : null}
+      {resultado ? (
+        <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{resultado}</p>
+      ) : null}
+
+      {estado?.ultimaSync ? (
+        <p className="mb-4 text-xs text-muted-foreground">
+          Última sincronização: {formatarDataHora(estado.ultimaSync)} · cStat {estado.ultimoCStat ?? "—"}
+          {estado.status === "bloqueado" ? " · em recuo (656)" : ""} · a automática roda a cada 6h.
+        </p>
       ) : null}
 
       {docs === null ? (
@@ -44,9 +106,8 @@ export default function NotasPage() {
         </div>
       ) : docs.length === 0 ? (
         <ModulePlaceholder icon={FileText} title="Nenhuma nota ainda" etapa="Aguardando sincronização">
-          As notas aparecem aqui após a sincronização com a SEFAZ (Integrações →
-          Sincronizar). Em homologação não há documentos reais — os XMLs entram
-          quando o ambiente for produção.
+          As notas aparecem aqui após a sincronização com a SEFAZ. Use o botão
+          <strong> Sincronizar</strong> acima. A sincronização automática roda a cada 6h.
         </ModulePlaceholder>
       ) : (
         <div className="space-y-3">

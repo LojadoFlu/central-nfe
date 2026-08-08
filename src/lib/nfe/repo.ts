@@ -470,6 +470,13 @@ export async function listarSyncStates(): Promise<SyncEstado[]> {
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as SyncEstado[];
 }
 
+/** Estado de sincronização de NF-e de uma empresa. */
+export async function obterSyncState(companyId: string): Promise<SyncEstado | null> {
+  const { db } = fb();
+  const d = await getDoc(doc(db, "nfe_sync_state", companyId));
+  return d.exists() ? ({ id: d.id, ...(d.data() as object) } as SyncEstado) : null;
+}
+
 /** Lista parcelas (contas a pagar) ordenadas por vencimento. */
 export async function listarParcelas(max = 300): Promise<Parcela[]> {
   const { db } = fb();
