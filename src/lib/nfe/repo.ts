@@ -212,6 +212,26 @@ export interface Item {
   valorTotal?: number | null;
 }
 
+export interface SyncEstado {
+  id: string;
+  companyId?: string;
+  cnpj?: string;
+  status?: string;
+  ultimoCStat?: string;
+  ultimaMensagem?: string;
+  ultimaSync?: string;
+  proximaSync?: string | null;
+  ultNSU?: string;
+  maxNSU?: string;
+}
+
+/** Estados de sincronização (por CNPJ). */
+export async function listarSyncStates(): Promise<SyncEstado[]> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, "nfe_sync_state"));
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as SyncEstado[];
+}
+
 /** Lista parcelas (contas a pagar) ordenadas por vencimento. */
 export async function listarParcelas(max = 300): Promise<Parcela[]> {
   const { db } = fb();
