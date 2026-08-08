@@ -238,6 +238,14 @@ export async function itensDoDocumento(chNFe: string): Promise<Item[]> {
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Item[];
 }
 
+/** Todos os itens (para relatórios de produtos). */
+export async function listarItens(max = 1000): Promise<Item[]> {
+  const { db } = fb();
+  const q = query(collection(db, "nfe_items"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Item[];
+}
+
 /** Lê o XML original (do Storage) como texto. */
 export async function baixarXmlTexto(storagePath: string): Promise<string> {
   const { storage } = fb();
