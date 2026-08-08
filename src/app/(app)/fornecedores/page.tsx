@@ -7,7 +7,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { listarDocumentos, type NfeDocumento } from "@/lib/nfe/repo";
+import { listarDocumentos, listarEmpresas, type NfeDocumento } from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
 import { formatBRL, formatCNPJ, formatarData, normalizar } from "@/lib/utils";
 import { Truck, ChevronRight } from "lucide-react";
 
@@ -21,11 +22,15 @@ interface Fornecedor {
 
 export default function FornecedoresPage() {
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
+  const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [empresaId, setEmpresaId] = useState("");
   const [busca, setBusca] = useState("");
 
   const carregar = useCallback(async () => {
     try {
-      setDocs(await listarDocumentos(300));
+      const [ds, emps] = await Promise.all([listarDocumentos(300), listarEmpresas()]);
+      setDocs(ds);
+      setEmpresas(emps);
     } catch {
       setDocs([]);
     }
@@ -38,6 +43,7 @@ export default function FornecedoresPage() {
   const fornecedores = useMemo(() => {
     const mapa = new Map<string, Fornecedor>();
     for (const d of docs ?? []) {
+      if (empresaId && d.companyId !== empresaId) continue;
       const cnpj = d.cnpjEmit ?? "sem-cnpj";
       const f = mapa.get(cnpj) ?? {
         cnpj,
@@ -58,11 +64,24 @@ export default function FornecedoresPage() {
       lista = lista.filter((f) => (normalizar(f.nome) + " " + f.cnpj).includes(termo));
     }
     return lista;
-  }, [docs, busca]);
+  }, [docs, busca, empresaId]);
 
   return (
     <div>
       <PageHeader title="Fornecedores" description="Quem mais faturou para o grupo." />
+
+      {empresas.length > 1 ? (
+        <select
+          value={empresaId}
+          onChange={(e) => setEmpresaId(e.target.value)}
+          className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Todas as empresas</option>
+          {empresas.map((e) => (
+            <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+          ))}
+        </select>
+      ) : null}
 
       <Input
         placeholder="Buscar fornecedor…"

@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { StatCard } from "@/components/ui/stat-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { listarParcelas, baixarParcela, baixarParcelasLote, type Parcela } from "@/lib/nfe/repo";
+import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, type Parcela } from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { podeAlterarFinanceiro } from "@/lib/auth/roles";
 import { formatBRL, formatarData, diasAte } from "@/lib/utils";
@@ -43,6 +44,8 @@ export default function FinanceiroPage() {
   const { role } = useAuth();
   const podeBaixar = podeAlterarFinanceiro(role);
   const [parcelas, setParcelas] = useState<Parcela[] | null>(null);
+  const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [empresaId, setEmpresaId] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<"todas" | "a_vencer" | "vencida" | "paga">("todas");
   const [forn, setForn] = useState(""); // cnpjEmit selecionado ("" = todos)
@@ -64,7 +67,9 @@ export default function FinanceiroPage() {
   const carregar = useCallback(async () => {
     setErro(null);
     try {
-      setParcelas(await listarParcelas());
+      const [ps, emps] = await Promise.all([listarParcelas(), listarEmpresas()]);
+      setParcelas(ps);
+      setEmpresas(emps);
     } catch (e) {
       setErro((e as Error).message);
       setParcelas([]);
@@ -160,10 +165,13 @@ export default function FinanceiroPage() {
     return [...m.entries()].map(([cnpj, nome]) => ({ cnpj, nome })).sort((a, b) => a.nome.localeCompare(b.nome));
   }, [parcelas]);
 
-  // Base filtrada por fornecedor (alimenta totais, resumo e lista).
+  // Base filtrada por empresa + fornecedor (alimenta totais, resumo e lista).
   const base = useMemo(
-    () => (parcelas ?? []).filter((p) => !forn || (p.cnpjEmit ?? "") === forn),
-    [parcelas, forn],
+    () =>
+      (parcelas ?? []).filter(
+        (p) => (!empresaId || (p.companyId ?? "") === empresaId) && (!forn || (p.cnpjEmit ?? "") === forn),
+      ),
+    [parcelas, forn, empresaId],
   );
 
   const totais = useMemo(() => {
@@ -223,6 +231,20 @@ export default function FinanceiroPage() {
 
       {erro ? (
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p>
+      ) : null}
+
+      {/* Filtro por empresa */}
+      {empresas.length > 1 ? (
+        <select
+          value={empresaId}
+          onChange={(e) => setEmpresaId(e.target.value)}
+          className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Todas as empresas</option>
+          {empresas.map((e) => (
+            <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+          ))}
+        </select>
       ) : null}
 
       {/* Filtro por fornecedor */}

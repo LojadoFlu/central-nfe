@@ -80,6 +80,7 @@ export default function RelatoriosPage() {
   const [tipo, setTipo] = useState<TipoKey>("compras_periodo");
 
   // Filtros
+  const [empresaId, setEmpresaId] = useState("");
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
   const [forn, setForn] = useState("");
@@ -129,7 +130,10 @@ export default function RelatoriosPage() {
 
   const relatorio: Relatorio = useMemo(() => {
     const D = (docs ?? []).filter(
-      (d) => (!forn || (d.cnpjEmit ?? "") === forn) && passaPeriodo(d.dhEmi),
+      (d) =>
+        (!empresaId || d.companyId === empresaId) &&
+        (!forn || (d.cnpjEmit ?? "") === forn) &&
+        passaPeriodo(d.dhEmi),
     );
 
     if (tipo === "compras_periodo") {
@@ -165,6 +169,7 @@ export default function RelatoriosPage() {
       const rows = parcelas
         .filter((p) => {
           if (p.statusPagamento === "pago") return false;
+          if (empresaId && (p.companyId ?? "") !== empresaId) return false;
           if (forn && (p.cnpjEmit ?? "") !== forn) return false;
           if (!passaPeriodo(p.vencimento)) return false;
           const dias = diasAte(p.vencimento);
@@ -188,7 +193,10 @@ export default function RelatoriosPage() {
     }
     if (tipo === "produtos") {
       const its = itens.filter(
-        (it) => (!forn || (it.cnpjEmit ?? "") === forn) && passaPeriodo(it.dhEmi),
+        (it) =>
+          (!empresaId || it.companyId === empresaId) &&
+          (!forn || (it.cnpjEmit ?? "") === forn) &&
+          passaPeriodo(it.dhEmi),
       );
       const m = new Map<string, { prod: string; forn: string; qtd: number; total: number }>();
       for (const it of its) {
@@ -209,7 +217,9 @@ export default function RelatoriosPage() {
       };
     }
     if (tipo === "despesas_fixas") {
-      const dfs = despesasFixas.filter((d) => !cat || d.categoria === cat);
+      const dfs = despesasFixas.filter(
+        (d) => (!empresaId || (d.companyId ?? "") === empresaId) && (!cat || d.categoria === cat),
+      );
       return {
         headers: ["Empresa", "Despesa", "Categoria", "Recorrência", "Dia venc.", "Valor previsto", "Situação"],
         rows: dfs
@@ -241,10 +251,10 @@ export default function RelatoriosPage() {
         .sort((a, b) => b[1].total - a[1].total)
         .map(([c, g]) => [nomeEmp.get(c) ?? c, String(g.qtd), formatBRL(g.total)]),
     };
-  }, [tipo, docs, parcelas, itens, empresas, despesasFixas, forn, cat, passaPeriodo]);
+  }, [tipo, docs, parcelas, itens, empresas, despesasFixas, forn, cat, empresaId, passaPeriodo]);
 
   const labelAtual = TIPOS.find((t) => t.key === tipo)?.label ?? "";
-  const temFiltro = de || ate || forn || cat;
+  const temFiltro = empresaId || de || ate || forn || cat;
 
   return (
     <div>
@@ -277,6 +287,22 @@ export default function RelatoriosPage() {
       {/* Filtros */}
       <Card className="mb-4 p-3">
         <div className="flex flex-wrap items-end gap-3">
+          {empresas.length > 1 ? (
+            <div className="space-y-1">
+              <label className="block text-xs text-muted-foreground">Empresa</label>
+              <select
+                value={empresaId}
+                onChange={(e) => setEmpresaId(e.target.value)}
+                className="h-9 w-56 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Todas</option>
+                {empresas.map((e) => (
+                  <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+
           {usaPeriodo ? (
             <>
               <div className="space-y-1">
@@ -326,7 +352,7 @@ export default function RelatoriosPage() {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => { setDe(""); setAte(""); setForn(""); setCat(""); }}
+              onClick={() => { setEmpresaId(""); setDe(""); setAte(""); setForn(""); setCat(""); }}
             >
               <X className="size-4" /> Limpar
             </Button>

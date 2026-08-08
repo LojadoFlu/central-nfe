@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
   listarNfses,
+  listarEmpresas,
   sincronizarNfseAgora,
   obterNfseSyncState,
   baixarXmlTexto,
@@ -17,17 +18,18 @@ import {
   type NfseDocumento,
   type SyncEstado,
 } from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { gerarDanfse } from "@/lib/nfe/danfse";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora, normalizar } from "@/lib/utils";
 import { Wrench, ChevronDown, RefreshCw, FileCode2, Download, FileText } from "lucide-react";
 
-const COMPANY_ID = "59255964000123";
-
 export default function NfsesPage() {
   const { role } = useAuth();
   const podeSincronizar = role === "admin" || role === "fiscal";
   const [nfses, setNfses] = useState<NfseDocumento[] | null>(null);
+  const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [empresaId, setEmpresaId] = useState("");
   const [estado, setEstado] = useState<SyncEstado | null>(null);
   const [busca, setBusca] = useState("");
   const [expandido, setExpandido] = useState<string | null>(null);
@@ -38,9 +40,9 @@ export default function NfsesPage() {
 
   const carregar = useCallback(async () => {
     try {
-      const [lista, st] = await Promise.all([listarNfses(300), obterNfseSyncState(COMPANY_ID)]);
+      const [lista, emps] = await Promise.all([listarNfses(300), listarEmpresas()]);
       setNfses(lista);
-      setEstado(st);
+      setEmpresas(emps);
     } catch (e) {
       setErro((e as Error).message);
       setNfses([]);
@@ -51,18 +53,32 @@ export default function NfsesPage() {
     void carregar();
   }, [carregar]);
 
+  const focusId = empresaId || (empresas.length === 1 ? empresas[0]?.id : "");
+  useEffect(() => {
+    if (!focusId) { setEstado(null); return; }
+    void obterNfseSyncState(focusId).then(setEstado);
+  }, [focusId]);
+
   async function sincronizar() {
+    const alvos = empresaId
+      ? empresas.filter((e) => e.id === empresaId)
+      : empresas.filter((e) => e.temCertificado);
+    if (alvos.length === 0) {
+      setErro("Nenhuma empresa com certificado para sincronizar.");
+      return;
+    }
     setSincronizando(true);
     setResultado(null);
     setErro(null);
     try {
-      const r = await sincronizarNfseAgora(COMPANY_ID);
-      if (r.ok) {
-        setResultado(`${r.novos ?? 0} nova(s). Status ${r.status ?? "—"}.`);
-        await carregar();
-      } else {
-        setErro(r.erro ?? "Falha na sincronização.");
+      let novos = 0;
+      for (const emp of alvos) {
+        const r = await sincronizarNfseAgora(emp.id);
+        if (r.ok) novos += r.novos ?? 0;
+        else setErro(r.erro ?? "Falha na sincronização.");
       }
+      setResultado(`${novos} nova(s) em ${alvos.length} empresa(s).`);
+      await carregar();
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -99,18 +115,23 @@ export default function NfsesPage() {
     }
   }
 
+  const base = useMemo(
+    () => (nfses ?? []).filter((c) => !empresaId || c.companyId === empresaId),
+    [nfses, empresaId],
+  );
+
   const lista = useMemo(() => {
     const termo = normalizar(busca);
-    if (!termo) return nfses ?? [];
-    return (nfses ?? []).filter((c) =>
+    if (!termo) return base;
+    return base.filter((c) =>
       normalizar(`${c.xNomePrest ?? ""} ${c.nNFSe ?? ""} ${c.xTribNac ?? ""} ${c.xDescServ ?? ""}`).includes(termo),
     );
-  }, [nfses, busca]);
+  }, [base, busca]);
 
-  const totais = useMemo(() => {
-    const arr = nfses ?? [];
-    return { qtd: arr.length, total: arr.reduce((s, c) => s + (c.vServ ?? c.vLiq ?? 0), 0) };
-  }, [nfses]);
+  const totais = useMemo(
+    () => ({ qtd: base.length, total: base.reduce((s, c) => s + (c.vServ ?? c.vLiq ?? 0), 0) }),
+    [base],
+  );
 
   return (
     <div>
@@ -126,6 +147,19 @@ export default function NfsesPage() {
           ) : undefined
         }
       />
+
+      {empresas.length > 1 ? (
+        <select
+          value={empresaId}
+          onChange={(e) => setEmpresaId(e.target.value)}
+          className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Todas as empresas</option>
+          {empresas.map((e) => (
+            <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+          ))}
+        </select>
+      ) : null}
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
       {resultado ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{resultado}</p> : null}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -10,23 +10,25 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
   listarDocumentos,
+  listarEmpresas,
   sincronizarAgora,
-  obterSyncState,
+  listarSyncStates,
   type NfeDocumento,
   type SyncEstado,
   type ResultadoSync,
 } from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
 import { FileText, RefreshCw } from "lucide-react";
-
-const COMPANY_ID = "59255964000123";
 
 export default function NotasPage() {
   const { role } = useAuth();
   const podeSincronizar = role === "admin" || role === "fiscal";
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
-  const [estado, setEstado] = useState<SyncEstado | null>(null);
+  const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [syncStates, setSyncStates] = useState<SyncEstado[]>([]);
+  const [empresaId, setEmpresaId] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
   const [resultado, setResultado] = useState<string | null>(null);
@@ -34,9 +36,10 @@ export default function NotasPage() {
   const carregar = useCallback(async () => {
     setErro(null);
     try {
-      const [ds, st] = await Promise.all([listarDocumentos(), obterSyncState(COMPANY_ID)]);
+      const [ds, emps, sts] = await Promise.all([listarDocumentos(), listarEmpresas(), listarSyncStates()]);
       setDocs(ds);
-      setEstado(st);
+      setEmpresas(emps);
+      setSyncStates(sts);
     } catch (e) {
       setErro((e as Error).message);
       setDocs([]);
@@ -48,27 +51,38 @@ export default function NotasPage() {
   }, [carregar]);
 
   async function sincronizar() {
+    const alvos = empresaId
+      ? empresas.filter((e) => e.id === empresaId)
+      : empresas.filter((e) => e.temCertificado);
+    if (alvos.length === 0) {
+      setErro("Nenhuma empresa com certificado para sincronizar.");
+      return;
+    }
     setSincronizando(true);
     setResultado(null);
     setErro(null);
     try {
-      const r: ResultadoSync = await sincronizarAgora(COMPANY_ID);
-      if (r.ok) {
-        setResultado(
-          r.bloqueado
-            ? `Em recuo da SEFAZ (656). ${r.xMotivo ?? ""}`
-            : `${r.novos ?? 0} nova(s) nota(s)/evento(s). cStat ${r.cStat ?? "—"}.`,
-        );
-        await carregar();
-      } else {
-        setErro(r.erro ?? "Falha na sincronização.");
+      let novos = 0;
+      for (const emp of alvos) {
+        const r: ResultadoSync = await sincronizarAgora(emp.id);
+        if (r.ok) novos += r.novos ?? 0;
+        else setErro(r.erro ?? "Falha na sincronização.");
       }
+      setResultado(`${novos} nova(s) nota(s)/evento(s) em ${alvos.length} empresa(s).`);
+      await carregar();
     } catch (e) {
       setErro((e as Error).message);
     } finally {
       setSincronizando(false);
     }
   }
+
+  const focusId = empresaId || (empresas.length === 1 ? empresas[0]?.id : "");
+  const estado = syncStates.find((s) => s.id === focusId) ?? null;
+  const visiveis = useMemo(
+    () => (docs ?? []).filter((d) => !empresaId || d.companyId === empresaId),
+    [docs, empresaId],
+  );
 
   return (
     <div>
@@ -84,6 +98,19 @@ export default function NotasPage() {
           ) : undefined
         }
       />
+
+      {empresas.length > 1 ? (
+        <select
+          value={empresaId}
+          onChange={(e) => setEmpresaId(e.target.value)}
+          className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Todas as empresas</option>
+          {empresas.map((e) => (
+            <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+          ))}
+        </select>
+      ) : null}
 
       {erro ? (
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p>
@@ -104,14 +131,14 @@ export default function NotasPage() {
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />
         </div>
-      ) : docs.length === 0 ? (
-        <ModulePlaceholder icon={FileText} title="Nenhuma nota ainda" etapa="Aguardando sincronização">
-          As notas aparecem aqui após a sincronização com a SEFAZ. Use o botão
+      ) : visiveis.length === 0 ? (
+        <ModulePlaceholder icon={FileText} title="Nenhuma nota" etapa="Aguardando sincronização">
+          As notas aparecem após a sincronização com a SEFAZ. Use o botão
           <strong> Sincronizar</strong> acima. A sincronização automática roda a cada 6h.
         </ModulePlaceholder>
       ) : (
         <div className="space-y-3">
-          {docs.map((d) => (
+          {visiveis.map((d) => (
             <Card key={d.id} className="transition-colors hover:bg-accent/50">
               <Link href={`/notas/${encodeURIComponent(d.id)}`} className="block">
               <CardContent className="py-4">

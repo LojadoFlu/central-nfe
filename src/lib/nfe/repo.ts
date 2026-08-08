@@ -480,6 +480,7 @@ export async function baixarParcelasLote(input: {
 
 export interface Item {
   id: string;
+  companyId?: string;
   chNFe?: string;
   cnpjEmit?: string | null;
   xNomeEmit?: string | null;

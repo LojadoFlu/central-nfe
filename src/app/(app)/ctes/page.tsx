@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
   listarCTes,
+  listarEmpresas,
   sincronizarCTeAgora,
   obterCteSyncState,
   baixarXmlTexto,
@@ -19,18 +20,20 @@ import {
   type SyncEstado,
   type ResultadoSync,
 } from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { gerarDacte } from "@/lib/nfe/dacte";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora, normalizar } from "@/lib/utils";
 import { Container, ChevronDown, RefreshCw, FileCode2, Download, FileText } from "lucide-react";
 
-const COMPANY_ID = "59255964000123";
 const TP_CTE: Record<string, string> = { "0": "Normal", "1": "Complemento", "2": "Anulação", "3": "Substituto" };
 
 export default function CtesPage() {
   const { role } = useAuth();
   const podeSincronizar = role === "admin" || role === "fiscal";
   const [ctes, setCtes] = useState<CteDocumento[] | null>(null);
+  const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [empresaId, setEmpresaId] = useState("");
   const [estado, setEstado] = useState<SyncEstado | null>(null);
   const [busca, setBusca] = useState("");
   const [expandido, setExpandido] = useState<string | null>(null);
@@ -41,9 +44,9 @@ export default function CtesPage() {
 
   const carregar = useCallback(async () => {
     try {
-      const [lista, st] = await Promise.all([listarCTes(300), obterCteSyncState(COMPANY_ID)]);
+      const [lista, emps] = await Promise.all([listarCTes(300), listarEmpresas()]);
       setCtes(lista);
-      setEstado(st);
+      setEmpresas(emps);
     } catch (e) {
       setErro((e as Error).message);
       setCtes([]);
@@ -54,22 +57,32 @@ export default function CtesPage() {
     void carregar();
   }, [carregar]);
 
+  const focusId = empresaId || (empresas.length === 1 ? empresas[0]?.id : "");
+  useEffect(() => {
+    if (!focusId) { setEstado(null); return; }
+    void obterCteSyncState(focusId).then(setEstado);
+  }, [focusId]);
+
   async function sincronizar() {
+    const alvos = empresaId
+      ? empresas.filter((e) => e.id === empresaId)
+      : empresas.filter((e) => e.temCertificado);
+    if (alvos.length === 0) {
+      setErro("Nenhuma empresa com certificado para sincronizar.");
+      return;
+    }
     setSincronizando(true);
     setResultado(null);
     setErro(null);
     try {
-      const r: ResultadoSync = await sincronizarCTeAgora(COMPANY_ID);
-      if (r.ok) {
-        setResultado(
-          r.bloqueado
-            ? `Em recuo da SEFAZ (656). ${r.xMotivo ?? ""}`
-            : `${r.novos ?? 0} novo(s). cStat ${r.cStat ?? "—"}.`,
-        );
-        await carregar();
-      } else {
-        setErro(r.erro ?? "Falha na sincronização.");
+      let novos = 0;
+      for (const emp of alvos) {
+        const r: ResultadoSync = await sincronizarCTeAgora(emp.id);
+        if (r.ok) novos += r.novos ?? 0;
+        else setErro(r.erro ?? "Falha na sincronização.");
       }
+      setResultado(`${novos} novo(s) em ${alvos.length} empresa(s).`);
+      await carregar();
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -106,18 +119,23 @@ export default function CtesPage() {
     }
   }
 
+  const base = useMemo(
+    () => (ctes ?? []).filter((c) => !empresaId || c.companyId === empresaId),
+    [ctes, empresaId],
+  );
+
   const lista = useMemo(() => {
     const termo = normalizar(busca);
-    if (!termo) return ctes ?? [];
-    return (ctes ?? []).filter((c) =>
+    if (!termo) return base;
+    return base.filter((c) =>
       normalizar(`${c.xNomeEmit ?? ""} ${c.nCT ?? ""} ${c.xNomeRem ?? ""} ${c.xNomeDest ?? ""}`).includes(termo),
     );
-  }, [ctes, busca]);
+  }, [base, busca]);
 
-  const totais = useMemo(() => {
-    const arr = ctes ?? [];
-    return { qtd: arr.length, total: arr.reduce((s, c) => s + (c.vTPrest ?? 0), 0) };
-  }, [ctes]);
+  const totais = useMemo(
+    () => ({ qtd: base.length, total: base.reduce((s, c) => s + (c.vTPrest ?? 0), 0) }),
+    [base],
+  );
 
   return (
     <div>
@@ -133,6 +151,19 @@ export default function CtesPage() {
           ) : undefined
         }
       />
+
+      {empresas.length > 1 ? (
+        <select
+          value={empresaId}
+          onChange={(e) => setEmpresaId(e.target.value)}
+          className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Todas as empresas</option>
+          {empresas.map((e) => (
+            <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+          ))}
+        </select>
+      ) : null}
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
       {resultado ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{resultado}</p> : null}
