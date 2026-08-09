@@ -78,18 +78,29 @@ export default function FluxoPage() {
   const [de, setDe] = useState(hojeISO());
   const [ate, setAte] = useState(maisDias(30));
   const [agrup, setAgrup] = useState<"dia" | "semana" | "mes">("semana");
-  const [saldoInicial, setSaldoInicial] = useState(0);
+  const [saldos, setSaldos] = useState<Record<string, number>>({}); // saldo inicial por empresa
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
-    const v = Number(localStorage.getItem("nfe_fluxo_saldo") || "0");
-    if (Number.isFinite(v)) setSaldoInicial(v);
+    try {
+      const raw = localStorage.getItem("nfe_fluxo_saldos");
+      if (raw) setSaldos(JSON.parse(raw));
+    } catch { /* ignore */ }
     void listarEmpresas().then(setEmpresas).catch(() => {});
   }, []);
+
+  // Saldo inicial é por loja (empresa). "Todas" soma; edita-se com uma loja selecionada.
+  const editavelSaldo = !!empresaId || empresas.length <= 1;
+  const chaveSaldo = empresaId || empresas[0]?.id || "global";
+  const saldoInicial = editavelSaldo
+    ? saldos[chaveSaldo] ?? 0
+    : empresas.reduce((s, e) => s + (saldos[e.id] ?? 0), 0);
+
   function salvarSaldo(v: number) {
-    setSaldoInicial(v);
-    localStorage.setItem("nfe_fluxo_saldo", String(v));
+    const next = { ...saldos, [chaveSaldo]: v };
+    setSaldos(next);
+    try { localStorage.setItem("nfe_fluxo_saldos", JSON.stringify(next)); } catch { /* ignore */ }
   }
 
   // horizonte → de/ate (exceto custom, que usa os inputs)
@@ -210,16 +221,22 @@ export default function FluxoPage() {
           <Card className="mt-3">
             <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3">
               <div className="space-y-1">
-                <label className="block text-[11px] uppercase tracking-wide text-muted-foreground">Saldo inicial (opcional)</label>
+                <label className="block text-[11px] uppercase tracking-wide text-muted-foreground">
+                  Saldo inicial {editavelSaldo ? "(por loja)" : "(soma das lojas)"}
+                </label>
                 <Input
                   type="number"
                   step="0.01"
                   inputMode="decimal"
-                  value={saldoInicial || ""}
-                  onChange={(e) => salvarSaldo(Number(e.target.value) || 0)}
+                  value={editavelSaldo ? saldos[chaveSaldo] || "" : saldoInicial}
+                  onChange={editavelSaldo ? (e) => salvarSaldo(Number(e.target.value) || 0) : undefined}
+                  readOnly={!editavelSaldo}
                   placeholder="0,00"
-                  className="h-9 w-36"
+                  className={`h-9 w-36 ${!editavelSaldo ? "bg-muted text-muted-foreground" : ""}`}
                 />
+                {!editavelSaldo ? (
+                  <p className="text-[11px] text-muted-foreground">Selecione uma loja para editar o saldo dela.</p>
+                ) : null}
               </div>
               <div className="text-right">
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Saldo projetado ao fim</p>
