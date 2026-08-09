@@ -7,6 +7,7 @@ import {
   ShoppingCart,
   LineChart,
   ClipboardCheck,
+  Landmark,
   Store,
   Building2,
   ShieldCheck,
@@ -44,6 +45,7 @@ export const PRIMARY_NAV: NavItem[] = [
 export const SECONDARY_NAV: NavItem[] = [
   { label: "Pendências", href: "/pendencias", icon: ClipboardCheck, modulo: "financeiro" },
   { label: "Fluxo de caixa", href: "/fluxo", icon: LineChart, modulo: "financeiro" },
+  { label: "Banco", href: "/banco", icon: Landmark, modulo: "financeiro" },
   { label: "Vendas (PDV)", href: "/vendas", icon: ShoppingCart, modulo: "vendas" },
   { label: "Fretes (CT-e)", href: "/ctes", icon: Container, modulo: "ctes" },
   { label: "Serviços (NFS-e)", href: "/nfses", icon: Wrench, modulo: "nfses" },

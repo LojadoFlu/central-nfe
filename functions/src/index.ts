@@ -22,6 +22,7 @@ import {
 } from "./lib/secrets";
 import { PdvnetClient } from "./pdvnet/client";
 import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-vendas";
+import { parseOFX } from "./banco/ofx";
 import { getStorage } from "firebase-admin/storage";
 import { getAuth } from "firebase-admin/auth";
 import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
@@ -1440,6 +1441,73 @@ export const centralPendencias = onCall(
       info: pend.filter((p) => p.severidade === "info").length,
     };
     return { ok: true, hoje, empresaId: empresaId || null, pendencias: pend, resumo };
+  },
+);
+
+/**
+ * Importa um extrato bancário OFX (parse server-side) e persiste os lançamentos
+ * em bank_transactions (dedup por FITID) + o saldo/período em bank_accounts.
+ * A conta é identificada pela empresa. Nada é inventado — só o que vem no arquivo.
+ */
+export const importarExtrato = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 300 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+    const ofx = String(req.data?.ofx ?? "");
+    const empresaId = String(req.data?.empresaId ?? "").trim();
+    if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa (conta).");
+    if (ofx.length < 50 || !ofx.includes("<STMTTRN>")) throw new HttpsError("invalid-argument", "Arquivo OFX inválido.");
+    const ext = parseOFX(ofx);
+    if (ext.transacoes.length === 0) throw new HttpsError("failed-precondition", "Nenhum lançamento no arquivo.");
+    const now = agoraISO();
+    let batch = db.batch();
+    let ops = 0;
+    const flush = async () => { if (ops) { await batch.commit(); batch = db.batch(); ops = 0; } };
+    for (const t of ext.transacoes) {
+      const ref = db.collection("bank_transactions").doc(`${empresaId}_${t.fitid}`);
+      batch.set(ref, { ...t, empresaId, dia: t.data, origem: "ofx", org: ext.org, importadoEm: now }, { merge: true });
+      ops++;
+      if (ops >= 400) await flush();
+    }
+    await flush();
+    await db.collection("bank_accounts").doc(empresaId).set(
+      {
+        empresaId, org: ext.org, fid: ext.fid, curdef: ext.curdef,
+        saldo: ext.saldo, saldoData: ext.saldoData, dtStart: ext.dtStart, dtEnd: ext.dtEnd,
+        ultimoImport: now, ultimoImportPor: uid,
+      },
+      { merge: true },
+    );
+    await auditar(uid, "banco.importarExtrato", { empresaId, transacoes: ext.transacoes.length, saldo: ext.saldo });
+    return { ok: true, transacoes: ext.transacoes.length, saldo: ext.saldo, saldoData: ext.saldoData, org: ext.org, periodo: { de: ext.dtStart, ate: ext.dtEnd } };
+  },
+);
+
+/** Extrato do banco (conta + lançamentos + totais por categoria) no intervalo. */
+export const extratoBanco = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+    const empresaId = String(req.data?.empresaId ?? "").trim();
+    if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa (conta).");
+    const de = String(req.data?.de ?? "").slice(0, 10);
+    const ate = String(req.data?.ate ?? "").slice(0, 10);
+    const conta = (await db.collection("bank_accounts").doc(empresaId).get()).data() ?? null;
+    const snap = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
+    const txs: Array<{ fitid: string; tipo: string; data: string; valor: number; memo: string; categoria: string }> = [];
+    let creditos = 0, debitos = 0;
+    const porCategoria: Record<string, number> = {};
+    for (const doc of snap.docs) {
+      const t = doc.data();
+      const dia = String(t.dia ?? "");
+      if ((de && dia < de) || (ate && dia > ate)) continue;
+      const valor = Number(t.valor ?? 0);
+      if (valor >= 0) creditos += valor; else debitos += valor;
+      porCategoria[t.categoria] = (porCategoria[t.categoria] ?? 0) + valor;
+      txs.push({ fitid: t.fitid, tipo: t.tipo, data: dia, valor, memo: t.memo, categoria: t.categoria });
+    }
+    txs.sort((a, b) => b.data.localeCompare(a.data));
+    return { ok: true, conta, creditos, debitos, saldoMov: creditos + debitos, porCategoria, total: txs.length, transacoes: txs.slice(0, 300) };
   },
 );
 

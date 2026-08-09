@@ -724,6 +724,48 @@ export async function obterPendencias(empresaId?: string): Promise<Pendencias> {
   return res.data as Pendencias;
 }
 
+export interface TxBanco {
+  fitid: string;
+  tipo: string;
+  data: string;
+  valor: number;
+  memo: string;
+  categoria: string;
+}
+export interface ContaBanco {
+  empresaId: string;
+  org: string | null;
+  fid: string | null;
+  curdef: string | null;
+  saldo: number | null;
+  saldoData: string | null;
+  dtStart: string | null;
+  dtEnd: string | null;
+  ultimoImport: string | null;
+}
+export interface ExtratoBanco {
+  ok: boolean;
+  conta: ContaBanco | null;
+  creditos: number;
+  debitos: number;
+  saldoMov: number;
+  porCategoria: Record<string, number>;
+  total: number;
+  transacoes: TxBanco[];
+}
+export async function importarExtrato(ofx: string, empresaId: string): Promise<{ ok: boolean; transacoes: number; saldo: number | null; saldoData: string | null; org: string | null; periodo: { de: string | null; ate: string | null } }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "importarExtrato");
+  const res = await fn({ ofx, empresaId });
+  return res.data as { ok: boolean; transacoes: number; saldo: number | null; saldoData: string | null; org: string | null; periodo: { de: string | null; ate: string | null } };
+}
+export async function obterExtrato(empresaId: string, de?: string, ate?: string): Promise<ExtratoBanco> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "extratoBanco");
+  const res = await fn({ empresaId, de: de || undefined, ate: ate || undefined });
+  return res.data as ExtratoBanco;
+}
+
 // ---- Vendas (PDVnet) ----
 
 export interface ResumoVendas {

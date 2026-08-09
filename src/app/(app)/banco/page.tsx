@@ -1,0 +1,215 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { PageHeader } from "@/components/layout/page-header";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { StatCard } from "@/components/ui/stat-card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ModulePlaceholder } from "@/components/layout/module-placeholder";
+import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
+import {
+  listarEmpresas,
+  importarExtrato,
+  obterExtrato,
+  type ExtratoBanco,
+} from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
+import { useAuth } from "@/lib/auth/auth-provider";
+import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
+import { Landmark, Upload, ArrowUpRight, ArrowDownRight } from "lucide-react";
+
+const CAT_LABEL: Record<string, string> = {
+  pix_venda: "PIX (venda)",
+  cartao_credito: "Cartão crédito",
+  cartao_debito: "Cartão débito",
+  transferencia: "Transferência",
+  pagamento: "Pagamento",
+  tarifa: "Tarifa/Mensalidade",
+  devolucao: "Devolução",
+  outros: "Outros",
+};
+
+export default function BancoPage() {
+  const { podeAcao } = useAuth();
+  const podeImportar = podeAcao("financeiro.baixar");
+  const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [empresaId, setEmpresaId] = useState("");
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
+  const [dados, setDados] = useState<ExtratoBanco | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [importando, setImportando] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    void listarEmpresas().then((es) => {
+      setEmpresas(es);
+      if (es.length && !empresaId) setEmpresaId(es[0].id);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const carregar = useCallback(async () => {
+    if (!empresaId) { setDados(null); return; }
+    setCarregando(true);
+    setErro(null);
+    try {
+      setDados(await obterExtrato(empresaId));
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCarregando(false);
+    }
+  }, [empresaId]);
+
+  useEffect(() => { void carregar(); }, [carregar]);
+
+  async function aoEscolherArquivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) void enviar(file);
+    if (fileRef.current) fileRef.current.value = "";
+  }
+  async function enviar(file: File) {
+    if (!empresaId) { setErro("Selecione a empresa (conta) antes de importar."); return; }
+    setImportando(true);
+    setMsg(null);
+    setErro(null);
+    try {
+      // OFX da Stone vem em Windows-1252 — decodifica certo p/ preservar acentos.
+      const buf = await file.arrayBuffer();
+      const texto = new TextDecoder("windows-1252").decode(buf);
+      const r = await importarExtrato(texto, empresaId);
+      setMsg(`${r.transacoes} lançamento(s) importado(s) · saldo ${formatBRL(r.saldo ?? 0)}${r.org ? ` · ${r.org}` : ""}.`);
+      await carregar();
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setImportando(false);
+    }
+  }
+
+  const conta = dados?.conta ?? null;
+  const txs = (dados?.transacoes ?? []).filter((t) => noPeriodo(t.data, periodo));
+  const totCred = txs.reduce((s, t) => s + (t.valor > 0 ? t.valor : 0), 0);
+  const totDeb = txs.reduce((s, t) => s + (t.valor < 0 ? t.valor : 0), 0);
+  const cats = Object.entries(
+    txs.reduce<Record<string, number>>((acc, t) => {
+      acc[t.categoria] = (acc[t.categoria] ?? 0) + t.valor;
+      return acc;
+    }, {}),
+  ).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+
+  return (
+    <div>
+      <PageHeader
+        title="Banco"
+        description="Extrato bancário (OFX) — a base para a conciliação."
+        action={
+          podeImportar ? (
+            <Button size="sm" variant="outline" disabled={importando || !empresaId} onClick={() => fileRef.current?.click()}>
+              <Upload className="size-4" /> {importando ? "Importando…" : "Importar OFX"}
+            </Button>
+          ) : undefined
+        }
+      />
+      <input ref={fileRef} type="file" accept=".ofx" className="hidden" onChange={aoEscolherArquivo} />
+
+      {empresas.length > 1 ? (
+        <select
+          value={empresaId}
+          onChange={(e) => setEmpresaId(e.target.value)}
+          className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          {empresas.map((e) => (
+            <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+          ))}
+        </select>
+      ) : null}
+
+      {msg ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{msg}</p> : null}
+      {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
+
+      {carregando && !dados ? (
+        <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-40" /></div>
+      ) : !conta ? (
+        <ModulePlaceholder icon={Landmark} title="Nenhum extrato importado" etapa="Conciliação bancária">
+          Exporte o extrato da conta em <strong>OFX</strong> (Stone, banco, etc.) e clique em
+          <strong> Importar OFX</strong>. Os lançamentos entram aqui e viram base para conciliar com o previsto.
+        </ModulePlaceholder>
+      ) : (
+        <>
+          {/* Saldo + info da conta */}
+          <Card className="mb-3">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+              <div>
+                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Saldo em conta{conta.saldoData ? ` · ${formatarData(conta.saldoData)}` : ""}</p>
+                <p className="text-2xl font-bold tnum">{formatBRL(conta.saldo ?? 0)}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {conta.org ?? "Conta"}{conta.ultimoImport ? ` · importado ${formatarDataHora(conta.ultimoImport)}` : ""}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <StatCard label="Entradas (crédito)" value={formatBRL(totCred)} tone="success" />
+            <StatCard label="Saídas (débito)" value={formatBRL(Math.abs(totDeb))} tone="destructive" />
+            <StatCard label="Saldo do movimento" value={formatBRL(totCred + totDeb)} tone={totCred + totDeb < 0 ? "destructive" : "default"} />
+          </div>
+
+          {/* Por categoria */}
+          {cats.length ? (
+            <Card className="mt-3">
+              <CardContent className="py-4">
+                <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Por natureza</h2>
+                <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                  {cats.map(([k, v]) => (
+                    <div key={k} className="flex items-center justify-between py-1 text-sm">
+                      <span className="flex items-center gap-1.5 text-muted-foreground">
+                        {v >= 0 ? <ArrowUpRight className="size-3.5 text-success" /> : <ArrowDownRight className="size-3.5 text-destructive" />}
+                        {CAT_LABEL[k] ?? k}
+                      </span>
+                      <span className={`font-medium tnum ${v < 0 ? "text-destructive" : ""}`}>{formatBRL(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
+
+          {/* Lançamentos */}
+          <div className="mt-4 space-y-2">
+            <p className="text-xs text-muted-foreground">
+              {txs.length} lançamento(s){dados && dados.total > txs.length ? ` · mostrando os do período (de ${dados.total} carregados)` : ""}
+            </p>
+            {txs.slice(0, 200).map((t) => (
+              <Card key={t.fitid}>
+                <CardContent className="flex items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{t.memo || "—"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatarData(t.data)} · <Badge variant="neutral">{CAT_LABEL[t.categoria] ?? t.categoria}</Badge>
+                    </p>
+                  </div>
+                  <p className={`shrink-0 font-bold tnum ${t.valor < 0 ? "text-destructive" : "text-success"}`}>
+                    {t.valor >= 0 ? "+" : "−"}{formatBRL(Math.abs(t.valor))}
+                  </p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+
+      <p className="mt-4 text-xs text-muted-foreground">
+        O extrato é a fonte da verdade do que entrou/saiu. Próximo passo: conciliar estes lançamentos com o previsto
+        (recebíveis de cartão, contas pagas). Importar de novo o mesmo período apenas atualiza (sem duplicar).
+      </p>
+    </div>
+  );
+}
