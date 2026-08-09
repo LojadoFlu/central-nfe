@@ -17,6 +17,13 @@ service cloud.firestore {
     function hasRole(roles) {
       return isAuth() && role() in roles;
     }
+    // Usuário liberado: papel legado OU perfil custom aprovado (claim status=ativo).
+    function ativo() {
+      return isAuth() && (
+        role() in ['admin', 'fiscal', 'financeiro', 'consulta'] ||
+        request.auth.token.status == 'ativo'
+      );
+    }
 
     // Perfil do próprio usuário (papel/permissões). Escrita só backend.
     match /nfe_users/{uid} {
@@ -41,17 +48,17 @@ service cloud.firestore {
     // vivem no Secret Manager, nunca aqui. Ainda assim, leitura restrita e
     // escrita bloqueada no cliente.
     match /nfe_certificates/{id} {
-      allow read: if hasRole(['admin', 'fiscal']);
+      allow read: if ativo();
       allow write: if false;
     }
 
     // Estado de sincronização (NSU) e logs de integração — leitura fiscal/admin.
     match /nfe_sync_state/{id} {
-      allow read: if hasRole(['admin', 'fiscal']);
+      allow read: if ativo();
       allow write: if false;
     }
     match /nfe_sync_logs/{id} {
-      allow read: if hasRole(['admin', 'fiscal']);
+      allow read: if ativo();
       allow write: if false;
     }
 
@@ -77,7 +84,7 @@ service cloud.firestore {
       allow write: if false;
     }
     match /nfe_manifestations/{id} {
-      allow read: if hasRole(['admin', 'fiscal']);
+      allow read: if ativo();
       allow write: if false;
     }
     match /nfe_suppliers/{id} {
@@ -110,11 +117,11 @@ service cloud.firestore {
       allow write: if false;
     }
     match /cte_sync_state/{id} {
-      allow read: if hasRole(['admin', 'fiscal']);
+      allow read: if ativo();
       allow write: if false;
     }
     match /cte_sync_logs/{id} {
-      allow read: if hasRole(['admin', 'fiscal']);
+      allow read: if ativo();
       allow write: if false;
     }
 
@@ -128,11 +135,11 @@ service cloud.firestore {
       allow write: if false;
     }
     match /nfse_sync_state/{id} {
-      allow read: if hasRole(['admin', 'fiscal']);
+      allow read: if ativo();
       allow write: if false;
     }
     match /nfse_sync_logs/{id} {
-      allow read: if hasRole(['admin', 'fiscal']);
+      allow read: if ativo();
       allow write: if false;
     }
     match /nfe_alerts/{id} {
