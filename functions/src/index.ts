@@ -1405,16 +1405,10 @@ export const centralPendencias = onCall(
     if (vencQtd) pend.push({ chave: "contasVencidas", titulo: `${vencQtd} conta(s) vencida(s)`, descricao: "Contas a pagar das NF-e em atraso.", severidade: "critico", qtd: vencQtd, valor: vencVal, href: "/financeiro" });
     if (prox7Qtd) pend.push({ chave: "contas7d", titulo: `${prox7Qtd} conta(s) vencem em 7 dias`, descricao: "Contas a pagar próximas do vencimento.", severidade: "atencao", qtd: prox7Qtd, valor: prox7Val, href: "/financeiro" });
 
-    // Recebíveis de cartão atrasados: venceram e não liquidaram (últimos 120 dias)
-    let recQtd = 0, recVal = 0;
-    const recSnap = await db.collection("card_receivables")
-      .where("dataVencimento", ">=", menosDias(120)).where("dataVencimento", "<", hoje).get();
-    for (const doc of recSnap.docs) {
-      const r = doc.data();
-      if (!daEmpresa(r.empresaId) || r.dataLiquidacao) continue;
-      recQtd++; recVal += Number(r.liquido ?? r.valor ?? 0);
-    }
-    if (recQtd) pend.push({ chave: "recebiveisAtrasados", titulo: `${recQtd} recebível(is) de cartão atrasado(s)`, descricao: "Venceram e ainda não caíram na conta — confira com a adquirente.", severidade: "critico", qtd: recQtd, valor: recVal, href: "/vendas" });
+    // NOTA: "recebíveis de cartão atrasados" (venceram sem liquidar) NÃO é confiável hoje —
+    // o PDV não popula `dataLiquidacao` (conferido: 0 de 2638 preenchidos), então TODO
+    // recebível passado apareceria como atrasado (falso-positivo). Só reativar após confirmar
+    // que o PDV preenche a liquidação (ou usar conciliação bancária como fonte da verdade).
 
     // Acordos em atraso
     let acQtd = 0, acVal = 0;
