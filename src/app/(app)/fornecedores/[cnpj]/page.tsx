@@ -60,7 +60,7 @@ export default function FornecedorDetalhePage() {
 
       <PageHeader title={resumo.nome} description={formatCNPJ(cnpj)} />
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="Total comprado" value={formatBRL(resumo.total)} />
         <StatCard label="Notas" value={String(resumo.qtd)} />
         <StatCard label="Ticket médio" value={formatBRL(resumo.ticket)} />

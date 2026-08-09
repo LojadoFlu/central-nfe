@@ -174,7 +174,7 @@ export default function VendasPage() {
         </ModulePlaceholder>
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <StatCard label="Vendido no período" value={formatBRL(resumo?.totalVendido)} />
             <StatCard label="Cartões a receber" value={formatBRL(resumo?.totalRecebiveis)} tone="warning" />
             <StatCard label="Líquido previsto" value={formatBRL(resumo?.totalLiquido)} tone="success" />

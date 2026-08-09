@@ -264,7 +264,7 @@ export default function FinanceiroPage() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="A vencer" value={parcelas === null ? "…" : formatBRL(totais.aVencer)} tone="warning" />
         <StatCard label="Vencidas" value={parcelas === null ? "…" : formatBRL(totais.vencido)} tone="destructive" />
         <StatCard label="Pagas" value={parcelas === null ? "…" : formatBRL(totais.pago)} tone="success" />
