@@ -1373,6 +1373,82 @@ export const fluxoCaixa = onCall(
   },
 );
 
+/**
+ * Central de Pendências: exceções que precisam de ação (PDV × NF-e × contas).
+ * Tudo computado de dados reais e rastreável — nada estimado. Cada item linka
+ * pra tela de origem. Filosofia do projeto: automatizar o normal, mostrar as exceções.
+ */
+export const centralPendencias = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+    const empresaId = req.data?.empresaId ? String(req.data.empresaId) : "";
+    const hoje = agoraISO().slice(0, 10);
+    const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
+    const daEmpresa = (cid: unknown) => !empresaId || String(cid ?? "") === empresaId;
+    const menosDias = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+
+    type Sev = "critico" | "atencao" | "info";
+    const pend: Array<{ chave: string; titulo: string; descricao: string; severidade: Sev; qtd: number; valor: number; href: string }> = [];
+
+    // Contas a pagar (NF-e): vencidas + a vencer em 7 dias
+    let vencQtd = 0, vencVal = 0, prox7Qtd = 0, prox7Val = 0;
+    const seteDias = menosDias(-7);
+    for (const doc of (await db.collection("nfe_installments").get()).docs) {
+      const p = doc.data();
+      if (p.statusPagamento === "pago" || !daEmpresa(p.companyId)) continue;
+      const dia = d10(p.vencimento);
+      if (!dia) continue;
+      if (dia < hoje) { vencQtd++; vencVal += Number(p.valor ?? 0); }
+      else if (dia <= seteDias) { prox7Qtd++; prox7Val += Number(p.valor ?? 0); }
+    }
+    if (vencQtd) pend.push({ chave: "contasVencidas", titulo: `${vencQtd} conta(s) vencida(s)`, descricao: "Contas a pagar das NF-e em atraso.", severidade: "critico", qtd: vencQtd, valor: vencVal, href: "/financeiro" });
+    if (prox7Qtd) pend.push({ chave: "contas7d", titulo: `${prox7Qtd} conta(s) vencem em 7 dias`, descricao: "Contas a pagar próximas do vencimento.", severidade: "atencao", qtd: prox7Qtd, valor: prox7Val, href: "/financeiro" });
+
+    // Recebíveis de cartão atrasados: venceram e não liquidaram (últimos 120 dias)
+    let recQtd = 0, recVal = 0;
+    const recSnap = await db.collection("card_receivables")
+      .where("dataVencimento", ">=", menosDias(120)).where("dataVencimento", "<", hoje).get();
+    for (const doc of recSnap.docs) {
+      const r = doc.data();
+      if (!daEmpresa(r.empresaId) || r.dataLiquidacao) continue;
+      recQtd++; recVal += Number(r.liquido ?? r.valor ?? 0);
+    }
+    if (recQtd) pend.push({ chave: "recebiveisAtrasados", titulo: `${recQtd} recebível(is) de cartão atrasado(s)`, descricao: "Venceram e ainda não caíram na conta — confira com a adquirente.", severidade: "critico", qtd: recQtd, valor: recVal, href: "/vendas" });
+
+    // Acordos em atraso
+    let acQtd = 0, acVal = 0;
+    for (const doc of (await db.collection("nfe_agreements").get()).docs) {
+      const a = doc.data();
+      if (!daEmpresa(a.companyId)) continue;
+      for (const p of (a.parcelas ?? []) as Array<Record<string, unknown>>) {
+        if (p.statusPagamento === "pago") continue;
+        const dia = d10(p.vencimento);
+        if (dia && dia < hoje) { acQtd++; acVal += Number(p.valor ?? 0); }
+      }
+    }
+    if (acQtd) pend.push({ chave: "acordosAtrasados", titulo: `${acQtd} parcela(s) de acordo em atraso`, descricao: "Parcelas de acordos vencidas e não pagas.", severidade: "atencao", qtd: acQtd, valor: acVal, href: "/acordos" });
+
+    // Notas sem XML completo (manifestação pendente)
+    let nxQtd = 0;
+    for (const doc of (await db.collection("nfe_documents").get()).docs) {
+      const dcto = doc.data();
+      if (!daEmpresa(dcto.companyId)) continue;
+      if (dcto.temXmlCompleto === false) nxQtd++;
+    }
+    if (nxQtd) pend.push({ chave: "notasSemXml", titulo: `${nxQtd} nota(s) sem XML completo`, descricao: "Manifeste (Ciência) para destravar o XML/DANFE.", severidade: "info", qtd: nxQtd, valor: 0, href: "/notas" });
+
+    const ordem: Record<Sev, number> = { critico: 0, atencao: 1, info: 2 };
+    pend.sort((a, b) => ordem[a.severidade] - ordem[b.severidade] || b.valor - a.valor);
+    const resumo = {
+      criticas: pend.filter((p) => p.severidade === "critico").length,
+      atencao: pend.filter((p) => p.severidade === "atencao").length,
+      info: pend.filter((p) => p.severidade === "info").length,
+    };
+    return { ok: true, hoje, empresaId: empresaId || null, pendencias: pend, resumo };
+  },
+);
+
 /** Resolve a empresa (nfe_companies) para associar a registros manuais. */
 async function resolverEmpresa(companyId: string): Promise<{ id: string; nome: string } | null> {
   if (!companyId) return null;

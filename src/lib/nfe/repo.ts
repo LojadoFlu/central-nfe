@@ -701,6 +701,29 @@ export async function obterFluxoCaixa(de: string, ate: string, empresaId?: strin
   return res.data as FluxoCaixa;
 }
 
+export interface Pendencia {
+  chave: string;
+  titulo: string;
+  descricao: string;
+  severidade: "critico" | "atencao" | "info";
+  qtd: number;
+  valor: number;
+  href: string;
+}
+export interface Pendencias {
+  ok: boolean;
+  hoje: string;
+  empresaId: string | null;
+  pendencias: Pendencia[];
+  resumo: { criticas: number; atencao: number; info: number };
+}
+export async function obterPendencias(empresaId?: string): Promise<Pendencias> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "centralPendencias");
+  const res = await fn({ empresaId: empresaId || undefined });
+  return res.data as Pendencias;
+}
+
 // ---- Vendas (PDVnet) ----
 
 export interface ResumoVendas {
