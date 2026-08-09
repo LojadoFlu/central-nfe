@@ -570,6 +570,53 @@ export async function urlDownloadXml(storagePath: string): Promise<string> {
   return getDownloadURL(storageRef(storage, storagePath));
 }
 
+// ---- PDVnet (integração financeira) ----
+
+export async function pdvnetSalvarCredenciais(input: {
+  usuario: string;
+  senha: string;
+  baseUrl: string;
+}): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "pdvnetSalvarCredenciais");
+  const res = await fn(input);
+  return res.data as { ok: boolean };
+}
+
+export async function pdvnetStatus(): Promise<{ temCredenciais: boolean; baseUrl: string | null }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "pdvnetStatus");
+  const res = await fn({});
+  return res.data as { temCredenciais: boolean; baseUrl: string | null };
+}
+
+export interface SondagemVendas {
+  ok: boolean;
+  erro?: string;
+  periodo?: { inicio: string; fim: string };
+  totalPagina?: number;
+  totalRegistros?: number | null;
+  lojas?: { id: number; nome?: string; inativa?: boolean }[];
+  amostra?: {
+    id: string;
+    lojaId?: number;
+    dataHora?: string;
+    valorTotal?: number;
+    inativa?: boolean;
+    pagamentos?: Record<string, number>;
+    parcelasCartao?: Record<string, unknown>[];
+    documentosFiscais?: { TipoDocumento?: number; Chave?: string; Numero?: string }[];
+    qtdItens?: number;
+  } | null;
+}
+
+export async function pdvnetSondarVendas(dias = 3): Promise<SondagemVendas> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "pdvnetSondarVendas");
+  const res = await fn({ dias });
+  return res.data as SondagemVendas;
+}
+
 // ---- Usuários e perfis (RBAC) ----
 
 export interface Usuario {

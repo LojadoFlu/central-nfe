@@ -16,7 +16,10 @@ import {
   gravarSegredoCertificado,
   lerSegredoCertificado,
   nomeSegredoCertificado,
+  gravarSegredoPdvnet,
+  lerSegredoPdvnet,
 } from "./lib/secrets";
+import { PdvnetClient } from "./pdvnet/client";
 import { getStorage } from "firebase-admin/storage";
 import { getAuth } from "firebase-admin/auth";
 import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
@@ -976,6 +979,97 @@ export const nfeExcluirDespesaFixa = onCall(opcoes, async (req) => {
   await auditar(uid, "despesaFixa.excluir", { id });
   return { ok: true };
 });
+
+// ============ PDVnet (Etapa 2 — integração financeira) ============
+
+/** Salva as credenciais do PDVnet no Secret Manager (a senha nunca fica no Firestore). Só admin. */
+export const pdvnetSalvarCredenciais = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin"]);
+  const d = req.data ?? {};
+  const usuario = String(d.usuario ?? "").trim();
+  const senha = String(d.senha ?? "");
+  let baseUrl = String(d.baseUrl ?? "").trim().replace(/\/+$/, "");
+  if (!usuario || !senha || !baseUrl) {
+    throw new HttpsError("invalid-argument", "Informe usuário, senha e URL base.");
+  }
+  if (!/^https?:\/\//i.test(baseUrl)) baseUrl = "http://" + baseUrl;
+  await gravarSegredoPdvnet({ usuario, senha, baseUrl });
+  await db.collection("configuracoes").doc("pdvnet").set(
+    { temCredenciais: true, baseUrl, atualizadoPor: uid, atualizadoEm: agoraISO() },
+    { merge: true },
+  );
+  await auditar(uid, "pdvnet.salvarCredenciais", { baseUrl });
+  return { ok: true };
+});
+
+/** Status da integração PDVnet (tem credenciais? qual baseUrl?). */
+export const pdvnetStatus = onCall(opcoes, async (req) => {
+  if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Autenticação necessária.");
+  const snap = await db.collection("configuracoes").doc("pdvnet").get();
+  const d = (snap.data() ?? {}) as { temCredenciais?: boolean; baseUrl?: string };
+  return { temCredenciais: !!d.temCredenciais, baseUrl: d.baseUrl ?? null };
+});
+
+/**
+ * SONDAGEM de vendas: login real + 1 página de /vendas dos últimos N dias.
+ * Confirma o contrato (formas de pagamento + ParcelasCartao) antes do sync pleno.
+ * Não grava nada. admin/fiscal (ação integracoes.sincronizar).
+ */
+export const pdvnetSondarVendas = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
+    const dias = Math.min(Math.max(Math.floor(Number(req.data?.dias ?? 3)), 1), 31);
+    let cred;
+    try {
+      cred = await lerSegredoPdvnet();
+    } catch {
+      throw new HttpsError("failed-precondition", "Credenciais do PDVnet não configuradas.");
+    }
+    const cli = new PdvnetClient(cred);
+    const hoje = new Date();
+    const ini = new Date(hoje.getTime() - dias * 86_400_000);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    try {
+      const lojas = await cli.listarLojas();
+      const resp = await cli.listarVendas(fmt(ini), fmt(hoje), { pagina: 1, tamanhoPagina: 50 });
+      const vendas = resp.Registros ?? [];
+      const amostra = vendas.find((v) => (v.ParcelasCartao?.length ?? 0) > 0) ?? vendas[0];
+      await auditar(uid, "pdvnet.sondar", { dias, qtd: vendas.length });
+      return {
+        ok: true,
+        periodo: { inicio: fmt(ini), fim: fmt(hoje) },
+        totalPagina: vendas.length,
+        totalRegistros: resp.PaginacaoInfo?.TotalRegistros ?? null,
+        lojas: lojas.map((l) => ({ id: l.Id, nome: l.NomeFantasia || l.RazaoSocial, inativa: l.Inativa })),
+        amostra: amostra
+          ? {
+              id: amostra.Id,
+              lojaId: amostra.LojaId,
+              dataHora: amostra.DataHora,
+              valorTotal: amostra.ValorTotal,
+              inativa: amostra.Inativa,
+              pagamentos: {
+                dinheiro: amostra.ValorDinheiro ?? 0,
+                pix: amostra.ValorPix ?? 0,
+                cartaoDebito: amostra.ValorCartaoDebito ?? 0,
+                cartaoParcelado: amostra.ValorCartaoParcelado ?? 0,
+                cartaoRotativo: amostra.ValorCartaoRotativo ?? 0,
+                crediario: amostra.ValorCrediario ?? 0,
+              },
+              parcelasCartao: (amostra.ParcelasCartao ?? []).slice(0, 6),
+              documentosFiscais: amostra.DocumentosFiscais ?? [],
+              qtdItens: (amostra.Itens ?? []).length,
+            }
+          : null,
+      };
+    } catch (e) {
+      const msg = (e as Error).message || String(e);
+      logger.error("pdvnetSondarVendas falhou", { erro: msg });
+      return { ok: false, erro: msg };
+    }
+  },
+);
 
 /** Resolve a empresa (nfe_companies) para associar a registros manuais. */
 async function resolverEmpresa(companyId: string): Promise<{ id: string; nome: string } | null> {

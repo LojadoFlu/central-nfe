@@ -62,3 +62,37 @@ export async function lerSegredoCertificado(
   if (!data) throw new Error("Segredo do certificado vazio ou inexistente.");
   return JSON.parse(data);
 }
+
+// ---- Credenciais do PDVnet (usuário/senha/baseUrl) ----
+
+const SEGREDO_PDVNET = "pdvnet-credenciais";
+
+export interface CredenciaisPdvnet {
+  usuario: string;
+  senha: string;
+  baseUrl: string;
+}
+
+/** Grava (cria/versiona) as credenciais do PDVnet no Secret Manager. */
+export async function gravarSegredoPdvnet(cred: CredenciaisPdvnet): Promise<void> {
+  const parent = `projects/${projectId()}`;
+  const secretName = `${parent}/secrets/${SEGREDO_PDVNET}`;
+  try {
+    await client.getSecret({ name: secretName });
+  } catch {
+    await client.createSecret({ parent, secretId: SEGREDO_PDVNET, secret: { replication: { automatic: {} } } });
+  }
+  await client.addSecretVersion({
+    parent: secretName,
+    payload: { data: Buffer.from(JSON.stringify(cred), "utf8") },
+  });
+}
+
+/** Lê as credenciais do PDVnet (uso backend: sync/sondagem). */
+export async function lerSegredoPdvnet(): Promise<CredenciaisPdvnet> {
+  const name = `projects/${projectId()}/secrets/${SEGREDO_PDVNET}/versions/latest`;
+  const [version] = await client.accessSecretVersion({ name });
+  const data = version.payload?.data?.toString();
+  if (!data) throw new Error("Credenciais do PDVnet não configuradas.");
+  return JSON.parse(data);
+}
