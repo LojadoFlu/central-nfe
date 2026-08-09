@@ -112,6 +112,14 @@ export default function VendasPage() {
     [resumo],
   );
 
+  // Taxa média REAL de cartão = (bruto − líquido) / bruto, do período/loja filtrado.
+  const taxaCartao = useMemo(() => {
+    const bruto = resumo?.totalRecebiveis ?? 0;
+    const liq = resumo?.totalLiquido ?? 0;
+    if (bruto <= 0) return null;
+    return { pct: (1 - liq / bruto) * 100, taxas: bruto - liq, bruto };
+  }, [resumo]);
+
   // listas filtradas por grupo + período (cliente)
   const noFiltro = (lojaId?: number, dia?: string) => {
     if (grupo && grupoDaLoja.get(lojaId ?? -1) !== grupo) return false;
@@ -181,6 +189,23 @@ export default function VendasPage() {
             {resumo?.count ?? 0} venda(s){grupo ? ` · ${grupo}` : " · todas as lojas"} · {formatarData(de)} a {formatarData(ate)}
             {carregandoResumo ? " · atualizando…" : ""}
           </p>
+
+          {taxaCartao ? (
+            <Card className="mt-3">
+              <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Taxa média de cartão (real)</p>
+                  <p className="text-2xl font-bold tnum text-destructive">
+                    {taxaCartao.pct.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%
+                  </p>
+                </div>
+                <div className="text-right text-xs text-muted-foreground">
+                  <p><span className="font-medium text-destructive tnum">{formatBRL(taxaCartao.taxas)}</span> em taxas</p>
+                  <p>sobre {formatBRL(taxaCartao.bruto)} em cartões</p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           {formas.length > 0 ? (
             <Card className="mt-4">
