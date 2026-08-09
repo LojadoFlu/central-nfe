@@ -25,7 +25,7 @@ if (!tj.access_token) { console.log("TOKEN_FALHOU:", tj.error); process.exit(0);
 const bucket = "central-nfe-1c8d8.firebasestorage.app";
 const cors = [
   {
-    origin: ["https://arquiveiflu.netlify.app", "http://localhost:3000"],
+    origin: ["https://financeirolojadoflu.netlify.app", "https://arquiveiflu.netlify.app", "http://localhost:3000"],
     method: ["GET", "HEAD"],
     responseHeader: ["Content-Type", "Content-Length", "Content-Disposition"],
     maxAgeSeconds: 3600,
