@@ -47,7 +47,7 @@ export default function TaxasPage() {
   const [fPix, setFPix] = useState("");
   const [fDebito, setFDebito] = useState("");
   const [fCredito, setFCredito] = useState("");
-  const [fParcelado, setFParcelado] = useState("");
+  const [fParcelas, setFParcelas] = useState<Record<string, string>>({});
   const [fAntecip, setFAntecip] = useState("");
   const [fAtivo, setFAtivo] = useState(true);
   const [salvando, setSalvando] = useState(false);
@@ -121,7 +121,7 @@ export default function TaxasPage() {
 
   function resetForm() {
     setEditId(null);
-    setFNome(""); setFPix(""); setFDebito(""); setFCredito(""); setFParcelado(""); setFAntecip(""); setFAtivo(true);
+    setFNome(""); setFPix(""); setFDebito(""); setFCredito(""); setFParcelas({}); setFAntecip(""); setFAtivo(true);
   }
   function abrirNovo() { resetForm(); setFormAberto(true); }
   function abrirEdicao(c: TaxaCartao) {
@@ -130,7 +130,9 @@ export default function TaxasPage() {
     setFPix(String(c.taxaPix ?? ""));
     setFDebito(String(c.taxaDebito ?? ""));
     setFCredito(String(c.taxaCredito ?? ""));
-    setFParcelado(String(c.taxaParcelado ?? ""));
+    const pm: Record<string, string> = {};
+    for (const [k, v] of Object.entries(c.parcelas ?? {})) pm[k] = String(v);
+    setFParcelas(pm);
     setFAntecip(String(c.taxaAntecipacao ?? ""));
     setFAtivo(c.ativo !== false);
     setFormAberto(true);
@@ -149,7 +151,11 @@ export default function TaxasPage() {
         taxaPix: Number(fPix) || 0,
         taxaDebito: Number(fDebito) || 0,
         taxaCredito: Number(fCredito) || 0,
-        taxaParcelado: Number(fParcelado) || 0,
+        parcelas: Object.fromEntries(
+          Object.entries(fParcelas)
+            .map(([k, v]) => [k, Number(v) || 0])
+            .filter(([, v]) => (v as number) > 0),
+        ),
         taxaAntecipacao: Number(fAntecip) || 0,
         ativo: fAtivo,
       });
@@ -271,14 +277,26 @@ export default function TaxasPage() {
               <label className="block text-xs text-muted-foreground">Nome do cartão / bandeira</label>
               <Input placeholder="Ex.: Stone Visa" value={fNome} onChange={(e) => setFNome(e.target.value)} maxLength={80} />
             </div>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <CampoTaxa label="PIX (%)" value={fPix} onChange={setFPix} />
               <CampoTaxa label="Débito / à vista (%)" value={fDebito} onChange={setFDebito} />
               <CampoTaxa label="Crédito à vista (%)" value={fCredito} onChange={setFCredito} />
-              <CampoTaxa label="Parcelado (%)" value={fParcelado} onChange={setFParcelado} />
               <CampoTaxa label="Antecipação (% adic.)" value={fAntecip} onChange={setFAntecip} />
             </div>
-            <p className="text-[11px] text-muted-foreground">A antecipação soma ao parcelado para o efetivo.</p>
+            <div className="space-y-1.5">
+              <label className="block text-xs text-muted-foreground">Parcelado — taxa por parcela (2x a 10x)</label>
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+                {Array.from({ length: 9 }, (_, i) => i + 2).map((n) => (
+                  <CampoTaxa
+                    key={n}
+                    label={`${n}x (%)`}
+                    value={fParcelas[String(n)] ?? ""}
+                    onChange={(v) => setFParcelas((p) => ({ ...p, [String(n)]: v }))}
+                  />
+                ))}
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">A antecipação soma ao parcelado para o efetivo. Deixe em branco a parcela que a loja não oferece.</p>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={fAtivo} onChange={(e) => setFAtivo(e.target.checked)} className="size-4" />
               Cartão ativo
@@ -326,13 +344,26 @@ export default function TaxasPage() {
                     </div>
                   ) : null}
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
                   <Taxa rot="PIX" v={fmtPct(c.taxaPix)} />
                   <Taxa rot="Débito" v={fmtPct(c.taxaDebito)} />
-                  <Taxa rot="Crédito" v={fmtPct(c.taxaCredito)} />
-                  <Taxa rot="Parcelado" v={fmtPct(c.taxaParcelado)} />
+                  <Taxa rot="Crédito 1x" v={fmtPct(c.taxaCredito)} />
                   <Taxa rot="Antecip. (adic.)" v={fmtPct(c.taxaAntecipacao)} />
                 </div>
+                {Object.keys(c.parcelas ?? {}).length ? (
+                  <div className="mt-2">
+                    <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">Parcelado por parcela</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {Object.entries(c.parcelas)
+                        .sort((a, b) => Number(a[0]) - Number(b[0]))
+                        .map(([n, v]) => (
+                          <span key={n} className="rounded border border-border px-2 py-0.5 text-xs tnum">
+                            {n}x <strong>{fmtPct(v as number)}</strong>
+                          </span>
+                        ))}
+                    </div>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           ))}

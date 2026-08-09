@@ -801,7 +801,7 @@ export interface TaxaCartao {
   taxaPix: number;
   taxaDebito: number;
   taxaCredito: number;
-  taxaParcelado: number;
+  parcelas: Record<string, number>; // { "2": 4.03, ... "10": 8.5 }
   taxaAntecipacao: number;
   ativo: boolean;
 }

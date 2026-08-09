@@ -1194,13 +1194,19 @@ export const salvarTaxaCartao = onCall(opcoes, async (req) => {
   const empresaId = String(d.empresaId ?? "").trim();
   if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
   const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
+  const pin = (d.parcelas ?? {}) as Record<string, unknown>;
+  const parcelas: Record<string, number> = {};
+  for (let i = 2; i <= 10; i++) {
+    const v = Number(pin[i] ?? pin[String(i)]);
+    if (Number.isFinite(v) && v > 0) parcelas[String(i)] = v;
+  }
   const doc = {
     empresaId,
     nome,
     taxaPix: num(d.taxaPix),
     taxaDebito: num(d.taxaDebito),
     taxaCredito: num(d.taxaCredito),
-    taxaParcelado: num(d.taxaParcelado),
+    parcelas,
     taxaAntecipacao: num(d.taxaAntecipacao),
     ativo: d.ativo !== false,
     atualizadoEm: agoraISO(),
@@ -1280,7 +1286,7 @@ export const importarCartoesPDV = onCall(
     if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
     const desde = new Date(Date.now() - 120 * 86_400_000).toISOString().slice(0, 10);
     const snap = await db.collection("card_receivables").where("dia", ">=", desde).get();
-    interface Acc { deb: number[]; cred1: number[]; credN: number[] }
+    interface Acc { deb: number[]; cred1: number[]; parc: Record<string, number[]> }
     const cards = new Map<string, Acc>();
     for (const doc of snap.docs) {
       const r = doc.data();
@@ -1289,10 +1295,13 @@ export const importarCartoesPDV = onCall(
       const taxa = Number(r.taxaPct);
       if (!nome || !Number.isFinite(taxa)) continue;
       let a = cards.get(nome);
-      if (!a) { a = { deb: [], cred1: [], credN: [] }; cards.set(nome, a); }
+      if (!a) { a = { deb: [], cred1: [], parc: {} }; cards.set(nome, a); }
       if (/debito|débito/i.test(nome)) a.deb.push(taxa);
-      else if (Number(r.parcela ?? 1) <= 1) a.cred1.push(taxa);
-      else a.credN.push(taxa);
+      else {
+        const p = Math.max(1, Math.min(10, Math.round(Number(r.parcela ?? 1) || 1)));
+        if (p <= 1) a.cred1.push(taxa);
+        else (a.parc[String(p)] ??= []).push(taxa);
+      }
     }
     if (cards.size === 0) throw new HttpsError("failed-precondition", "Sem recebíveis de cartão sincronizados nos últimos 120 dias para esta loja.");
     const avg = (arr: number[]) => (arr.length ? Math.round((arr.reduce((s, x) => s + x, 0) / arr.length) * 100) / 100 : 0);
@@ -1307,12 +1316,14 @@ export const importarCartoesPDV = onCall(
     for (const [nome, a] of cards) {
       const prev = byNome.get(nome);
       const ref = prev ? db.collection("card_rates").doc(prev.id) : db.collection("card_rates").doc();
+      const parcelas: Record<string, number> = {};
+      for (const p of Object.keys(a.parc)) parcelas[p] = avg(a.parc[p]);
       batch.set(ref, {
         empresaId, nome,
         taxaPix: prev?.taxaPix ?? 0,
         taxaDebito: avg(a.deb),
         taxaCredito: avg(a.cred1),
-        taxaParcelado: avg(a.credN),
+        parcelas,
         taxaAntecipacao: prev?.taxaAntecipacao ?? 0,
         ativo: true,
         origem: "pdv",
