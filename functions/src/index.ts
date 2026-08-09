@@ -1183,6 +1183,54 @@ export const pdvnetSalvarLoja = onCall(opcoes, async (req) => {
   return { ok: true };
 });
 
+// ============ TAXAS DE CARTÃO (configuração) ============
+
+/** Cria/edita um cartão e suas taxas (%). Admin/financeiro. */
+export const salvarTaxaCartao = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const nome = String(d.nome ?? "").trim().slice(0, 80);
+  if (!nome) throw new HttpsError("invalid-argument", "Informe o nome do cartão.");
+  const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
+  const doc = {
+    nome,
+    taxaPix: num(d.taxaPix),
+    taxaDebito: num(d.taxaDebito),
+    taxaCredito: num(d.taxaCredito),
+    taxaParcelado: num(d.taxaParcelado),
+    taxaAntecipacao: num(d.taxaAntecipacao),
+    ativo: d.ativo !== false,
+    atualizadoEm: agoraISO(),
+    atualizadoPor: uid,
+  };
+  const ref = d.id ? db.collection("card_rates").doc(String(d.id)) : db.collection("card_rates").doc();
+  await ref.set(doc, { merge: true });
+  await auditar(uid, "cartao.salvarTaxa", { id: ref.id, nome });
+  return { ok: true, id: ref.id };
+});
+
+/** Exclui um cartão. Admin/financeiro. */
+export const excluirTaxaCartao = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const id = String(req.data?.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  await db.collection("card_rates").doc(id).delete();
+  await auditar(uid, "cartao.excluirTaxa", { id });
+  return { ok: true };
+});
+
+/** Liga/desliga a antecipação (define crédito D+1 vs D+30 e a taxa adicional). */
+export const salvarConfigCartao = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const antecipacao = req.data?.antecipacao !== false;
+  await db.collection("configuracoes").doc("cartao").set(
+    { antecipacao, atualizadoEm: agoraISO(), atualizadoPor: uid },
+    { merge: true },
+  );
+  await auditar(uid, "cartao.salvarConfig", { antecipacao });
+  return { ok: true, antecipacao };
+});
+
 /** Resumo de vendas filtrado por período e loja (grupo). Agrega no servidor. */
 export const pdvnetResumoVendas = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },

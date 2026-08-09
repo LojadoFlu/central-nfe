@@ -793,6 +793,47 @@ export async function obterConciliacao(empresaId: string, de: string, ate: strin
   return res.data as Conciliacao;
 }
 
+// ——— Taxas de cartão (configuração) ———
+export interface TaxaCartao {
+  id: string;
+  nome: string;
+  taxaPix: number;
+  taxaDebito: number;
+  taxaCredito: number;
+  taxaParcelado: number;
+  taxaAntecipacao: number;
+  ativo: boolean;
+}
+export async function listarTaxasCartao(): Promise<TaxaCartao[]> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, "card_rates"));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as object) }) as TaxaCartao)
+    .sort((a, b) => (a.nome ?? "").localeCompare(b.nome ?? ""));
+}
+export async function obterConfigCartao(): Promise<{ antecipacao: boolean }> {
+  const { db } = fb();
+  const snap = await getDoc(doc(db, "configuracoes", "cartao"));
+  const d = snap.exists() ? (snap.data() as { antecipacao?: boolean }) : {};
+  return { antecipacao: d.antecipacao !== false };
+}
+export async function salvarTaxaCartao(t: Partial<TaxaCartao> & { nome: string }): Promise<{ ok: boolean; id: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "salvarTaxaCartao");
+  const res = await fn(t);
+  return res.data as { ok: boolean; id: string };
+}
+export async function excluirTaxaCartao(id: string): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "excluirTaxaCartao");
+  return (await fn({ id })).data as { ok: boolean };
+}
+export async function salvarConfigCartao(antecipacao: boolean): Promise<{ ok: boolean; antecipacao: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "salvarConfigCartao");
+  return (await fn({ antecipacao })).data as { ok: boolean; antecipacao: boolean };
+}
+
 // ---- Vendas (PDVnet) ----
 
 export interface ResumoVendas {
