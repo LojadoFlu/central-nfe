@@ -34,16 +34,17 @@ function primeiroDiaMes(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
-function hojeISO(): string {
+function ultimoDiaMes(): string {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const u = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  return `${u.getFullYear()}-${String(u.getMonth() + 1).padStart(2, "0")}-${String(u.getDate()).padStart(2, "0")}`;
 }
 
 export default function VendasPage() {
   const { podeAcao } = useAuth();
   const podeSincronizar = podeAcao("integracoes.sincronizar");
   const [de, setDe] = useState(primeiroDiaMes());
-  const [ate, setAte] = useState(hojeISO());
+  const [ate, setAte] = useState(ultimoDiaMes());
   const [grupo, setGrupo] = useState("");
   const [resumo, setResumo] = useState<ResumoVendasFiltrado | null>(null);
   const [carregandoResumo, setCarregandoResumo] = useState(true);
@@ -213,7 +214,7 @@ export default function VendasPage() {
                   <CardContent className="flex items-center justify-between gap-3 py-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">
-                        {s.lojaNome ?? `Loja ${s.lojaId}`}
+                        {grupoDaLoja.get(s.lojaId ?? -1) ?? s.lojaNome ?? `Loja ${s.lojaId}`}
                         {s.cancelada ? <Badge variant="destructive" className="ml-2">Cancelada</Badge> : null}
                       </p>
                       <p className="text-xs text-muted-foreground">
