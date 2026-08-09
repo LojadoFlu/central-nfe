@@ -1296,8 +1296,9 @@ export const importarCartoesPDV = onCall(
       const taxa = Number(r.taxaPct);
       const vid = String(r.vendaId ?? "");
       if (!nome || !Number.isFinite(taxa) || !vid) continue;
-      let v = vendas.get(vid);
-      if (!v) { v = { nome, taxa, total: 0 }; vendas.set(vid, v); }
+      const key = `${vid}|${nome}`; // separa cartões diferentes na mesma venda (pgto dividido)
+      let v = vendas.get(key);
+      if (!v) { v = { nome, taxa, total: 0 }; vendas.set(key, v); }
       v.taxa = taxa;
       v.total = Math.max(v.total, Math.round(Number(r.parcela ?? 1) || 1));
     }
@@ -1379,8 +1380,9 @@ export const conferirRecebiveis = onCall(
       const taxa = Number(r.taxaPct);
       const vid = String(r.vendaId ?? "");
       if (!nome || !Number.isFinite(taxa) || !vid) continue;
-      let v = vendas.get(vid);
-      if (!v) { v = { nome, taxa, total: 0, valor: 0, dia: String(r.dia ?? "").slice(0, 10) }; vendas.set(vid, v); }
+      const key = `${vid}|${nome}`; // separa cartões diferentes na mesma venda (pgto dividido)
+      let v = vendas.get(key);
+      if (!v) { v = { nome, taxa, total: 0, valor: 0, dia: String(r.dia ?? "").slice(0, 10) }; vendas.set(key, v); }
       v.taxa = taxa;
       v.total = Math.max(v.total, Math.round(Number(r.parcela ?? 1) || 1));
       v.valor += Number(r.valor ?? 0);
