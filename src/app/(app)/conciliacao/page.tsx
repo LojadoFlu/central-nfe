@@ -85,6 +85,15 @@ export default function ConciliacaoPage() {
               nota="Banco: PIX recebido na maquininha. PDV: vendas em PIX." />
           </div>
 
+          {(dados.manual && (dados.manual.cartao > 0 || dados.manual.pix > 0)) ? (
+            <p className="mt-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+              Inclui vendas manuais (lojas offline) que passaram nas máquinas desta loja, convertidas de bruto para líquido pela taxa média cadastrada:{" "}
+              {dados.manual.cartao > 0 ? <strong>{formatBRL(dados.manual.cartao)} em cartão</strong> : null}
+              {dados.manual.cartao > 0 && dados.manual.pix > 0 ? " e " : null}
+              {dados.manual.pix > 0 ? <strong>{formatBRL(dados.manual.pix)} em PIX</strong> : null}.
+            </p>
+          ) : null}
+
           {/* Detalhe por dia */}
           {dados.porDia?.length ? (
             <Card className="mt-4">

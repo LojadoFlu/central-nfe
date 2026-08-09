@@ -791,6 +791,7 @@ export interface Conciliacao {
   empresaId: string;
   banco: { cartao: number; pix: number; outrasEntradas: number; saidas: number };
   previsto: { cartao: number; pix: number };
+  manual?: { cartao: number; pix: number };
   dif: { cartao: number; pix: number };
   porDia: DiaConc[];
 }

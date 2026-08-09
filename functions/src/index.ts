@@ -1838,6 +1838,51 @@ export const conciliacao = onCall(
       bd(d10(p.dia)).previstoPix += v;
     }
 
+    // MANUAL (lojas offline, ex.: Maracanã) — vendas que passaram na MÁQUINA desta loja
+    // caem no banco DESTA loja. O lançamento é BRUTO; converto para LÍQUIDO pela taxa MÉDIA
+    // cadastrada desta loja (por forma/nº de parcelas) e somo no previsto. Dinheiro não entra.
+    let debS = 0, debN = 0, cr1S = 0, cr1N = 0, pixS = 0, pixN = 0;
+    const parcAgg = new Map<string, { s: number; n: number }>();
+    const crCards = await db.collection("card_rates").where("empresaId", "==", empresaId).get();
+    for (const d of crCards.docs) {
+      const x = d.data();
+      if (Number(x.taxaDebito) > 0) { debS += Number(x.taxaDebito); debN++; }
+      if (Number(x.taxaCredito) > 0) { cr1S += Number(x.taxaCredito); cr1N++; }
+      if (Number(x.taxaPix) > 0) { pixS += Number(x.taxaPix); pixN++; }
+      const par = (x.parcelas ?? {}) as Record<string, number>;
+      for (const [k, val] of Object.entries(par)) {
+        if (Number(val) > 0) { const a = parcAgg.get(k) ?? { s: 0, n: 0 }; a.s += Number(val); a.n++; parcAgg.set(k, a); }
+      }
+    }
+    const media = (s: number, n: number) => (n ? s / n : 0);
+    const taxaDeb = media(debS, debN), taxaCr1 = media(cr1S, cr1N), taxaPixM = media(pixS, pixN);
+    const taxaParc = (n: number) => { const a = parcAgg.get(String(n)); return a ? a.s / a.n : 0; };
+    const liquidar = (valor: number, taxa: number) => valor * (1 - taxa / 100);
+
+    let manualCartao = 0, manualPix = 0;
+    const man = await db.collection("manual_sales").where("maquinaEmpresaId", "==", empresaId).get();
+    for (const doc of man.docs) {
+      const m = doc.data();
+      const diaV = d10(m.dia);
+      const valor = Number(m.valor ?? 0);
+      if (!diaV || !(valor > 0)) continue;
+      const forma = String(m.forma ?? "");
+      if (forma === "pix") {
+        if (diaV < de || diaV > ate) continue;
+        const liq = liquidar(valor, taxaPixM);
+        previstoPix += liq; manualPix += liq; bd(diaV).previstoPix += liq;
+      } else if (forma === "cartaoDebito" || forma === "cartaoCredito" || forma === "cartaoParcelado") {
+        const credito = dataCreditoCartao(diaV);
+        if (!credito || credito < de || credito > ate) continue;
+        const taxa = forma === "cartaoDebito" ? taxaDeb
+          : forma === "cartaoCredito" ? taxaCr1
+            : taxaParc(Math.max(2, Math.min(10, Math.round(Number(m.parcelas) || 2))));
+        const liq = liquidar(valor, taxa);
+        previstoCartao += liq; manualCartao += liq; bd(credito).previstoCartao += liq;
+      }
+      // dinheiro: fica na loja, não vai ao banco → ignora
+    }
+
     const porDia = [...dias.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([dia, x]) => ({
@@ -1850,6 +1895,7 @@ export const conciliacao = onCall(
       ok: true, de, ate, empresaId,
       banco: { cartao: bancoCartao, pix: bancoPix, outrasEntradas: bancoOutrasEnt, saidas: bancoSaidas },
       previsto: { cartao: previstoCartao, pix: previstoPix },
+      manual: { cartao: manualCartao, pix: manualPix },
       dif: { cartao: bancoCartao - previstoCartao, pix: bancoPix - previstoPix },
       porDia,
     };
