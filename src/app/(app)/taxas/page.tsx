@@ -9,26 +9,34 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
+  listarEmpresas,
   listarTaxasCartao,
   obterConfigCartao,
   salvarTaxaCartao,
   excluirTaxaCartao,
   salvarConfigCartao,
+  copiarTaxasCartao,
   type TaxaCartao,
 } from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { CreditCard, Plus, Trash2, Check, X, Pencil } from "lucide-react";
+import { CreditCard, Plus, Trash2, Check, X, Pencil, Copy } from "lucide-react";
 
 const fmtPct = (n: number | undefined) => `${(n ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 
 export default function TaxasPage() {
   const { podeAcao } = useAuth();
   const podeEditar = podeAcao("financeiro.baixar");
+  const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [empresaId, setEmpresaId] = useState("");
   const [cartoes, setCartoes] = useState<TaxaCartao[] | null>(null);
   const [antecipacao, setAntecipacao] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
+  const [copiaDe, setCopiaDe] = useState("");
+  const [copiando, setCopiando] = useState(false);
 
   // Formulário
   const [formAberto, setFormAberto] = useState(false);
@@ -42,28 +50,54 @@ export default function TaxasPage() {
   const [fAtivo, setFAtivo] = useState(true);
   const [salvando, setSalvando] = useState(false);
 
+  useEffect(() => {
+    void listarEmpresas().then((es) => {
+      setEmpresas(es);
+      if (es.length && !empresaId) setEmpresaId(es[0].id);
+    }).catch((e) => setErro((e as Error).message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const carregar = useCallback(async () => {
+    if (!empresaId) { setCartoes([]); return; }
     setErro(null);
     try {
-      const [cs, cfg] = await Promise.all([listarTaxasCartao(), obterConfigCartao()]);
+      const [cs, cfg] = await Promise.all([listarTaxasCartao(empresaId), obterConfigCartao(empresaId)]);
       setCartoes(cs);
       setAntecipacao(cfg.antecipacao);
     } catch (e) {
       setErro((e as Error).message);
       setCartoes([]);
     }
-  }, []);
+  }, [empresaId]);
 
-  useEffect(() => { void carregar(); }, [carregar]);
+  useEffect(() => { setCartoes(null); void carregar(); }, [carregar]);
 
   async function toggleAntecipacao(v: boolean) {
-    setAntecipacao(v); // otimista
+    setAntecipacao(v);
     setErro(null);
     try {
-      await salvarConfigCartao(v);
+      await salvarConfigCartao(empresaId, v);
     } catch (e) {
       setErro((e as Error).message);
       await carregar();
+    }
+  }
+
+  async function copiar() {
+    if (!copiaDe || copiaDe === empresaId) return;
+    setCopiando(true);
+    setErro(null);
+    setMsg(null);
+    try {
+      const r = await copiarTaxasCartao(copiaDe, empresaId);
+      setMsg(`${r.copiados} cartão(ões) copiado(s) para esta loja.`);
+      setCopiaDe("");
+      await carregar();
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCopiando(false);
     }
   }
 
@@ -85,12 +119,14 @@ export default function TaxasPage() {
   }
 
   async function salvar() {
+    if (!empresaId) return setErro("Selecione a loja.");
     if (!fNome.trim()) return setErro("Informe o nome do cartão.");
     setSalvando(true);
     setErro(null);
     try {
       await salvarTaxaCartao({
         id: editId ?? undefined,
+        empresaId,
         nome: fNome.trim(),
         taxaPix: Number(fPix) || 0,
         taxaDebito: Number(fDebito) || 0,
@@ -122,21 +158,39 @@ export default function TaxasPage() {
     }
   }
 
+  const nomeEmpresa = (id: string) => {
+    const e = empresas.find((x) => x.id === id);
+    return e ? e.nomeFantasia || e.razaoSocial : id;
+  };
+
   return (
     <div>
       <PageHeader
         title="Taxas de cartão"
-        description="Cadastro dos cartões e taxas por modalidade — base para conferir os recebíveis."
+        description="Cartões e taxas por loja — cada loja pode ter juros e antecipação diferentes."
         action={
-          podeEditar && !formAberto ? (
+          podeEditar && !formAberto && empresaId ? (
             <Button size="sm" onClick={abrirNovo}><Plus className="size-4" /> Novo cartão</Button>
           ) : undefined
         }
       />
 
-      {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
+      {empresas.length > 1 ? (
+        <select
+          value={empresaId}
+          onChange={(e) => setEmpresaId(e.target.value)}
+          className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+        >
+          {empresas.map((e) => (
+            <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+          ))}
+        </select>
+      ) : null}
 
-      {/* Liga/desliga antecipação */}
+      {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
+      {msg ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{msg}</p> : null}
+
+      {/* Liga/desliga antecipação (por loja) */}
       <Card className="mb-4">
         <CardContent className="flex items-start justify-between gap-3 py-4">
           <div>
@@ -151,7 +205,7 @@ export default function TaxasPage() {
             type="button"
             role="switch"
             aria-checked={antecipacao}
-            disabled={!podeEditar}
+            disabled={!podeEditar || !empresaId}
             onClick={() => toggleAntecipacao(!antecipacao)}
             className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors ${antecipacao ? "bg-primary" : "bg-muted-foreground/30"} disabled:opacity-50`}
           >
@@ -160,12 +214,32 @@ export default function TaxasPage() {
         </CardContent>
       </Card>
 
+      {/* Copiar de outra loja */}
+      {podeEditar && empresas.length > 1 && !formAberto ? (
+        <Card className="mb-4">
+          <CardContent className="flex flex-wrap items-end gap-2 py-3">
+            <div className="min-w-[12rem] flex-1 space-y-1">
+              <label className="block text-[11px] text-muted-foreground">Copiar cartões/taxas de outra loja</label>
+              <select value={copiaDe} onChange={(e) => setCopiaDe(e.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+                <option value="">— escolher loja de origem —</option>
+                {empresas.filter((e) => e.id !== empresaId).map((e) => (
+                  <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+                ))}
+              </select>
+            </div>
+            <Button size="sm" variant="outline" disabled={!copiaDe || copiando} onClick={copiar}>
+              <Copy className="size-4" /> {copiando ? "Copiando…" : "Copiar para cá"}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {/* Formulário */}
       {formAberto ? (
         <Card className="mb-4">
           <CardContent className="space-y-3 py-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">{editId ? "Editar cartão" : "Novo cartão"}</h2>
+              <h2 className="text-sm font-semibold">{editId ? "Editar cartão" : "Novo cartão"} · {nomeEmpresa(empresaId)}</h2>
               <Button size="sm" variant="ghost" onClick={() => { setFormAberto(false); resetForm(); }}>
                 <X className="size-4" /> Fechar
               </Button>
@@ -181,9 +255,7 @@ export default function TaxasPage() {
               <CampoTaxa label="Parcelado (%)" value={fParcelado} onChange={setFParcelado} />
               <CampoTaxa label="Antecipação (% adic.)" value={fAntecip} onChange={setFAntecip} />
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              A antecipação soma ao parcelado (ex.: parcelado {fParcelado || "4,03"}% + antecipação {fAntecip || "1,50"}% = efetivo).
-            </p>
+            <p className="text-[11px] text-muted-foreground">A antecipação soma ao parcelado para o efetivo.</p>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={fAtivo} onChange={(e) => setFAtivo(e.target.checked)} className="size-4" />
               Cartão ativo
@@ -202,8 +274,8 @@ export default function TaxasPage() {
       {cartoes === null ? (
         <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-24" /></div>
       ) : cartoes.length === 0 ? (
-        <ModulePlaceholder icon={CreditCard} title="Nenhum cartão cadastrado" etapa="Taxas de cartão">
-          Cadastre os cartões (bandeiras) e suas taxas por modalidade. Servem para conferir os recebíveis do PDV e projetar o líquido.
+        <ModulePlaceholder icon={CreditCard} title="Nenhum cartão nesta loja" etapa="Taxas de cartão">
+          Cadastre os cartões desta loja, ou copie de outra loja acima. As taxas servem para conferir os recebíveis e projetar o líquido.
         </ModulePlaceholder>
       ) : (
         <div className="space-y-3">

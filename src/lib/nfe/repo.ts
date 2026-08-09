@@ -793,9 +793,10 @@ export async function obterConciliacao(empresaId: string, de: string, ate: strin
   return res.data as Conciliacao;
 }
 
-// ——— Taxas de cartão (configuração) ———
+// ——— Taxas de cartão (configuração por loja) ———
 export interface TaxaCartao {
   id: string;
+  empresaId: string;
   nome: string;
   taxaPix: number;
   taxaDebito: number;
@@ -804,34 +805,38 @@ export interface TaxaCartao {
   taxaAntecipacao: number;
   ativo: boolean;
 }
-export async function listarTaxasCartao(): Promise<TaxaCartao[]> {
+export async function listarTaxasCartao(empresaId: string): Promise<TaxaCartao[]> {
   const { db } = fb();
-  const snap = await getDocs(collection(db, "card_rates"));
+  const snap = await getDocs(query(collection(db, "card_rates"), where("empresaId", "==", empresaId)));
   return snap.docs
     .map((d) => ({ id: d.id, ...(d.data() as object) }) as TaxaCartao)
     .sort((a, b) => (a.nome ?? "").localeCompare(b.nome ?? ""));
 }
-export async function obterConfigCartao(): Promise<{ antecipacao: boolean }> {
+export async function obterConfigCartao(empresaId: string): Promise<{ antecipacao: boolean }> {
   const { db } = fb();
-  const snap = await getDoc(doc(db, "configuracoes", "cartao"));
+  const snap = await getDoc(doc(db, "card_settings", empresaId));
   const d = snap.exists() ? (snap.data() as { antecipacao?: boolean }) : {};
   return { antecipacao: d.antecipacao !== false };
 }
-export async function salvarTaxaCartao(t: Partial<TaxaCartao> & { nome: string }): Promise<{ ok: boolean; id: string }> {
+export async function salvarTaxaCartao(t: Partial<TaxaCartao> & { nome: string; empresaId: string }): Promise<{ ok: boolean; id: string }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "salvarTaxaCartao");
-  const res = await fn(t);
-  return res.data as { ok: boolean; id: string };
+  return (await fn(t)).data as { ok: boolean; id: string };
 }
 export async function excluirTaxaCartao(id: string): Promise<{ ok: boolean }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "excluirTaxaCartao");
   return (await fn({ id })).data as { ok: boolean };
 }
-export async function salvarConfigCartao(antecipacao: boolean): Promise<{ ok: boolean; antecipacao: boolean }> {
+export async function salvarConfigCartao(empresaId: string, antecipacao: boolean): Promise<{ ok: boolean; antecipacao: boolean }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "salvarConfigCartao");
-  return (await fn({ antecipacao })).data as { ok: boolean; antecipacao: boolean };
+  return (await fn({ empresaId, antecipacao })).data as { ok: boolean; antecipacao: boolean };
+}
+export async function copiarTaxasCartao(de: string, para: string): Promise<{ ok: boolean; copiados: number }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "copiarTaxasCartao");
+  return (await fn({ de, para })).data as { ok: boolean; copiados: number };
 }
 
 // ---- Vendas (PDVnet) ----

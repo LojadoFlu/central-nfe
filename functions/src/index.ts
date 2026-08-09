@@ -1191,8 +1191,11 @@ export const salvarTaxaCartao = onCall(opcoes, async (req) => {
   const d = req.data ?? {};
   const nome = String(d.nome ?? "").trim().slice(0, 80);
   if (!nome) throw new HttpsError("invalid-argument", "Informe o nome do cartão.");
+  const empresaId = String(d.empresaId ?? "").trim();
+  if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
   const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
   const doc = {
+    empresaId,
     nome,
     taxaPix: num(d.taxaPix),
     taxaDebito: num(d.taxaDebito),
@@ -1219,16 +1222,49 @@ export const excluirTaxaCartao = onCall(opcoes, async (req) => {
   return { ok: true };
 });
 
-/** Liga/desliga a antecipação (define crédito D+1 vs D+30 e a taxa adicional). */
+/** Liga/desliga a antecipação por LOJA (define crédito D+1 vs D+30 e a taxa adicional). */
 export const salvarConfigCartao = onCall(opcoes, async (req) => {
   const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const empresaId = String(req.data?.empresaId ?? "").trim();
+  if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
   const antecipacao = req.data?.antecipacao !== false;
-  await db.collection("configuracoes").doc("cartao").set(
-    { antecipacao, atualizadoEm: agoraISO(), atualizadoPor: uid },
+  await db.collection("card_settings").doc(empresaId).set(
+    { empresaId, antecipacao, atualizadoEm: agoraISO(), atualizadoPor: uid },
     { merge: true },
   );
-  await auditar(uid, "cartao.salvarConfig", { antecipacao });
+  await auditar(uid, "cartao.salvarConfig", { empresaId, antecipacao });
   return { ok: true, antecipacao };
+});
+
+/** Copia os cartões/taxas + antecipação de uma loja para outra (substitui os do destino). */
+export const copiarTaxasCartao = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const de = String(req.data?.de ?? "").trim();
+  const para = String(req.data?.para ?? "").trim();
+  if (!de || !para || de === para) throw new HttpsError("invalid-argument", "Escolha lojas de origem e destino diferentes.");
+  let batch = db.batch();
+  let ops = 0;
+  const flush = async () => { if (ops) { await batch.commit(); batch = db.batch(); ops = 0; } };
+  // apaga os cartões atuais do destino
+  const atuais = await db.collection("card_rates").where("empresaId", "==", para).get();
+  for (const d of atuais.docs) { batch.delete(d.ref); ops++; if (ops >= 400) await flush(); }
+  // clona os da origem
+  const origem = await db.collection("card_rates").where("empresaId", "==", de).get();
+  for (const d of origem.docs) {
+    const x = d.data();
+    batch.set(db.collection("card_rates").doc(), { ...x, empresaId: para, atualizadoEm: agoraISO(), atualizadoPor: uid });
+    ops++;
+    if (ops >= 400) await flush();
+  }
+  await flush();
+  // copia a config de antecipação
+  const cfg = (await db.collection("card_settings").doc(de).get()).data() as { antecipacao?: boolean } | undefined;
+  await db.collection("card_settings").doc(para).set(
+    { empresaId: para, antecipacao: cfg?.antecipacao !== false, atualizadoEm: agoraISO(), atualizadoPor: uid },
+    { merge: true },
+  );
+  await auditar(uid, "cartao.copiar", { de, para, cartoes: origem.size });
+  return { ok: true, copiados: origem.size };
 });
 
 /** Resumo de vendas filtrado por período e loja (grupo). Agrega no servidor. */
