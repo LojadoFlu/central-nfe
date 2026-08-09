@@ -766,6 +766,14 @@ export async function obterExtrato(empresaId: string, de?: string, ate?: string)
   const res = await fn({ empresaId, de: de || undefined, ate: ate || undefined });
   return res.data as ExtratoBanco;
 }
+/** Leitura leve do saldo do banco de uma empresa (sem carregar os lançamentos). */
+export async function obterContaBanco(empresaId: string): Promise<{ saldo: number | null; saldoData: string | null } | null> {
+  const { db } = fb();
+  const snap = await getDoc(doc(db, "bank_accounts", empresaId));
+  if (!snap.exists()) return null;
+  const d = snap.data() as { saldo?: number | null; saldoData?: string | null };
+  return { saldo: d.saldo ?? null, saldoData: d.saldoData ?? null };
+}
 
 export interface DiaConc {
   dia: string;

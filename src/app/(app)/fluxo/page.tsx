@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { StatCard } from "@/components/ui/stat-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { obterFluxoCaixa, listarEmpresas, type FluxoCaixa, type FluxoDia } from "@/lib/nfe/repo";
+import { obterFluxoCaixa, listarEmpresas, obterContaBanco, type FluxoCaixa, type FluxoDia } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { formatBRL, formatarData, diaSemana } from "@/lib/utils";
 import { LineChart, ArrowDownRight, ArrowUpRight } from "lucide-react";
@@ -79,6 +79,7 @@ export default function FluxoPage() {
   const [ate, setAte] = useState(maisDias(30));
   const [agrup, setAgrup] = useState<"dia" | "semana" | "mes">("semana");
   const [saldos, setSaldos] = useState<Record<string, number>>({}); // saldo inicial por empresa
+  const [contaBanco, setContaBanco] = useState<{ saldo: number | null; saldoData: string | null } | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -124,6 +125,12 @@ export default function FluxoPage() {
   }, [de, ate, empresaId]);
 
   useEffect(() => { void carregar(); }, [carregar]);
+
+  // saldo do banco da loja selecionada (para oferecer como saldo inicial)
+  useEffect(() => {
+    if (!empresaId) { setContaBanco(null); return; }
+    void obterContaBanco(empresaId).then(setContaBanco).catch(() => setContaBanco(null));
+  }, [empresaId]);
 
   const grupos = useMemo<Grupo[]>(() => {
     const linhas: FluxoDia[] = dados?.linhas ?? [];
@@ -236,6 +243,15 @@ export default function FluxoPage() {
                 />
                 {!editavelSaldo ? (
                   <p className="text-[11px] text-muted-foreground">Selecione uma loja para editar o saldo dela.</p>
+                ) : contaBanco?.saldo != null ? (
+                  <button
+                    type="button"
+                    onClick={() => salvarSaldo(contaBanco.saldo as number)}
+                    className="text-left text-[11px] font-medium text-primary hover:underline"
+                  >
+                    Usar saldo do banco: {formatBRL(contaBanco.saldo)}
+                    {contaBanco.saldoData ? ` (${formatarData(contaBanco.saldoData)})` : ""}
+                  </button>
                 ) : null}
               </div>
               <div className="text-right">
