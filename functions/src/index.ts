@@ -6,6 +6,7 @@ import {
   REGIAO,
   db,
   exigirRole,
+  exigirAcao,
   somenteDigitos,
   cnpjBase,
   agoraISO,
@@ -35,7 +36,7 @@ const opcoes = { region: REGIAO };
  * Cria/atualiza uma empresa (CNPJ) do grupo. Só admin.
  */
 export const nfeSalvarEmpresa = onCall(opcoes, async (req) => {
-  const { uid } = exigirRole(req, ["admin"]);
+  const { uid } = await exigirAcao(req, "empresas.gerir", ["admin"]);
   const d = req.data ?? {};
 
   const cnpj = somenteDigitos(String(d.cnpj ?? ""));
@@ -82,7 +83,7 @@ export const nfeSalvarEmpresa = onCall(opcoes, async (req) => {
 export const nfeCadastrarCertificado = onCall(
   { ...opcoes, memory: "512MiB" },
   async (req) => {
-    const { uid } = exigirRole(req, ["admin"]);
+    const { uid } = await exigirAcao(req, "certificado.gerir", ["admin"]);
     const d = req.data ?? {};
 
     const companyId = String(d.companyId ?? "").trim();
@@ -194,7 +195,7 @@ export const nfeCadastrarCertificado = onCall(
 export const nfeTestarConexao = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 60 },
   async (req) => {
-    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
     const companyId = String(req.data?.companyId ?? "").trim();
     if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
 
@@ -254,7 +255,7 @@ export const nfeTestarConexao = onCall(
 export const nfeSincronizarAgora = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
   async (req) => {
-    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
     const companyId = String(req.data?.companyId ?? "").trim();
     if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
 
@@ -295,7 +296,7 @@ export const nfeSincronizarAgora = onCall(
 export const cteTestarConexao = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 60 },
   async (req) => {
-    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
     const companyId = String(req.data?.companyId ?? "").trim();
     if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
 
@@ -331,7 +332,7 @@ export const cteTestarConexao = onCall(
 export const cteSincronizarAgora = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
   async (req) => {
-    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
     const companyId = String(req.data?.companyId ?? "").trim();
     if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
 
@@ -367,7 +368,7 @@ export const cteSincronizarAgora = onCall(
 export const nfseSondarContrato = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 60 },
   async (req) => {
-    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
     const companyId = String(req.data?.companyId ?? "").trim();
     const nsu = String(req.data?.nsu ?? "0").replace(/\D/g, "") || "0";
     const ambiente = req.data?.ambiente === "producao" ? "producao" : "homologacao";
@@ -433,7 +434,7 @@ export const nfseSondarContrato = onCall(
 export const nfseSincronizarAgora = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
   async (req) => {
-    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
     const companyId = String(req.data?.companyId ?? "").trim();
     if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
 
@@ -513,7 +514,7 @@ export const nfeSyncAgendado = onSchedule(
 export const nfeReprocessarItens = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
   async (req) => {
-    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
     const companyId = String(req.data?.companyId ?? "").trim();
     if (!companyId) throw new HttpsError("invalid-argument", "companyId obrigatório.");
 
@@ -565,7 +566,7 @@ export const nfeReprocessarItens = onCall(
 export const nfeManifestar = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 60 },
   async (req) => {
-    const { uid } = exigirRole(req, ["admin", "fiscal"]);
+    const { uid } = await exigirAcao(req, "nfe.manifestar", ["admin", "fiscal"]);
     const d = req.data ?? {};
     const companyId = String(d.companyId ?? "").trim();
     const chNFe = somenteDigitos(String(d.chNFe ?? ""));
@@ -653,7 +654,7 @@ export const nfeManifestar = onCall(
  * registrada com autor e horário. Só admin/financeiro.
  */
 export const nfeBaixarParcela = onCall(opcoes, async (req) => {
-  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
   const d = req.data ?? {};
   const parcelaId = String(d.parcelaId ?? "").trim();
   if (!parcelaId) throw new HttpsError("invalid-argument", "parcelaId obrigatório.");
@@ -715,7 +716,7 @@ export const nfeBaixarParcela = onCall(opcoes, async (req) => {
  * Lê o valor real de cada parcela no servidor (valorPago = valor). Só admin/financeiro.
  */
 export const nfeBaixarParcelasLote = onCall(opcoes, async (req) => {
-  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
   const d = req.data ?? {};
   const ids: string[] = Array.isArray(d.parcelaIds)
     ? [...new Set((d.parcelaIds as unknown[]).map((x) => String(x).trim()).filter((s) => s !== ""))]
@@ -761,7 +762,7 @@ export const nfeBaixarParcelasLote = onCall(opcoes, async (req) => {
  * Guarda as parcelas renegociadas (valor + vencimento + status). Só admin/financeiro.
  */
 export const nfeSalvarAcordo = onCall(opcoes, async (req) => {
-  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
   const d = req.data ?? {};
   const id = String(d.id ?? "").trim();
   const nomeFornecedor = String(d.nomeFornecedor ?? "").trim().slice(0, 120);
@@ -831,7 +832,7 @@ export const nfeSalvarAcordo = onCall(opcoes, async (req) => {
 
 /** Marca uma parcela de um acordo como paga ou reabre. Só admin/financeiro. */
 export const nfeBaixarParcelaAcordo = onCall(opcoes, async (req) => {
-  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
   const d = req.data ?? {};
   const id = String(d.acordoId ?? "").trim();
   const idx = Number(d.indice);
@@ -864,7 +865,7 @@ export const nfeBaixarParcelaAcordo = onCall(opcoes, async (req) => {
 
 /** Exclui um acordo. Só admin/financeiro. */
 export const nfeExcluirAcordo = onCall(opcoes, async (req) => {
-  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
   const id = String(req.data?.acordoId ?? "").trim();
   if (!id) throw new HttpsError("invalid-argument", "acordoId obrigatório.");
   await db.collection("nfe_agreements").doc(id).delete();
@@ -877,7 +878,7 @@ export const nfeExcluirAcordo = onCall(opcoes, async (req) => {
  * Guarda valor mensal previsto + dia de vencimento. Só admin/financeiro.
  */
 export const nfeSalvarDespesaFixa = onCall(opcoes, async (req) => {
-  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
   const d = req.data ?? {};
   const id = String(d.id ?? "").trim();
   const nome = String(d.nome ?? "").trim().slice(0, 120);
@@ -929,7 +930,7 @@ export const nfeSalvarDespesaFixa = onCall(opcoes, async (req) => {
 
 /** Marca uma despesa fixa como paga (ou reabre) num mês (YYYY-MM). Só admin/financeiro. */
 export const nfePagarDespesaFixa = onCall(opcoes, async (req) => {
-  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
   const d = req.data ?? {};
   const id = String(d.id ?? "").trim();
   const mes = String(d.mes ?? "");
@@ -968,7 +969,7 @@ export const nfePagarDespesaFixa = onCall(opcoes, async (req) => {
 
 /** Exclui uma despesa fixa. Só admin/financeiro. */
 export const nfeExcluirDespesaFixa = onCall(opcoes, async (req) => {
-  const { uid } = exigirRole(req, ["admin", "financeiro"]);
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
   const id = String(req.data?.id ?? "").trim();
   if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
   await db.collection("nfe_fixed_expenses").doc(id).delete();

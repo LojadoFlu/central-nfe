@@ -26,6 +26,31 @@ export function exigirRole(req: CallableRequest, roles: Role[]): {
   return { uid, role };
 }
 
+/**
+ * Autoriza uma AÇÃO: aceita papel legado (admin/fiscal/…) OU um perfil custom
+ * aprovado (claim status=ativo + roleId) cujo perfil (nfe_roles) contenha a ação.
+ * Admin sempre passa. Lança HttpsError se não autorizado.
+ */
+export async function exigirAcao(
+  req: CallableRequest,
+  acao: string,
+  legacyRoles: Role[],
+): Promise<{ uid: string }> {
+  const uid = req.auth?.uid;
+  const role = req.auth?.token?.role as Role | undefined;
+  if (!uid) throw new HttpsError("unauthenticated", "Autenticação necessária.");
+  if (role === "admin") return { uid };
+  if (role && legacyRoles.includes(role)) return { uid };
+  const status = req.auth?.token?.status as string | undefined;
+  const roleId = req.auth?.token?.roleId as string | undefined;
+  if (status === "ativo" && roleId) {
+    const snap = await db.collection("nfe_roles").doc(roleId).get();
+    const acoes = (snap.data()?.acoes ?? []) as string[];
+    if (acoes.includes(acao)) return { uid };
+  }
+  throw new HttpsError("permission-denied", "Permissão insuficiente.");
+}
+
 /** Só dígitos. */
 export function somenteDigitos(s: string): string {
   return (s ?? "").replace(/\D/g, "");
