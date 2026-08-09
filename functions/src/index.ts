@@ -1286,22 +1286,30 @@ export const importarCartoesPDV = onCall(
     if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
     const desde = new Date(Date.now() - 120 * 86_400_000).toISOString().slice(0, 10);
     const snap = await db.collection("card_receivables").where("dia", ">=", desde).get();
-    interface Acc { deb: number[]; cred1: number[]; parc: Record<string, number[]> }
-    const cards = new Map<string, Acc>();
+    // 1ª passada: agrupa por VENDA (a taxa é constante por venda; o total de parcelas = maior parcela)
+    interface Venda { nome: string; taxa: number; total: number }
+    const vendas = new Map<string, Venda>();
     for (const doc of snap.docs) {
       const r = doc.data();
       if (String(r.empresaId ?? "") !== empresaId) continue;
       const nome = String(r.descricaoCartao ?? "").trim();
       const taxa = Number(r.taxaPct);
-      if (!nome || !Number.isFinite(taxa)) continue;
-      let a = cards.get(nome);
-      if (!a) { a = { deb: [], cred1: [], parc: {} }; cards.set(nome, a); }
-      if (/debito|débito/i.test(nome)) a.deb.push(taxa);
-      else {
-        const p = Math.max(1, Math.min(10, Math.round(Number(r.parcela ?? 1) || 1)));
-        if (p <= 1) a.cred1.push(taxa);
-        else (a.parc[String(p)] ??= []).push(taxa);
-      }
+      const vid = String(r.vendaId ?? "");
+      if (!nome || !Number.isFinite(taxa) || !vid) continue;
+      let v = vendas.get(vid);
+      if (!v) { v = { nome, taxa, total: 0 }; vendas.set(vid, v); }
+      v.taxa = taxa;
+      v.total = Math.max(v.total, Math.round(Number(r.parcela ?? 1) || 1));
+    }
+    // 2ª passada: classifica cada venda pelo TOTAL de parcelas
+    interface Acc { deb: number[]; cred1: number[]; parc: Record<string, number[]> }
+    const cards = new Map<string, Acc>();
+    for (const v of vendas.values()) {
+      let a = cards.get(v.nome);
+      if (!a) { a = { deb: [], cred1: [], parc: {} }; cards.set(v.nome, a); }
+      if (/debito|débito/i.test(v.nome)) a.deb.push(v.taxa);
+      else if (v.total <= 1) a.cred1.push(v.taxa);
+      else (a.parc[String(Math.min(10, v.total))] ??= []).push(v.taxa);
     }
     if (cards.size === 0) throw new HttpsError("failed-precondition", "Sem recebíveis de cartão sincronizados nos últimos 120 dias para esta loja.");
     const avg = (arr: number[]) => (arr.length ? Math.round((arr.reduce((s, x) => s + x, 0) / arr.length) * 100) / 100 : 0);
@@ -1337,6 +1345,73 @@ export const importarCartoesPDV = onCall(
     await flush();
     await auditar(uid, "cartao.importarPDV", { empresaId, cartoes: n });
     return { ok: true, importados: n };
+  },
+);
+
+/**
+ * Confere os recebíveis de cartão do período contra as taxas cadastradas: para cada
+ * VENDA (taxa constante; total de parcelas = maior parcela) compara a taxa cobrada com
+ * a esperada (débito / crédito à vista / N parcelas). Aponta divergências e o impacto R$.
+ */
+export const conferirRecebiveis = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+    const empresaId = String(req.data?.empresaId ?? "").trim();
+    if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
+    const de = String(req.data?.de ?? "").slice(0, 10);
+    const ate = String(req.data?.ate ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
+      throw new HttpsError("invalid-argument", "Período inválido.");
+    }
+    const cardsSnap = await db.collection("card_rates").where("empresaId", "==", empresaId).get();
+    const cadastro = new Map<string, { taxaDebito?: number; taxaCredito?: number; parcelas?: Record<string, number> }>();
+    for (const d of cardsSnap.docs) { const x = d.data(); cadastro.set(String(x.nome), x); }
+    if (cadastro.size === 0) throw new HttpsError("failed-precondition", "Nenhum cartão cadastrado nesta loja. Cadastre/importe em Taxas de cartão.");
+
+    const rSnap = await db.collection("card_receivables").where("dia", ">=", de).where("dia", "<=", ate).get();
+    interface V { nome: string; taxa: number; total: number; valor: number; dia: string }
+    const vendas = new Map<string, V>();
+    for (const doc of rSnap.docs) {
+      const r = doc.data();
+      if (String(r.empresaId ?? "") !== empresaId) continue;
+      const nome = String(r.descricaoCartao ?? "").trim();
+      const taxa = Number(r.taxaPct);
+      const vid = String(r.vendaId ?? "");
+      if (!nome || !Number.isFinite(taxa) || !vid) continue;
+      let v = vendas.get(vid);
+      if (!v) { v = { nome, taxa, total: 0, valor: 0, dia: String(r.dia ?? "").slice(0, 10) }; vendas.set(vid, v); }
+      v.taxa = taxa;
+      v.total = Math.max(v.total, Math.round(Number(r.parcela ?? 1) || 1));
+      v.valor += Number(r.valor ?? 0);
+    }
+
+    const TOL = 0.05; // pontos percentuais
+    let conferidos = 0, taxaOk = 0, divergentes = 0, semCadastro = 0, impactoTotal = 0;
+    const divergencias: Array<{ dia: string; cartao: string; parcelas: number; cobrada: number; esperada: number; diff: number; valor: number; impacto: number }> = [];
+    for (const v of vendas.values()) {
+      conferidos++;
+      const card = cadastro.get(v.nome);
+      let esperada: number | undefined;
+      if (card) {
+        if (/debito|débito/i.test(v.nome)) esperada = Number(card.taxaDebito);
+        else if (v.total <= 1) esperada = Number(card.taxaCredito);
+        else esperada = Number(card.parcelas?.[String(Math.min(10, v.total))]);
+      }
+      if (!Number.isFinite(esperada as number) || (esperada as number) <= 0) { semCadastro++; continue; }
+      const diff = Math.round((v.taxa - (esperada as number)) * 100) / 100;
+      if (Math.abs(diff) <= TOL) { taxaOk++; continue; }
+      divergentes++;
+      const impacto = Math.round(v.valor * diff) / 100; // + = cobraram a mais
+      impactoTotal += impacto;
+      divergencias.push({ dia: v.dia, cartao: v.nome, parcelas: v.total, cobrada: v.taxa, esperada: esperada as number, diff, valor: Math.round(v.valor * 100) / 100, impacto });
+    }
+    divergencias.sort((a, b) => Math.abs(b.impacto) - Math.abs(a.impacto));
+    return {
+      ok: true, de, ate, empresaId,
+      resumo: { conferidos, taxaOk, divergentes, semCadastro, impactoTotal: Math.round(impactoTotal * 100) / 100 },
+      divergencias: divergencias.slice(0, 100),
+    };
   },
 );
 
