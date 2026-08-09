@@ -192,6 +192,11 @@ service cloud.firestore {
       allow read: if ativo();
       allow write: if false;
     }
+    // Vendas manuais (lojas offline) — leitura p/ ativos; escrita só backend.
+    match /manual_sales/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
     // Configurações gerais (inclui flag/baseUrl do PDVnet — sem segredos).
     match /configuracoes/{id} {
       allow read: if isAuth();

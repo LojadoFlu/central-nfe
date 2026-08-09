@@ -876,6 +876,34 @@ export async function conferirRecebiveis(empresaId: string, de: string, ate: str
   return (await fn({ empresaId, de, ate })).data as Conferencia;
 }
 
+// ——— Vendas manuais (lojas offline, ex.: Maracanã) ———
+export interface VendaManual {
+  id: string;
+  empresaId: string;
+  dia: string;
+  forma: string;
+  maquinaEmpresaId: string | null;
+  valor: number;
+}
+export async function listarVendasManuais(empresaId: string, de: string, ate: string): Promise<VendaManual[]> {
+  const { db } = fb();
+  const snap = await getDocs(query(collection(db, "manual_sales"), where("empresaId", "==", empresaId)));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as object) }) as VendaManual)
+    .filter((v) => (!de || v.dia >= de) && (!ate || v.dia <= ate))
+    .sort((a, b) => (b.dia).localeCompare(a.dia));
+}
+export async function salvarVendaManual(v: { id?: string; empresaId: string; dia: string; forma: string; maquinaEmpresaId?: string; valor: number }): Promise<{ ok: boolean; id: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "salvarVendaManual");
+  return (await fn(v)).data as { ok: boolean; id: string };
+}
+export async function excluirVendaManual(id: string): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "excluirVendaManual");
+  return (await fn({ id })).data as { ok: boolean };
+}
+
 // ---- Vendas (PDVnet) ----
 
 export interface ResumoVendas {

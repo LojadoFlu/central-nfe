@@ -21,6 +21,8 @@ export interface Company extends Auditoria {
   ativo: boolean;
   /** true se há certificado válido associado (metadado, nunca o segredo). */
   temCertificado?: boolean;
+  /** true = loja offline (sem PDV/SEFAZ); vendas lançadas manualmente. */
+  manual?: boolean;
 }
 
 export type SituacaoCertificado = "valido" | "vencendo" | "vencido";

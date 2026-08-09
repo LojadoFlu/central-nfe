@@ -1856,6 +1856,42 @@ export const conciliacao = onCall(
   },
 );
 
+// ============ VENDAS MANUAIS (lojas offline, ex.: Maracanã) ============
+
+const FORMAS_MANUAIS = ["dinheiro", "pix", "cartaoDebito", "cartaoCredito", "cartaoParcelado"];
+
+/** Lança/edita uma venda manual (total por dia, forma e máquina/loja). Admin/financeiro. */
+export const salvarVendaManual = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const empresaId = String(d.empresaId ?? "").trim();
+  const dia = String(d.dia ?? "").slice(0, 10);
+  const forma = String(d.forma ?? "").trim();
+  const valor = Number(d.valor);
+  if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) throw new HttpsError("invalid-argument", "Data inválida.");
+  if (!FORMAS_MANUAIS.includes(forma)) throw new HttpsError("invalid-argument", "Meio de pagamento inválido.");
+  if (!Number.isFinite(valor) || valor <= 0) throw new HttpsError("invalid-argument", "Valor inválido.");
+  // dinheiro não passa em máquina; cartão/pix caem no banco da loja da máquina
+  const maquinaEmpresaId = forma === "dinheiro" ? "" : String(d.maquinaEmpresaId ?? "").trim();
+  if (forma !== "dinheiro" && !maquinaEmpresaId) throw new HttpsError("invalid-argument", "Escolha a máquina (loja) por onde passou.");
+  const doc = { empresaId, dia, forma, maquinaEmpresaId: maquinaEmpresaId || null, valor, origem: "manual", atualizadoEm: agoraISO(), atualizadoPor: uid };
+  const ref = d.id ? db.collection("manual_sales").doc(String(d.id)) : db.collection("manual_sales").doc();
+  await ref.set(doc, { merge: true });
+  await auditar(uid, "manual.salvarVenda", { id: ref.id, empresaId, dia, forma, valor });
+  return { ok: true, id: ref.id };
+});
+
+/** Exclui uma venda manual. Admin/financeiro. */
+export const excluirVendaManual = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const id = String(req.data?.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  await db.collection("manual_sales").doc(id).delete();
+  await auditar(uid, "manual.excluirVenda", { id });
+  return { ok: true };
+});
+
 /** Resolve a empresa (nfe_companies) para associar a registros manuais. */
 async function resolverEmpresa(companyId: string): Promise<{ id: string; nome: string } | null> {
   if (!companyId) return null;
