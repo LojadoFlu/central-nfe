@@ -7,6 +7,7 @@ import {
   db,
   exigirRole,
   exigirAcao,
+  exigirModulo,
   somenteDigitos,
   cnpjBase,
   agoraISO,
@@ -1190,6 +1191,145 @@ export const pdvnetResumoVendas = onCall(
       recebiveis++;
     }
     return { ok: true, de, ate, grupo: grupoSel || null, grupos, count, totalVendido, porForma, totalRecebiveis, totalLiquido, recebiveis };
+  },
+);
+
+const PERIODO_REC: Record<string, number> = { mensal: 1, bimestral: 2, trimestral: 3, semestral: 6, anual: 12 };
+/** Lista de meses YYYY-MM entre de..ate (inclusivo). */
+function mesesEntre(de: string, ate: string): string[] {
+  const out: string[] = [];
+  let y = Number(de.slice(0, 4));
+  let m = Number(de.slice(5, 7));
+  const fim = ate.slice(0, 7);
+  for (let i = 0; i < 120; i++) {
+    const ym = `${y}-${String(m).padStart(2, "0")}`;
+    if (ym > fim) break;
+    out.push(ym);
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return out;
+}
+/** A despesa fixa incide no mês ym conforme a recorrência? */
+function incideNoMes(x: Record<string, unknown>, ym: string): boolean {
+  const p = PERIODO_REC[String(x.recorrencia ?? "mensal")] ?? 1;
+  if (p === 1) return true;
+  const mesBase = Number(x.mesBase ?? 1);
+  const m = Number(ym.slice(5, 7));
+  return ((((m - mesBase) % p) + p) % p) === 0;
+}
+
+/**
+ * Fluxo de caixa consolidado no intervalo [de, ate], por dia.
+ * ENTRADAS: recebíveis de cartão (valor LÍQUIDO real, na data de liquidação/vencimento)
+ * + PIX/dinheiro (na data da venda). SAÍDAS: parcelas de NF-e, despesas fixas previstas
+ * e parcelas de acordos. Realizado (passado/pago) vs previsto (futuro/a pagar) separados.
+ * Tudo rastreável à origem; "pago" continua manual — nada é inventado.
+ */
+export const fluxoCaixa = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+    const d = req.data ?? {};
+    const de = String(d.de ?? "").slice(0, 10);
+    const ate = String(d.ate ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
+      throw new HttpsError("invalid-argument", "Período inválido.");
+    }
+    const empresaId = d.empresaId ? String(d.empresaId) : "";
+    const hoje = agoraISO().slice(0, 10);
+    const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
+    const noRange = (dia: string) => !!dia && dia >= de && dia <= ate;
+    const daEmpresa = (cid: unknown) => !empresaId || String(cid ?? "") === empresaId;
+
+    interface Bucket { entrada: number; saida: number; entradaReal: number; saidaReal: number }
+    const dias = new Map<string, Bucket>();
+    const buck = (dia: string): Bucket => {
+      let b = dias.get(dia);
+      if (!b) { b = { entrada: 0, saida: 0, entradaReal: 0, saidaReal: 0 }; dias.set(dia, b); }
+      return b;
+    };
+    const tot = { entrada: 0, saida: 0, entradaReal: 0, saidaReal: 0 };
+    const porOrigem: Record<string, number> = { cartao: 0, avista: 0, nfe: 0, despesas: 0, acordos: 0 };
+    const entrada = (dia: string, valor: number, real: boolean, origem: string) => {
+      if (!noRange(dia) || !(valor > 0)) return;
+      const b = buck(dia); b.entrada += valor; if (real) b.entradaReal += valor;
+      tot.entrada += valor; if (real) tot.entradaReal += valor; porOrigem[origem] += valor;
+    };
+    const saida = (dia: string, valor: number, real: boolean, origem: string) => {
+      if (!noRange(dia) || !(valor > 0)) return;
+      const b = buck(dia); b.saida += valor; if (real) b.saidaReal += valor;
+      tot.saida += valor; if (real) tot.saidaReal += valor; porOrigem[origem] += valor;
+    };
+
+    // ENTRADAS — cartões (líquido, na liquidação/vencimento)
+    const recSnap = await db.collection("card_receivables")
+      .where("dataVencimento", ">=", de).where("dataVencimento", "<=", ate + "").get();
+    for (const doc of recSnap.docs) {
+      const r = doc.data();
+      if (!daEmpresa(r.empresaId)) continue;
+      const liq = !!r.dataLiquidacao;
+      const dia = d10(liq ? r.dataLiquidacao : r.dataVencimento);
+      entrada(dia, Number(r.liquido ?? r.valor ?? 0), liq || dia <= hoje, "cartao");
+    }
+    // ENTRADAS — PIX/dinheiro (na data da venda)
+    const spSnap = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
+    for (const doc of spSnap.docs) {
+      const p = doc.data();
+      if (!daEmpresa(p.empresaId)) continue;
+      if (p.forma !== "dinheiro" && p.forma !== "pix") continue;
+      const dia = d10(p.dia);
+      entrada(dia, Number(p.valor ?? 0), dia <= hoje, "avista");
+    }
+
+    // SAÍDAS — contas a pagar das NF-e
+    const parcSnap = await db.collection("nfe_installments").get();
+    for (const doc of parcSnap.docs) {
+      const p = doc.data();
+      if (!daEmpresa(p.companyId)) continue;
+      const pago = p.statusPagamento === "pago";
+      const dia = d10(pago ? p.dataPagamento : p.vencimento);
+      saida(dia, Number((pago ? p.valorPago ?? p.valor : p.valor) ?? 0), pago, "nfe");
+    }
+    // SAÍDAS — despesas fixas (previsto por mês; realizado ao pagar)
+    const mesesRange = mesesEntre(de, ate);
+    const despSnap = await db.collection("nfe_fixed_expenses").get();
+    for (const doc of despSnap.docs) {
+      const x = doc.data();
+      if (!daEmpresa(x.companyId) || x.ativo === false) continue;
+      for (const ym of mesesRange) {
+        if (!incideNoMes(x, ym)) continue;
+        const pg = x.pagamentos?.[ym];
+        if (pg?.pago) {
+          saida(d10(pg.data) || `${ym}-01`, Number(pg.valor ?? x.valor ?? 0), true, "despesas");
+        } else {
+          const dia = `${ym}-${String(Math.min(Number(x.diaVencimento) || 1, 28)).padStart(2, "0")}`;
+          saida(dia, Number(x.valor ?? 0), false, "despesas");
+        }
+      }
+    }
+    // SAÍDAS — parcelas de acordos
+    const acSnap = await db.collection("nfe_agreements").get();
+    for (const doc of acSnap.docs) {
+      const a = doc.data();
+      if (!daEmpresa(a.companyId)) continue;
+      for (const p of (a.parcelas ?? []) as Array<Record<string, unknown>>) {
+        const pago = p.statusPagamento === "pago";
+        const dia = d10(pago ? p.dataPagamento : p.vencimento);
+        saida(dia, Number(p.valor ?? 0), pago, "acordos");
+      }
+    }
+
+    const linhas = [...dias.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([dia, b]) => ({ dia, entrada: b.entrada, saida: b.saida, entradaReal: b.entradaReal, saidaReal: b.saidaReal, saldo: b.entrada - b.saida }));
+
+    return {
+      ok: true, de, ate, hoje, empresaId: empresaId || null,
+      linhas,
+      totais: { ...tot, saldo: tot.entrada - tot.saida },
+      porOrigem,
+    };
   },
 );
 

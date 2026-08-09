@@ -51,6 +51,27 @@ export async function exigirAcao(
   throw new HttpsError("permission-denied", "Permissão insuficiente.");
 }
 
+/** Autoriza leitura de um MÓDULO (admin, role legada, ou perfil ativo com o módulo). */
+export async function exigirModulo(
+  req: CallableRequest,
+  modulo: string,
+  legacyRoles: Role[],
+): Promise<{ uid: string }> {
+  const uid = req.auth?.uid;
+  const role = req.auth?.token?.role as Role | undefined;
+  if (!uid) throw new HttpsError("unauthenticated", "Autenticação necessária.");
+  if (role === "admin") return { uid };
+  if (role && legacyRoles.includes(role)) return { uid };
+  const status = req.auth?.token?.status as string | undefined;
+  const roleId = req.auth?.token?.roleId as string | undefined;
+  if (status === "ativo" && roleId) {
+    const snap = await db.collection("nfe_roles").doc(roleId).get();
+    const modulos = (snap.data()?.modulos ?? []) as string[];
+    if (modulos.includes(modulo)) return { uid };
+  }
+  throw new HttpsError("permission-denied", "Permissão insuficiente.");
+}
+
 /** Só dígitos. */
 export function somenteDigitos(s: string): string {
   return (s ?? "").replace(/\D/g, "");

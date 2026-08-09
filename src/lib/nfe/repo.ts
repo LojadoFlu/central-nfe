@@ -676,6 +676,31 @@ export async function pdvnetResumoVendas(de: string, ate: string, grupo?: string
   return res.data as ResumoVendasFiltrado;
 }
 
+export interface FluxoDia {
+  dia: string;
+  entrada: number;
+  saida: number;
+  entradaReal: number;
+  saidaReal: number;
+  saldo: number;
+}
+export interface FluxoCaixa {
+  ok: boolean;
+  de: string;
+  ate: string;
+  hoje: string;
+  empresaId: string | null;
+  linhas: FluxoDia[];
+  totais: { entrada: number; saida: number; entradaReal: number; saidaReal: number; saldo: number };
+  porOrigem: Record<string, number>;
+}
+export async function obterFluxoCaixa(de: string, ate: string, empresaId?: string): Promise<FluxoCaixa> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "fluxoCaixa");
+  const res = await fn({ de, ate, empresaId: empresaId || undefined });
+  return res.data as FluxoCaixa;
+}
+
 // ---- Vendas (PDVnet) ----
 
 export interface ResumoVendas {

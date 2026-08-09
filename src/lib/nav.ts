@@ -5,6 +5,7 @@ import {
   Truck,
   MoreHorizontal,
   ShoppingCart,
+  LineChart,
   Store,
   Building2,
   ShieldCheck,
@@ -40,6 +41,7 @@ export const PRIMARY_NAV: NavItem[] = [
 
 /** Itens secundários — ficam em "Mais" (mobile) e na sidebar (desktop). */
 export const SECONDARY_NAV: NavItem[] = [
+  { label: "Fluxo de caixa", href: "/fluxo", icon: LineChart, modulo: "financeiro" },
   { label: "Vendas (PDV)", href: "/vendas", icon: ShoppingCart, modulo: "vendas" },
   { label: "Fretes (CT-e)", href: "/ctes", icon: Container, modulo: "ctes" },
   { label: "Serviços (NFS-e)", href: "/nfses", icon: Wrench, modulo: "nfses" },
