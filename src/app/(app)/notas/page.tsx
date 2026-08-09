@@ -19,6 +19,7 @@ import {
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
 import { FileText, RefreshCw } from "lucide-react";
 
@@ -29,6 +30,7 @@ export default function NotasPage() {
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [syncStates, setSyncStates] = useState<SyncEstado[]>([]);
   const [empresaId, setEmpresaId] = useState("");
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
   const [erro, setErro] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
   const [resultado, setResultado] = useState<string | null>(null);
@@ -80,8 +82,8 @@ export default function NotasPage() {
   const focusId = empresaId || (empresas.length === 1 ? empresas[0]?.id : "");
   const estado = syncStates.find((s) => s.id === focusId) ?? null;
   const visiveis = useMemo(
-    () => (docs ?? []).filter((d) => !empresaId || d.companyId === empresaId),
-    [docs, empresaId],
+    () => (docs ?? []).filter((d) => (!empresaId || d.companyId === empresaId) && noPeriodo(d.dhEmi, periodo)),
+    [docs, empresaId, periodo],
   );
 
   return (
@@ -111,6 +113,8 @@ export default function NotasPage() {
           ))}
         </select>
       ) : null}
+
+      <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
 
       {erro ? (
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p>

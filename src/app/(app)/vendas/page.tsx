@@ -5,7 +5,6 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { StatCard } from "@/components/ui/stat-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
@@ -21,6 +20,7 @@ import {
   type StorePdv,
 } from "@/lib/nfe/repo";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { FiltroPeriodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
 import { ShoppingCart, RefreshCw } from "lucide-react";
 
@@ -144,23 +144,20 @@ export default function VendasPage() {
       />
 
       {/* Filtros */}
-      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-md border border-border bg-card p-3">
+      <div className="mb-4 space-y-2">
         <div className="space-y-1">
           <label className="block text-xs text-muted-foreground">Loja</label>
           <select value={grupo} onChange={(e) => setGrupo(e.target.value)}
-            className="h-9 w-52 rounded-md border border-input bg-background px-3 text-sm">
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm sm:w-64">
             <option value="">Todas as lojas</option>
             {(resumo?.grupos ?? []).map((g) => <option key={g} value={g}>{g}</option>)}
           </select>
         </div>
-        <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground">De</label>
-          <Input type="date" value={de} onChange={(e) => setDe(e.target.value)} className="h-9 w-40" />
-        </div>
-        <div className="space-y-1">
-          <label className="block text-xs text-muted-foreground">Até</label>
-          <Input type="date" value={ate} onChange={(e) => setAte(e.target.value)} className="h-9 w-40" />
-        </div>
+        <FiltroPeriodo
+          value={{ de, ate }}
+          onChange={(p) => { setDe(p.de); setAte(p.ate); }}
+          allowClear={false}
+        />
       </div>
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}

@@ -13,6 +13,7 @@ import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, type Parcela } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatarData, diasAte } from "@/lib/utils";
 import { Wallet, Check, RotateCcw, CheckSquare, X } from "lucide-react";
 
@@ -45,6 +46,7 @@ export default function FinanceiroPage() {
   const [parcelas, setParcelas] = useState<Parcela[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
   const [erro, setErro] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<"todas" | "a_vencer" | "vencida" | "paga">("todas");
   const [forn, setForn] = useState(""); // cnpjEmit selecionado ("" = todos)
@@ -168,9 +170,12 @@ export default function FinanceiroPage() {
   const base = useMemo(
     () =>
       (parcelas ?? []).filter(
-        (p) => (!empresaId || (p.companyId ?? "") === empresaId) && (!forn || (p.cnpjEmit ?? "") === forn),
+        (p) =>
+          (!empresaId || (p.companyId ?? "") === empresaId) &&
+          (!forn || (p.cnpjEmit ?? "") === forn) &&
+          noPeriodo(p.vencimento, periodo),
       ),
-    [parcelas, forn, empresaId],
+    [parcelas, forn, empresaId, periodo],
   );
 
   const totais = useMemo(() => {
@@ -263,6 +268,9 @@ export default function FinanceiroPage() {
           </select>
         </div>
       ) : null}
+
+      <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-1" />
+      <p className="mb-3 px-1 text-[11px] text-muted-foreground">Período pela data de vencimento das parcelas.</p>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="A vencer" value={parcelas === null ? "…" : formatBRL(totais.aVencer)} tone="warning" />

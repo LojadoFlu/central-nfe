@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import { listarDocumentos, listarEmpresas, type NfeDocumento } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
+import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatCNPJ, formatarData, normalizar } from "@/lib/utils";
 import { Truck, ChevronRight } from "lucide-react";
 
@@ -24,6 +25,7 @@ export default function FornecedoresPage() {
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
   const [busca, setBusca] = useState("");
 
   const carregar = useCallback(async () => {
@@ -44,6 +46,7 @@ export default function FornecedoresPage() {
     const mapa = new Map<string, Fornecedor>();
     for (const d of docs ?? []) {
       if (empresaId && d.companyId !== empresaId) continue;
+      if (!noPeriodo(d.dhEmi, periodo)) continue;
       const cnpj = d.cnpjEmit ?? "sem-cnpj";
       const f = mapa.get(cnpj) ?? {
         cnpj,
@@ -64,7 +67,7 @@ export default function FornecedoresPage() {
       lista = lista.filter((f) => (normalizar(f.nome) + " " + f.cnpj).includes(termo));
     }
     return lista;
-  }, [docs, busca, empresaId]);
+  }, [docs, busca, empresaId, periodo]);
 
   return (
     <div>
@@ -82,6 +85,8 @@ export default function FornecedoresPage() {
           ))}
         </select>
       ) : null}
+
+      <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
 
       <Input
         placeholder="Buscar fornecedor…"

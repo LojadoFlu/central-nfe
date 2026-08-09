@@ -20,6 +20,7 @@ import {
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
 import { gerarDanfse } from "@/lib/nfe/danfse";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora, normalizar } from "@/lib/utils";
 import { Wrench, ChevronDown, RefreshCw, FileCode2, Download, FileText } from "lucide-react";
@@ -30,6 +31,7 @@ export default function NfsesPage() {
   const [nfses, setNfses] = useState<NfseDocumento[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
   const [estado, setEstado] = useState<SyncEstado | null>(null);
   const [busca, setBusca] = useState("");
   const [expandido, setExpandido] = useState<string | null>(null);
@@ -116,8 +118,8 @@ export default function NfsesPage() {
   }
 
   const base = useMemo(
-    () => (nfses ?? []).filter((c) => !empresaId || c.companyId === empresaId),
-    [nfses, empresaId],
+    () => (nfses ?? []).filter((c) => (!empresaId || c.companyId === empresaId) && noPeriodo(c.dhEmi, periodo)),
+    [nfses, empresaId, periodo],
   );
 
   const lista = useMemo(() => {
@@ -160,6 +162,8 @@ export default function NfsesPage() {
           ))}
         </select>
       ) : null}
+
+      <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
       {resultado ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{resultado}</p> : null}
