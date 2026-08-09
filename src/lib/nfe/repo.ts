@@ -882,6 +882,7 @@ export interface VendaManual {
   empresaId: string;
   dia: string;
   forma: string;
+  parcelas?: number; // nº de parcelas quando cartão parcelado
   maquinaEmpresaId: string | null;
   valor: number;
 }
@@ -893,7 +894,7 @@ export async function listarVendasManuais(empresaId: string, de: string, ate: st
     .filter((v) => (!de || v.dia >= de) && (!ate || v.dia <= ate))
     .sort((a, b) => (b.dia).localeCompare(a.dia));
 }
-export async function salvarVendaManual(v: { id?: string; empresaId: string; dia: string; forma: string; maquinaEmpresaId?: string; valor: number }): Promise<{ ok: boolean; id: string }> {
+export async function salvarVendaManual(v: { id?: string; empresaId: string; dia: string; forma: string; parcelas?: number; maquinaEmpresaId?: string; valor: number }): Promise<{ ok: boolean; id: string }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "salvarVendaManual");
   return (await fn(v)).data as { ok: boolean; id: string };

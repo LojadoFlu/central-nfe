@@ -1875,7 +1875,9 @@ export const salvarVendaManual = onCall(opcoes, async (req) => {
   // dinheiro não passa em máquina; cartão/pix caem no banco da loja da máquina
   const maquinaEmpresaId = forma === "dinheiro" ? "" : String(d.maquinaEmpresaId ?? "").trim();
   if (forma !== "dinheiro" && !maquinaEmpresaId) throw new HttpsError("invalid-argument", "Escolha a máquina (loja) por onde passou.");
-  const doc = { empresaId, dia, forma, maquinaEmpresaId: maquinaEmpresaId || null, valor, origem: "manual", atualizadoEm: agoraISO(), atualizadoPor: uid };
+  const parcelas = forma === "cartaoParcelado" ? Math.round(Number(d.parcelas) || 0) : 0;
+  if (forma === "cartaoParcelado" && (parcelas < 2 || parcelas > 12)) throw new HttpsError("invalid-argument", "Informe o número de parcelas (2 a 12).");
+  const doc = { empresaId, dia, forma, parcelas, maquinaEmpresaId: maquinaEmpresaId || null, valor, origem: "manual", atualizadoEm: agoraISO(), atualizadoPor: uid };
   const ref = d.id ? db.collection("manual_sales").doc(String(d.id)) : db.collection("manual_sales").doc();
   await ref.set(doc, { merge: true });
   await auditar(uid, "manual.salvarVenda", { id: ref.id, empresaId, dia, forma, valor });

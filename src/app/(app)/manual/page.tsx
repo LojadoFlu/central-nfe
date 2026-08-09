@@ -47,8 +47,10 @@ export default function ManualPage() {
   // form
   const [forma, setForma] = useState("dinheiro");
   const [maquina, setMaquina] = useState("");
+  const [nParcelas, setNParcelas] = useState("2");
   const [valor, setValor] = useState("");
   const [salvando, setSalvando] = useState(false);
+  const ehParcelado = forma === "cartaoParcelado";
 
   const manuais = useMemo(() => empresas.filter((e) => e.manual), [empresas]);
   const maquinas = useMemo(() => empresas.filter((e) => !e.manual), [empresas]);
@@ -86,7 +88,7 @@ export default function ManualPage() {
     setSalvando(true);
     setErro(null);
     try {
-      await salvarVendaManual({ empresaId, dia, forma, maquinaEmpresaId: precisaMaquina ? maquina : undefined, valor: v });
+      await salvarVendaManual({ empresaId, dia, forma, parcelas: ehParcelado ? Number(nParcelas) || 2 : undefined, maquinaEmpresaId: precisaMaquina ? maquina : undefined, valor: v });
       setValor("");
       await carregar();
     } catch (e) {
@@ -154,6 +156,14 @@ export default function ManualPage() {
                       </select>
                     </div>
                   ) : null}
+                  {ehParcelado ? (
+                    <div className="space-y-1">
+                      <label className="block text-[11px] text-muted-foreground">Parcelas</label>
+                      <select value={nParcelas} onChange={(e) => setNParcelas(e.target.value)} className="h-9 w-24 rounded-md border border-input bg-background px-2 text-sm">
+                        {Array.from({ length: 11 }, (_, i) => i + 2).map((n) => <option key={n} value={n}>{n}x</option>)}
+                      </select>
+                    </div>
+                  ) : null}
                   <div className="space-y-1">
                     <label className="block text-[11px] text-muted-foreground">Valor total (R$)</label>
                     <Input type="number" step="0.01" inputMode="decimal" value={valor} onChange={(e) => setValor(e.target.value)} className="h-9 w-32" />
@@ -184,7 +194,7 @@ export default function ManualPage() {
                     <CardContent className="flex items-center justify-between gap-3 py-3">
                       <div className="min-w-0">
                         <p className="text-sm font-medium">
-                          {FORMA_LABEL[v.forma] ?? v.forma}
+                          {FORMA_LABEL[v.forma] ?? v.forma}{v.forma === "cartaoParcelado" && v.parcelas ? ` ${v.parcelas}x` : ""}
                           {v.maquinaEmpresaId ? <Badge variant="neutral" className="ml-2">máq. {nomeEmp(v.maquinaEmpresaId)}</Badge> : <Badge variant="neutral" className="ml-2">na loja</Badge>}
                         </p>
                       </div>
