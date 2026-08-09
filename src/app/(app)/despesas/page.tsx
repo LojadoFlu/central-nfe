@@ -19,8 +19,9 @@ import {
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatarData } from "@/lib/utils";
-import { Receipt, Plus, Trash2, Check, RotateCcw, X, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
+import { Receipt, Plus, Trash2, Check, RotateCcw, X, Pencil } from "lucide-react";
 
 const CATEGORIAS: { key: string; label: string }[] = [
   { key: "aluguel", label: "Aluguel" },
@@ -60,6 +61,26 @@ function mesLabelLongo(ym: string): string {
   const [y, m] = ym.split("-");
   return `${MESES[Number(m) - 1] ?? m}/${y}`;
 }
+/** Período padrão = mês corrente (1º ao último dia). */
+function periodoEsteMes(): Periodo {
+  const d = new Date();
+  const de = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+  const u = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  return { de, ate: `${u.getFullYear()}-${String(u.getMonth() + 1).padStart(2, "0")}-${String(u.getDate()).padStart(2, "0")}` };
+}
+/** Lista de meses YYYY-MM dentro do intervalo (inclusivo). */
+function mesesNoIntervalo(p: Periodo): string[] {
+  const start = (p.de || p.ate || `${mesAtualYM()}-01`).slice(0, 7);
+  const end = (p.ate || p.de || `${mesAtualYM()}-01`).slice(0, 7);
+  const out: string[] = [];
+  let cur = start <= end ? start : end;
+  const fim = start <= end ? end : start;
+  for (let i = 0; cur <= fim && i < 120; i++) {
+    out.push(cur);
+    cur = addMesYM(cur, 1);
+  }
+  return out.length ? out : [mesAtualYM()];
+}
 /** A despesa incide no mês `ym`, conforme a recorrência? */
 function aplicaNoMes(d: DespesaFixa, ym: string): boolean {
   const p = PERIODO[d.recorrencia ?? "mensal"] ?? 1;
@@ -78,13 +99,14 @@ export default function DespesasPage() {
   const [despesas, setDespesas] = useState<DespesaFixa[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [filtroEmp, setFiltroEmp] = useState("");
-  const [ym, setYm] = useState(mesAtualYM());
+  const [periodo, setPeriodo] = useState<Periodo>(periodoEsteMes());
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
 
-  // Baixa (valor real + data)
+  // Baixa (mês + valor real + data)
   const [pagandoId, setPagandoId] = useState<string | null>(null);
+  const [pMes, setPMes] = useState(mesAtualYM());
   const [pValor, setPValor] = useState("");
   const [pData, setPData] = useState("");
 
@@ -102,6 +124,9 @@ export default function DespesasPage() {
   const [fObs, setFObs] = useState("");
   const [fAtivo, setFAtivo] = useState(true);
   const [salvando, setSalvando] = useState(false);
+
+  const meses = useMemo(() => mesesNoIntervalo(periodo), [periodo]);
+  const multiMes = meses.length > 1;
 
   const carregar = useCallback(async () => {
     setErro(null);
@@ -126,7 +151,7 @@ export default function DespesasPage() {
     setFCategoria("aluguel");
     setFValor("");
     setFRecorrencia("mensal");
-    setFMesBase(String(Number(ym.slice(5, 7))));
+    setFMesBase(String(Number(mesAtualYM().slice(5, 7))));
     setFDia("");
     setFBenef("");
     setFObs("");
@@ -143,7 +168,7 @@ export default function DespesasPage() {
     setFCategoria(d.categoria ?? "outros");
     setFValor(String(d.valor ?? ""));
     setFRecorrencia(d.recorrencia ?? "mensal");
-    setFMesBase(String(d.mesBase ?? Number(ym.slice(5, 7))));
+    setFMesBase(String(d.mesBase ?? Number(mesAtualYM().slice(5, 7))));
     setFDia(d.diaVencimento != null ? String(d.diaVencimento) : "");
     setFBenef(d.beneficiario ?? "");
     setFObs(d.observacao ?? "");
@@ -181,17 +206,27 @@ export default function DespesasPage() {
     }
   }
 
-  function abrirBaixa(d: DespesaFixa) {
+  function dataDefault(d: DespesaFixa, ym: string): string {
+    return `${ym}-${String(Math.min(d.diaVencimento ?? 1, 28)).padStart(2, "0")}`;
+  }
+  function abrirBaixa(d: DespesaFixa, incid: string[]) {
+    const alvo = incid.find((ym) => !pagamentoDe(d, ym)?.pago) ?? incid[incid.length - 1] ?? meses[0];
     setPagandoId(d.id);
-    setPValor(String(d.valor ?? ""));
-    setPData(`${ym}-${String(Math.min(d.diaVencimento ?? 1, 28)).padStart(2, "0")}`);
+    setPMes(alvo);
+    setPValor(String(pagamentoDe(d, alvo)?.valor ?? d.valor ?? ""));
+    setPData(dataDefault(d, alvo));
+  }
+  function trocarMesBaixa(d: DespesaFixa, ym: string) {
+    setPMes(ym);
+    setPValor(String(pagamentoDe(d, ym)?.valor ?? d.valor ?? ""));
+    setPData(pagamentoDe(d, ym)?.data ?? dataDefault(d, ym));
   }
   async function confirmarBaixa(d: DespesaFixa) {
     setOcupado(`pg:${d.id}`);
     setErro(null);
     try {
       const v = Number(pValor);
-      await pagarDespesaFixa({ id: d.id, mes: ym, pago: true, valor: Number.isFinite(v) ? v : d.valor, data: pData });
+      await pagarDespesaFixa({ id: d.id, mes: pMes, pago: true, valor: Number.isFinite(v) ? v : d.valor, data: pData });
       setPagandoId(null);
       await carregar();
     } catch (e) {
@@ -200,7 +235,7 @@ export default function DespesasPage() {
       setOcupado(null);
     }
   }
-  async function reabrir(d: DespesaFixa) {
+  async function reabrir(d: DespesaFixa, ym: string) {
     setOcupado(`pg:${d.id}`);
     setErro(null);
     try {
@@ -234,16 +269,20 @@ export default function DespesasPage() {
   const totais = useMemo(() => {
     let previsto = 0, pago = 0, falta = 0;
     for (const d of visiveis) {
-      const incide = aplicaNoMes(d, ym);
-      const p = pagamentoDe(d, ym);
-      if (p?.pago) pago += p.valor ?? d.valor ?? 0;
-      if (d.ativo !== false && incide) {
-        previsto += d.valor ?? 0;
-        if (!p?.pago) falta += d.valor ?? 0;
+      for (const ym of meses) {
+        const incide = aplicaNoMes(d, ym);
+        const p = pagamentoDe(d, ym);
+        if (p?.pago) pago += p.valor ?? d.valor ?? 0;
+        if (d.ativo !== false && incide) {
+          previsto += d.valor ?? 0;
+          if (!p?.pago) falta += d.valor ?? 0;
+        }
       }
     }
     return { previsto, pago, falta };
-  }, [visiveis, ym]);
+  }, [visiveis, meses]);
+
+  const periodoLabel = multiMes ? `${mesLabelLongo(meses[0])} – ${mesLabelLongo(meses[meses.length - 1])}` : mesLabelLongo(meses[0]);
 
   return (
     <div>
@@ -274,16 +313,10 @@ export default function DespesasPage() {
         </select>
       ) : null}
 
-      {/* Navegação de mês */}
-      <div className="mb-3 flex items-center justify-between rounded-md border border-border bg-card px-2 py-1.5">
-        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setYm(addMesYM(ym, -1))}>
-          <ChevronLeft className="size-4" />
-        </Button>
-        <span className="text-sm font-semibold">{mesLabelLongo(ym)}</span>
-        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setYm(addMesYM(ym, 1))}>
-          <ChevronRight className="size-4" />
-        </Button>
-      </div>
+      <FiltroPeriodo value={periodo} onChange={setPeriodo} allowClear={false} className="mb-1" />
+      <p className="mb-3 px-1 text-[11px] text-muted-foreground">
+        Totais somados no período ({periodoLabel}). A baixa é lançada por mês.
+      </p>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <StatCard label="Previsto" value={despesas === null ? "…" : formatBRL(totais.previsto)} />
@@ -389,15 +422,21 @@ export default function DespesasPage() {
         <div className="mt-4 space-y-3">
           {visiveis.map((d) => {
             const inativa = d.ativo === false;
-            const incide = aplicaNoMes(d, ym);
-            const p = pagamentoDe(d, ym);
-            const pago = !!p?.pago;
-            const real = p?.valor ?? null;
-            const prev = p?.previsto ?? d.valor;
+            const incid = meses.filter((ym) => aplicaNoMes(d, ym));
+            const incideNoPeriodo = incid.length > 0;
+            const pagosN = incid.filter((ym) => pagamentoDe(d, ym)?.pago).length;
+            const previstoP = inativa ? 0 : incid.length * (d.valor ?? 0);
+            const pagoP = incid.reduce((s, ym) => {
+              const p = pagamentoDe(d, ym);
+              return s + (p?.pago ? p.valor ?? d.valor ?? 0 : 0);
+            }, 0);
             const bz = `pg:${d.id}`;
             const pagando = pagandoId === d.id;
+            const mesPago = !!pagamentoDe(d, pMes)?.pago;
+            const tudoPago = incideNoPeriodo && pagosN === incid.length;
+
             return (
-              <Card key={d.id} className={inativa || !incide ? "opacity-70" : undefined}>
+              <Card key={d.id} className={inativa || !incideNoPeriodo ? "opacity-70" : undefined}>
                 <CardContent className="py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -417,52 +456,68 @@ export default function DespesasPage() {
                     </div>
                     <div className="flex flex-col items-end gap-1">
                       <p className="font-bold tnum">{formatBRL(d.valor)}</p>
-                      {!incide ? (
+                      {!incideNoPeriodo ? (
                         <Badge variant="neutral">Não incide</Badge>
-                      ) : pago ? (
-                        <Badge variant="success">Paga</Badge>
+                      ) : tudoPago ? (
+                        <Badge variant="success">{multiMes ? "Tudo pago" : "Paga"}</Badge>
                       ) : !inativa ? (
-                        <Badge variant="warning">Pendente</Badge>
+                        <Badge variant="warning">{multiMes ? `${pagosN}/${incid.length} pagos` : "Pendente"}</Badge>
                       ) : null}
                     </div>
                   </div>
 
-                  {/* Detalhe do pagamento realizado */}
-                  {incide && pago ? (
-                    <p className="mt-1 text-xs text-success">
-                      Pago em {formatarData(p?.data)} · real {formatBRL(real)}
-                      {real != null && Math.abs((real ?? 0) - (prev ?? 0)) > 0.005 ? (
-                        <span className="text-muted-foreground"> (previsto {formatBRL(prev)})</span>
-                      ) : null}
+                  {/* Rollup do período */}
+                  {incideNoPeriodo && multiMes ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {incid.length} mês(es) no período · previsto {formatBRL(previstoP)} · pago{" "}
+                      <span className="text-success">{formatBRL(pagoP)}</span>
                     </p>
                   ) : null}
 
                   {podeEditar ? (
                     <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
-                      {!incide ? (
-                        <span className="text-xs text-muted-foreground">Não incide em {mesLabelLongo(ym)}</span>
-                      ) : pago ? (
-                        <Button size="sm" variant="ghost" disabled={ocupado === bz} onClick={() => reabrir(d)}>
-                          <RotateCcw className="size-4" /> {ocupado === bz ? "…" : `Reabrir (${mesLabelLongo(ym)})`}
-                        </Button>
+                      {!incideNoPeriodo ? (
+                        <span className="text-xs text-muted-foreground">Não incide no período</span>
                       ) : pagando ? (
                         <div className="flex flex-wrap items-end gap-2">
                           <div className="space-y-1">
-                            <label className="text-[11px] text-muted-foreground">Valor real (R$)</label>
-                            <Input type="number" step="0.01" inputMode="decimal" value={pValor} onChange={(e) => setPValor(e.target.value)} className="h-9 w-32" />
+                            <label className="text-[11px] text-muted-foreground">Mês</label>
+                            <select
+                              value={pMes}
+                              onChange={(e) => trocarMesBaixa(d, e.target.value)}
+                              className="h-9 w-32 rounded-md border border-input bg-background px-2 text-sm"
+                            >
+                              {incid.map((ym) => (
+                                <option key={ym} value={ym}>
+                                  {mesLabelLongo(ym)}{pagamentoDe(d, ym)?.pago ? " ✓" : ""}
+                                </option>
+                              ))}
+                            </select>
                           </div>
-                          <div className="space-y-1">
-                            <label className="text-[11px] text-muted-foreground">Data</label>
-                            <Input type="date" value={pData} onChange={(e) => setPData(e.target.value)} className="h-9 w-40" />
-                          </div>
-                          <Button size="sm" disabled={ocupado === bz} onClick={() => confirmarBaixa(d)}>
-                            <Check className="size-4" /> {ocupado === bz ? "…" : "Confirmar"}
-                          </Button>
+                          {mesPago ? (
+                            <Button size="sm" variant="ghost" disabled={ocupado === bz} onClick={() => reabrir(d, pMes)}>
+                              <RotateCcw className="size-4" /> {ocupado === bz ? "…" : `Reabrir ${mesLabelLongo(pMes)}`}
+                            </Button>
+                          ) : (
+                            <>
+                              <div className="space-y-1">
+                                <label className="text-[11px] text-muted-foreground">Valor real (R$)</label>
+                                <Input type="number" step="0.01" inputMode="decimal" value={pValor} onChange={(e) => setPValor(e.target.value)} className="h-9 w-32" />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] text-muted-foreground">Data</label>
+                                <Input type="date" value={pData} onChange={(e) => setPData(e.target.value)} className="h-9 w-40" />
+                              </div>
+                              <Button size="sm" disabled={ocupado === bz} onClick={() => confirmarBaixa(d)}>
+                                <Check className="size-4" /> {ocupado === bz ? "…" : "Confirmar"}
+                              </Button>
+                            </>
+                          )}
                           <Button size="sm" variant="ghost" onClick={() => setPagandoId(null)}>Cancelar</Button>
                         </div>
                       ) : (
-                        <Button size="sm" variant="outline" onClick={() => abrirBaixa(d)}>
-                          <Check className="size-4" /> Marcar pago ({mesLabelLongo(ym)})
+                        <Button size="sm" variant="outline" onClick={() => abrirBaixa(d, incid)}>
+                          <Check className="size-4" /> {tudoPago ? "Ver/editar pagamentos" : "Registrar pagamento"}
                         </Button>
                       )}
 
