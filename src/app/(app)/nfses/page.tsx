@@ -25,8 +25,8 @@ import { formatBRL, formatCNPJ, formatarData, formatarDataHora, normalizar } fro
 import { Wrench, ChevronDown, RefreshCw, FileCode2, Download, FileText } from "lucide-react";
 
 export default function NfsesPage() {
-  const { role } = useAuth();
-  const podeSincronizar = role === "admin" || role === "fiscal";
+  const { podeAcao } = useAuth();
+  const podeSincronizar = podeAcao("integracoes.sincronizar");
   const [nfses, setNfses] = useState<NfseDocumento[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");

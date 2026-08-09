@@ -4,13 +4,13 @@ import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card } from "@/components/ui/card";
-import { SECONDARY_NAV, filtrarPorRole } from "@/lib/nav";
+import { SECONDARY_NAV, filtrarPorPermissao } from "@/lib/nav";
 import { useAuth } from "@/lib/auth/auth-provider";
 
 /** Tela "Mais" do bottom-nav mobile: agrupa os itens secundários. */
 export default function MaisPage() {
-  const { role } = useAuth();
-  const itens = filtrarPorRole(SECONDARY_NAV, role);
+  const { isAdmin, podeModulo } = useAuth();
+  const itens = filtrarPorPermissao(SECONDARY_NAV, { isAdmin, podeModulo });
 
   return (
     <div>

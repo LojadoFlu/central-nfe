@@ -15,21 +15,27 @@ import {
   signOut,
   type User,
 } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 import { getFirebase } from "../firebase/client";
 import { isFirebaseConfigured } from "../firebase/config";
 import { parseRole, type Role } from "./roles";
+import type { Perfil, StatusUsuario } from "./permissoes";
 
 interface AuthState {
   user: User | null;
   role: Role | null;
+  isAdmin: boolean;
+  status: StatusUsuario | null;
+  perfil: Perfil | null;
   /** CNPJs (companyIds) que o usuário pode acessar; vazio = todos (admin). */
   companyIds: string[];
   loading: boolean;
   configured: boolean;
+  podeModulo: (key: string) => boolean;
+  podeAcao: (key: string) => boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signOutUser: () => Promise<void>;
-  /** Recarrega o token e relê os claims (após mudança de papel). */
-  recarregar: () => Promise<Role | null>;
+  recarregar: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
@@ -42,19 +48,35 @@ function parseCompanyIds(claims: Record<string, unknown>): string[] {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [role, setRole] = useState<Role | null>(null);
+  const [status, setStatus] = useState<StatusUsuario | null>(null);
+  const [perfil, setPerfil] = useState<Perfil | null>(null);
   const [companyIds, setCompanyIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const lerClaims = useCallback(
-    async (u: User, forcar = false): Promise<Role | null> => {
-      const token = await u.getIdTokenResult(forcar);
-      const r = parseRole(token.claims.role);
-      setRole(r);
-      setCompanyIds(parseCompanyIds(token.claims));
-      return r;
-    },
-    [],
-  );
+  const isAdmin = role === "admin";
+
+  const lerClaims = useCallback(async (u: User, forcar = false): Promise<void> => {
+    const token = await u.getIdTokenResult(forcar);
+    const r = parseRole(token.claims.role);
+    setRole(r);
+    setCompanyIds(parseCompanyIds(token.claims));
+    const admin = r === "admin";
+    setStatus(admin ? "ativo" : ((token.claims.status as StatusUsuario) ?? "pendente"));
+    const rid = (token.claims.roleId as string) ?? null;
+    if (!admin && rid) {
+      try {
+        const fb = getFirebase();
+        if (fb) {
+          const snap = await getDoc(doc(fb.db, "nfe_roles", rid));
+          setPerfil(snap.exists() ? ({ id: snap.id, ...(snap.data() as object) } as Perfil) : null);
+        }
+      } catch {
+        setPerfil(null);
+      }
+    } else {
+      setPerfil(null);
+    }
+  }, []);
 
   useEffect(() => {
     const fb = getFirebase();
@@ -68,6 +90,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await lerClaims(u);
       } else {
         setRole(null);
+        setStatus(null);
+        setPerfil(null);
         setCompanyIds([]);
       }
       setLoading(false);
@@ -75,19 +99,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsub();
   }, [lerClaims]);
 
-  const recarregar = useCallback(async (): Promise<Role | null> => {
+  const recarregar = useCallback(async (): Promise<void> => {
     const fb = getFirebase();
-    if (!fb?.auth.currentUser) return null;
-    return lerClaims(fb.auth.currentUser, true);
+    if (fb?.auth.currentUser) await lerClaims(fb.auth.currentUser, true);
   }, [lerClaims]);
+
+  const podeModulo = useCallback(
+    (key: string) => isAdmin || (perfil?.modulos?.includes(key) ?? false),
+    [isAdmin, perfil],
+  );
+  const podeAcao = useCallback(
+    (key: string) => isAdmin || (perfil?.acoes?.includes(key) ?? false),
+    [isAdmin, perfil],
+  );
 
   const value = useMemo<AuthState>(
     () => ({
       user,
       role,
+      isAdmin,
+      status,
+      perfil,
       companyIds,
       loading,
       configured: isFirebaseConfigured,
+      podeModulo,
+      podeAcao,
       signIn: async (email, password) => {
         const fb = getFirebase();
         if (!fb) throw new Error("Firebase não configurado.");
@@ -99,7 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       recarregar,
     }),
-    [user, role, companyIds, loading, recarregar],
+    [user, role, isAdmin, status, perfil, companyIds, loading, podeModulo, podeAcao, recarregar],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

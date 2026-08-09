@@ -23,8 +23,8 @@ import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/uti
 import { FileText, RefreshCw } from "lucide-react";
 
 export default function NotasPage() {
-  const { role } = useAuth();
-  const podeSincronizar = role === "admin" || role === "fiscal";
+  const { podeAcao } = useAuth();
+  const podeSincronizar = podeAcao("integracoes.sincronizar");
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [syncStates, setSyncStates] = useState<SyncEstado[]>([]);

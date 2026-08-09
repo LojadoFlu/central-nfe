@@ -24,6 +24,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Perfis (roles) definidos pelo admin — leitura por qualquer autenticado
+    // (o app carrega as permissões do perfil do usuário); escrita só backend.
+    match /nfe_roles/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
     // Empresas/CNPJs — leitura por qualquer autenticado; escrita só backend.
     match /nfe_companies/{id} {
       allow read: if isAuth();

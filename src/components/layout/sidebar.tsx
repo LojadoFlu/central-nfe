@@ -2,16 +2,17 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { PRIMARY_NAV, SECONDARY_NAV, filtrarPorRole } from "@/lib/nav";
+import { PRIMARY_NAV, SECONDARY_NAV, filtrarPorPermissao } from "@/lib/nav";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { cn } from "@/lib/utils";
 
 /** Sidebar — só no desktop (lg+). No mobile a navegação é a BottomNav. */
 export function Sidebar() {
   const pathname = usePathname();
-  const { role } = useAuth();
-  const principais = filtrarPorRole(PRIMARY_NAV, role);
-  const secundarios = filtrarPorRole(SECONDARY_NAV, role);
+  const { isAdmin, podeModulo } = useAuth();
+  const ctx = { isAdmin, podeModulo };
+  const principais = filtrarPorPermissao(PRIMARY_NAV, ctx);
+  const secundarios = filtrarPorPermissao(SECONDARY_NAV, ctx);
 
   return (
     <aside className="hidden w-60 shrink-0 border-r border-border bg-card lg:block">

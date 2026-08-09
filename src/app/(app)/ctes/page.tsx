@@ -29,8 +29,8 @@ import { Container, ChevronDown, RefreshCw, FileCode2, Download, FileText } from
 const TP_CTE: Record<string, string> = { "0": "Normal", "1": "Complemento", "2": "Anulação", "3": "Substituto" };
 
 export default function CtesPage() {
-  const { role } = useAuth();
-  const podeSincronizar = role === "admin" || role === "fiscal";
+  const { podeAcao } = useAuth();
+  const podeSincronizar = podeAcao("integracoes.sincronizar");
   const [ctes, setCtes] = useState<CteDocumento[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");

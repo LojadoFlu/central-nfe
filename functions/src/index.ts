@@ -17,6 +17,7 @@ import {
   nomeSegredoCertificado,
 } from "./lib/secrets";
 import { getStorage } from "firebase-admin/storage";
+import { getAuth } from "firebase-admin/auth";
 import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
 import { sincronizarEmpresa, gravarItensEParcelas } from "./sefaz/sincronizacao";
 import {
@@ -983,6 +984,93 @@ async function resolverEmpresa(companyId: string): Promise<{ id: string; nome: s
   const e = snap.data() as { razaoSocial?: string; nomeFantasia?: string };
   return { id: companyId, nome: e.nomeFantasia || e.razaoSocial || companyId };
 }
+
+// ============ GESTÃO DE USUÁRIOS E PERFIS (RBAC) ============
+
+/**
+ * Autocadastro: o usuário recém-criado (já autenticado no Firebase Auth) cria
+ * seu próprio registro como PENDENTE. Sem acesso até um admin aprovar.
+ */
+export const nfeRegistrarUsuario = onCall(opcoes, async (req) => {
+  const uid = req.auth?.uid;
+  if (!uid) throw new HttpsError("unauthenticated", "Autenticação necessária.");
+  const nome = String(req.data?.nome ?? "").trim().slice(0, 120);
+  const email = String(req.auth?.token?.email ?? req.data?.email ?? "").trim();
+  const ref = db.collection("nfe_users").doc(uid);
+  const snap = await ref.get();
+  if (snap.exists) return { ok: true, status: (snap.data() as { status?: string }).status ?? "pendente" };
+  const now = agoraISO();
+  await ref.set({ uid, nome, email, status: "pendente", roleId: null, empresas: [], criadoEm: now });
+  await auditar(uid, "usuario.autocadastro", { email, nome });
+  return { ok: true, status: "pendente" };
+});
+
+/**
+ * Aprova/atualiza um usuário: define status, perfil e empresas de escopo.
+ * Grava nos claims (status, roleId, companyIds) e no doc. Só admin.
+ */
+export const nfeAprovarUsuario = onCall(opcoes, async (req) => {
+  const { uid: adminUid } = exigirRole(req, ["admin"]);
+  const d = req.data ?? {};
+  const alvo = String(d.uid ?? "").trim();
+  if (!alvo) throw new HttpsError("invalid-argument", "uid obrigatório.");
+  const status = ["ativo", "pendente", "inativo"].includes(String(d.status)) ? String(d.status) : "ativo";
+  const roleId = d.roleId ? String(d.roleId) : null;
+  const empresas = Array.isArray(d.empresas) ? [...new Set(d.empresas.map((x: unknown) => String(x)))] : [];
+  if (roleId) {
+    const r = await db.collection("nfe_roles").doc(roleId).get();
+    if (!r.exists) throw new HttpsError("invalid-argument", "Perfil inválido.");
+  }
+  const now = agoraISO();
+  await db.collection("nfe_users").doc(alvo).set(
+    { status, roleId, empresas, aprovadoPor: adminUid, aprovadoEm: now, updatedAt: now },
+    { merge: true },
+  );
+  // Claims: preserva um eventual role="admin"; adiciona status/roleId/companyIds.
+  const rec = await getAuth().getUser(alvo);
+  const atuais = (rec.customClaims ?? {}) as Record<string, unknown>;
+  await getAuth().setCustomUserClaims(alvo, { ...atuais, status, roleId, companyIds: empresas });
+  await auditar(adminUid, "usuario.aprovar", { alvo, status, roleId, empresas: empresas.length });
+  return { ok: true };
+});
+
+/** Cria/atualiza um perfil (conjunto de módulos + ações permitidos). Só admin. */
+export const nfeSalvarPerfil = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin"]);
+  const d = req.data ?? {};
+  const id = String(d.id ?? "").trim();
+  const nome = String(d.nome ?? "").trim().slice(0, 80);
+  if (!nome) throw new HttpsError("invalid-argument", "Nome do perfil obrigatório.");
+  const modulos = Array.isArray(d.modulos) ? [...new Set(d.modulos.map((x: unknown) => String(x)))] : [];
+  const acoes = Array.isArray(d.acoes) ? [...new Set(d.acoes.map((x: unknown) => String(x)))] : [];
+  const now = agoraISO();
+  const ref = id ? db.collection("nfe_roles").doc(id) : db.collection("nfe_roles").doc();
+  const existe = id ? (await ref.get()).exists : false;
+  await ref.set(
+    {
+      id: ref.id,
+      nome,
+      descricao: String(d.descricao ?? "").trim().slice(0, 200) || null,
+      modulos,
+      acoes,
+      updatedAt: now,
+      ...(existe ? {} : { createdAt: now, createdBy: uid }),
+    },
+    { merge: true },
+  );
+  await auditar(uid, existe ? "perfil.atualizar" : "perfil.criar", { id: ref.id, nome });
+  return { ok: true, id: ref.id };
+});
+
+/** Exclui um perfil. Só admin. */
+export const nfeExcluirPerfil = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin"]);
+  const id = String(req.data?.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  await db.collection("nfe_roles").doc(id).delete();
+  await auditar(uid, "perfil.excluir", { id });
+  return { ok: true };
+});
 
 /** Registra evento de auditoria (rastreabilidade). */
 async function auditar(uid: string, acao: string, detalhe: Record<string, unknown>) {

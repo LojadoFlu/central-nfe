@@ -9,7 +9,6 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { podeGerirCertificado } from "@/lib/auth/roles";
 import { listarEmpresas, salvarEmpresa } from "@/lib/nfe/repo";
 import { formatCNPJ } from "@/lib/utils";
 import type { Company } from "@/lib/nfe/types";
@@ -26,8 +25,8 @@ interface FormEmpresa {
 const VAZIO: FormEmpresa = { razaoSocial: "", nomeFantasia: "", cnpj: "", uf: "", ambiente: "producao" };
 
 export default function EmpresasPage() {
-  const { role } = useAuth();
-  const podeEditar = podeGerirCertificado(role); // admin
+  const { podeAcao } = useAuth();
+  const podeEditar = podeAcao("empresas.gerir");
   const [empresas, setEmpresas] = useState<Company[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [form, setForm] = useState<FormEmpresa>(VAZIO);

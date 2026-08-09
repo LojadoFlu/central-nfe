@@ -21,7 +21,6 @@ import {
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { podeAlterarFinanceiro } from "@/lib/auth/roles";
 import { formatBRL, formatCNPJ, formatarData, diasAte } from "@/lib/utils";
 import { Handshake, Plus, Trash2, Check, RotateCcw, X, Pencil, ChevronDown } from "lucide-react";
 
@@ -60,8 +59,8 @@ function resumoAcordo(a: Acordo) {
 }
 
 export default function AcordosPage() {
-  const { role } = useAuth();
-  const podeEditar = podeAlterarFinanceiro(role);
+  const { podeAcao } = useAuth();
+  const podeEditar = podeAcao("financeiro.baixar");
   const [acordos, setAcordos] = useState<Acordo[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [filtroEmp, setFiltroEmp] = useState(""); // "" = todas

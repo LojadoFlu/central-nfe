@@ -19,7 +19,6 @@ import {
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { podeAlterarFinanceiro } from "@/lib/auth/roles";
 import { formatBRL, formatarData } from "@/lib/utils";
 import { Receipt, Plus, Trash2, Check, RotateCcw, X, Pencil, ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -74,8 +73,8 @@ function pagamentoDe(d: DespesaFixa, ym: string) {
 }
 
 export default function DespesasPage() {
-  const { role } = useAuth();
-  const podeEditar = podeAlterarFinanceiro(role);
+  const { podeAcao } = useAuth();
+  const podeEditar = podeAcao("financeiro.baixar");
   const [despesas, setDespesas] = useState<DespesaFixa[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [filtroEmp, setFiltroEmp] = useState("");

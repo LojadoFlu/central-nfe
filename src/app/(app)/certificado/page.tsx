@@ -9,7 +9,6 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { podeGerirCertificado } from "@/lib/auth/roles";
 import {
   listarEmpresas,
   listarCertificados,
@@ -22,8 +21,8 @@ import { formatarData, formatCNPJ } from "@/lib/utils";
 import { ShieldCheck, ShieldAlert, ShieldX, Lock } from "lucide-react";
 
 export default function CertificadoPage() {
-  const { role } = useAuth();
-  const podeEditar = podeGerirCertificado(role);
+  const { podeAcao } = useAuth();
+  const podeEditar = podeAcao("certificado.gerir");
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [certs, setCerts] = useState<CertificateMeta[] | null>(null);
   const [companyId, setCompanyId] = useState("");

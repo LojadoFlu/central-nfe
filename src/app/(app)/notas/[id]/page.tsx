@@ -23,7 +23,6 @@ import {
 } from "@/lib/nfe/repo";
 import { gerarDanfe } from "@/lib/nfe/danfe";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { podeManifestar, podeAlterarFinanceiro } from "@/lib/auth/roles";
 import { Textarea } from "@/components/ui/textarea";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
 import { ArrowLeft, FileCode2, Download, FileText, ShieldCheck, Check, RotateCcw } from "lucide-react";
@@ -54,13 +53,13 @@ export default function NotaDetalhePage() {
   const [carregandoXml, setCarregandoXml] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
   const [erroXml, setErroXml] = useState<string | null>(null);
-  const { role } = useAuth();
+  const { podeAcao } = useAuth();
   const [eventoPendente, setEventoPendente] = useState<string | null>(null);
   const [xJust, setXJust] = useState("");
   const [manifestando, setManifestando] = useState(false);
   const [resManif, setResManif] = useState<ResultadoManifestacao | null>(null);
   const [baixando, setBaixando] = useState<string | null>(null);
-  const podeBaixar = podeAlterarFinanceiro(role);
+  const podeBaixar = podeAcao("financeiro.baixar");
 
   async function alternarPagamento(p: Parcela, pago: boolean) {
     setBaixando(p.id);
@@ -217,7 +216,7 @@ export default function NotaDetalhePage() {
       </Card>
 
       {/* Manifestação (admin/fiscal) */}
-      {podeManifestar(role) ? (
+      {podeAcao("nfe.manifestar") ? (
         <Card className="mb-4">
           <CardContent className="py-4">
             <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">

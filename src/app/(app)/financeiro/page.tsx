@@ -13,7 +13,6 @@ import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, type Parcela } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { podeAlterarFinanceiro } from "@/lib/auth/roles";
 import { formatBRL, formatarData, diasAte } from "@/lib/utils";
 import { Wallet, Check, RotateCcw, CheckSquare, X } from "lucide-react";
 
@@ -41,8 +40,8 @@ function mesLabel(ym: string): string {
 }
 
 export default function FinanceiroPage() {
-  const { role } = useAuth();
-  const podeBaixar = podeAlterarFinanceiro(role);
+  const { podeAcao } = useAuth();
+  const podeBaixar = podeAcao("financeiro.baixar");
   const [parcelas, setParcelas] = useState<Parcela[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");

@@ -570,6 +570,81 @@ export async function urlDownloadXml(storagePath: string): Promise<string> {
   return getDownloadURL(storageRef(storage, storagePath));
 }
 
+// ---- Usuários e perfis (RBAC) ----
+
+export interface Usuario {
+  uid: string;
+  email?: string;
+  nome?: string;
+  status?: "pendente" | "ativo" | "inativo";
+  roleId?: string | null;
+  empresas?: string[];
+  criadoEm?: string;
+  aprovadoEm?: string;
+}
+
+/** Lista todos os usuários (admin). */
+export async function listarUsuarios(): Promise<Usuario[]> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, "nfe_users"));
+  const arr = snap.docs.map((d) => ({ uid: d.id, ...(d.data() as object) })) as Usuario[];
+  return arr.sort((a, b) => (a.criadoEm ?? "").localeCompare(b.criadoEm ?? ""));
+}
+
+/** Lista os perfis definidos. */
+export async function listarPerfis(): Promise<
+  { id: string; nome: string; descricao?: string | null; modulos: string[]; acoes: string[] }[]
+> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, "nfe_roles"));
+  return snap.docs
+    .map((d) => ({ id: d.id, ...(d.data() as object) }))
+    .sort((a, b) => ((a as { nome?: string }).nome ?? "").localeCompare((b as { nome?: string }).nome ?? "")) as never;
+}
+
+/** Autocadastro: cria o registro pendente do usuário recém-autenticado. */
+export async function registrarUsuario(nome: string): Promise<{ ok: boolean; status: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeRegistrarUsuario");
+  const res = await fn({ nome });
+  return res.data as { ok: boolean; status: string };
+}
+
+/** Aprova/atualiza um usuário (status, perfil, empresas). */
+export async function aprovarUsuario(input: {
+  uid: string;
+  roleId?: string | null;
+  empresas?: string[];
+  status?: "pendente" | "ativo" | "inativo";
+}): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeAprovarUsuario");
+  const res = await fn(input);
+  return res.data as { ok: boolean };
+}
+
+/** Cria/atualiza um perfil. */
+export async function salvarPerfil(input: {
+  id?: string;
+  nome: string;
+  descricao?: string;
+  modulos: string[];
+  acoes: string[];
+}): Promise<{ ok: boolean; id: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeSalvarPerfil");
+  const res = await fn(input);
+  return res.data as { ok: boolean; id: string };
+}
+
+/** Exclui um perfil. */
+export async function excluirPerfil(id: string): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeExcluirPerfil");
+  const res = await fn({ id });
+  return res.data as { ok: boolean };
+}
+
 /** Lê um arquivo File como base64 puro (sem o prefixo data:). */
 export function arquivoParaBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

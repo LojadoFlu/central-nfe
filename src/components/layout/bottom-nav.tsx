@@ -2,13 +2,15 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { PRIMARY_NAV, MAIS_ITEM } from "@/lib/nav";
+import { PRIMARY_NAV, MAIS_ITEM, filtrarPorPermissao } from "@/lib/nav";
+import { useAuth } from "@/lib/auth/auth-provider";
 import { cn } from "@/lib/utils";
 
 /** Barra de navegação inferior — só no mobile (escondida em lg+). */
 export function BottomNav() {
   const pathname = usePathname();
-  const itens = [...PRIMARY_NAV, MAIS_ITEM];
+  const { isAdmin, podeModulo } = useAuth();
+  const itens = [...filtrarPorPermissao(PRIMARY_NAV, { isAdmin, podeModulo }), MAIS_ITEM];
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 backdrop-blur safe-bottom lg:hidden">
