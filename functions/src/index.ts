@@ -1500,6 +1500,13 @@ function menosDiasISO(iso: string, n: number): string {
   const dt = new Date(Date.UTC(y, (m || 1) - 1, (d || 1) - n));
   return dt.toISOString().slice(0, 10);
 }
+/** Soma n dias a uma data YYYY-MM-DD (UTC, sem drift de fuso). */
+function maisDiasISO(iso: string, n: number): string {
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  if (!y) return "";
+  const dt = new Date(Date.UTC(y, (m || 1) - 1, (d || 1) + n));
+  return dt.toISOString().slice(0, 10);
+}
 /**
  * Data em que o cartão cai na conta (antecipação ON): D+1; se cair no fim de
  * semana, empurra para segunda (sex→seg, sáb→seg, dom→seg). A venda inteira do
@@ -1513,6 +1520,53 @@ function dataCreditoCartao(diaISO: string): string {
   if (dow === 6) dt.setUTCDate(dt.getUTCDate() + 2);
   else if (dow === 0) dt.setUTCDate(dt.getUTCDate() + 1);
   return dt.toISOString().slice(0, 10);
+}
+
+/** Flags de antecipação por loja (default: LIGADA). Map empresaId → antecipacao. */
+async function carregarAntecipacao(): Promise<Map<string, boolean>> {
+  const m = new Map<string, boolean>();
+  const snap = await db.collection("card_settings").get();
+  for (const doc of snap.docs) {
+    const x = doc.data();
+    m.set(String(x.empresaId ?? doc.id), x.antecipacao !== false);
+  }
+  return m;
+}
+/**
+ * Recebíveis de cartão com a DATA DE CRÉDITO correta por loja, respeitando o
+ * toggle de antecipação. Antecipação LIGADA: crédito D+1 (fim de semana → segunda),
+ * a venda inteira junto. DESLIGADA: crédito na DATA DE VENCIMENTO real do recebível
+ * (parcelado cai mês a mês; à vista ~D+30). Só devolve o que cai em [de, ate].
+ */
+async function recebiveisNoCredito(
+  de: string, ate: string, daEmpresa: (cid: string) => boolean,
+): Promise<Array<{ empresaId: string; liquido: number; credito: string; dia: string }>> {
+  const ant = await carregarAntecipacao();
+  const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
+  const out: Array<{ empresaId: string; liquido: number; credito: string; dia: string }> = [];
+  // LIGADA — pela data da venda (crédito D+1 / fds→seg)
+  const qOn = await db.collection("card_receivables")
+    .where("dia", ">=", menosDiasISO(de, 4)).where("dia", "<=", ate).get();
+  for (const doc of qOn.docs) {
+    const r = doc.data();
+    const cid = String(r.empresaId ?? "");
+    if (!daEmpresa(cid) || ant.get(cid) === false) continue;
+    const credito = dataCreditoCartao(d10(r.dia));
+    if (!credito || credito < de || credito > ate) continue;
+    out.push({ empresaId: cid, liquido: Number(r.liquido ?? r.valor ?? 0), credito, dia: d10(r.dia) });
+  }
+  // DESLIGADA — pela data de vencimento real do recebível
+  const qOff = await db.collection("card_receivables")
+    .where("dataVencimento", ">=", de).where("dataVencimento", "<", maisDiasISO(ate, 1)).get();
+  for (const doc of qOff.docs) {
+    const r = doc.data();
+    const cid = String(r.empresaId ?? "");
+    if (!daEmpresa(cid) || ant.get(cid) !== false) continue;
+    const credito = d10(r.dataVencimento);
+    if (!credito || credito < de || credito > ate) continue;
+    out.push({ empresaId: cid, liquido: Number(r.liquido ?? r.valor ?? 0), credito, dia: d10(r.dia) });
+  }
+  return out;
 }
 
 /**
@@ -1558,18 +1612,14 @@ export const fluxoCaixa = onCall(
       tot.saida += valor; if (real) tot.saidaReal += valor; porOrigem[origem] += valor;
     };
 
-    // ENTRADAS — cartões (líquido): a venda inteira cai em D+1 (fim de semana → segunda)
+    // ENTRADAS — cartões (líquido) na data de crédito real de cada loja (respeita
+    // o toggle de antecipação: LIGADA = D+1/fds→seg; DESLIGADA = data de vencimento).
     const proxCartaoMap = new Map<string, number>(); // créditos de cartão a cair (dia >= hoje)
-    const recSnap = await db.collection("card_receivables")
-      .where("dia", ">=", menosDiasISO(de, 4)).where("dia", "<=", ate).get();
-    for (const doc of recSnap.docs) {
-      const r = doc.data();
-      if (!daEmpresa(r.empresaId)) continue;
-      const credito = dataCreditoCartao(d10(r.dia));
-      if (!credito || credito < de || credito > ate) continue;
-      const val = Number(r.liquido ?? r.valor ?? 0);
-      entrada(credito, val, credito <= hoje, "cartao");
-      if (credito >= hoje && val > 0) proxCartaoMap.set(credito, (proxCartaoMap.get(credito) ?? 0) + val);
+    const recebiveis = await recebiveisNoCredito(de, ate, (cid) => daEmpresa(cid));
+    for (const r of recebiveis) {
+      const val = r.liquido;
+      entrada(r.credito, val, r.credito <= hoje, "cartao");
+      if (r.credito >= hoje && val > 0) proxCartaoMap.set(r.credito, (proxCartaoMap.get(r.credito) ?? 0) + val);
     }
     const proximosCartao = [...proxCartaoMap.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -1814,19 +1864,14 @@ export const conciliacao = onCall(
       else bancoSaidas += v;
     }
 
-    // PREVISTO (PDV) — cartão (líquido) pela DATA DE CRÉDITO calculada (venda + D+1 /
-    // fim de semana → segunda); PIX das vendas por dia.
+    // PREVISTO (PDV) — cartão (líquido) na DATA DE CRÉDITO real desta loja (respeita o
+    // toggle de antecipação: LIGADA = D+1/fds→seg; DESLIGADA = data de vencimento);
+    // PIX das vendas por dia.
     let previstoCartao = 0;
-    const rc = await db.collection("card_receivables")
-      .where("dia", ">=", menosDiasISO(de, 4)).where("dia", "<=", ate).get();
-    for (const doc of rc.docs) {
-      const r = doc.data();
-      if (String(r.empresaId ?? "") !== empresaId) continue;
-      const credito = dataCreditoCartao(d10(r.dia));
-      if (!credito || credito < de || credito > ate) continue;
-      const v = Number(r.liquido ?? r.valor ?? 0);
-      previstoCartao += v;
-      bd(credito).previstoCartao += v;
+    const rc = await recebiveisNoCredito(de, ate, (cid) => cid === empresaId);
+    for (const r of rc) {
+      previstoCartao += r.liquido;
+      bd(r.credito).previstoCartao += r.liquido;
     }
     let previstoPix = 0;
     const sp = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
@@ -1858,6 +1903,9 @@ export const conciliacao = onCall(
     const taxaDeb = media(debS, debN), taxaCr1 = media(cr1S, cr1N), taxaPixM = media(pixS, pixN);
     const taxaParc = (n: number) => { const a = parcAgg.get(String(n)); return a ? a.s / a.n : 0; };
     const liquidar = (valor: number, taxa: number) => valor * (1 - taxa / 100);
+    // antecipação desta loja (define a data de crédito do cartão manual)
+    const cfgSnap = await db.collection("card_settings").doc(empresaId).get();
+    const antecipacaoLoja = (cfgSnap.data()?.antecipacao) !== false;
 
     let manualCartao = 0, manualPix = 0;
     const man = await db.collection("manual_sales").where("maquinaEmpresaId", "==", empresaId).get();
@@ -1872,7 +1920,8 @@ export const conciliacao = onCall(
         const liq = liquidar(valor, taxaPixM);
         previstoPix += liq; manualPix += liq; bd(diaV).previstoPix += liq;
       } else if (forma === "cartaoDebito" || forma === "cartaoCredito" || forma === "cartaoParcelado") {
-        const credito = dataCreditoCartao(diaV);
+        // antecipação ligada → D+1/fds→seg; desligada → estimativa D+30 (manual não tem vencimento por parcela)
+        const credito = antecipacaoLoja ? dataCreditoCartao(diaV) : maisDiasISO(diaV, 30);
         if (!credito || credito < de || credito > ate) continue;
         const taxa = forma === "cartaoDebito" ? taxaDeb
           : forma === "cartaoCredito" ? taxaCr1

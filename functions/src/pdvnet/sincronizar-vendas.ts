@@ -154,7 +154,7 @@ export async function sincronizarVendas(
               taxaPct: p.ParcentualTaxa ?? null,
               liquido: p.Liquido ?? null,
               parcela: p.Parcela ?? 1,
-              dataVencimento: p.DataVencimento ?? null,
+              dataVencimento: p.DataVencimento ? String(p.DataVencimento).slice(0, 10) : null,
               dataLiquidacao: p.DataLiquidacao ?? null,
               nsu: p.NSU || null,
               autorizacao: p.CodigoAutorizacao || null,

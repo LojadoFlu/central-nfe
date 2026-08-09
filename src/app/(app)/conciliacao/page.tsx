@@ -80,7 +80,7 @@ export default function ConciliacaoPage() {
         <>
           <div className="space-y-3">
             <LinhaConc titulo="Cartões" banco={dados.banco.cartao} previsto={dados.previsto.cartao} dif={dados.dif.cartao}
-              nota="Banco: liquidações de cartão (crédito antecipado + débito). PDV: recebíveis pelo valor líquido, na data de vencimento." />
+              nota="Banco: liquidações de cartão. PDV: recebíveis líquidos na data de crédito — com antecipação, D+1 (fim de semana → segunda); sem antecipação, na data de vencimento (parcelado cai mês a mês)." />
             <LinhaConc titulo="PIX" banco={dados.banco.pix} previsto={dados.previsto.pix} dif={dados.dif.pix}
               nota="Banco: PIX recebido na maquininha. PDV: vendas em PIX." />
           </div>
@@ -134,7 +134,7 @@ export default function ConciliacaoPage() {
                       </tbody>
                     </table>
                     <p className="mt-2 text-[11px] text-muted-foreground">
-                      Cartões: banco pela data do crédito; PDV pela data de vencimento do recebível. Dias destacados = onde a diferença se concentra
+                      Cartões: banco e PDV pela data em que o dinheiro cai (crédito). Dias destacados = onde a diferença se concentra
                       (ex.: fim do período, quando o recebível ainda não caiu).
                     </p>
                   </div>
