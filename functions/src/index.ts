@@ -20,7 +20,7 @@ import {
   lerSegredoPdvnet,
 } from "./lib/secrets";
 import { PdvnetClient } from "./pdvnet/client";
-import { sincronizarVendas } from "./pdvnet/sincronizar-vendas";
+import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-vendas";
 import { getStorage } from "firebase-admin/storage";
 import { getAuth } from "firebase-admin/auth";
 import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
@@ -1102,6 +1102,94 @@ export const pdvnetSincronizarVendas = onCall(
       logger.error("pdvnetSincronizarVendas falhou", { erro: msg });
       return { ok: false, erro: msg };
     }
+  },
+);
+
+/** Materializa/atualiza a lista de lojas do PDVnet (sem puxar vendas). admin/fiscal. */
+export const pdvnetSincronizarLojas = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
+    let cred;
+    try {
+      cred = await lerSegredoPdvnet();
+    } catch {
+      throw new HttpsError("failed-precondition", "Credenciais do PDVnet não configuradas.");
+    }
+    try {
+      const ativos = await materializarLojas(new PdvnetClient(cred));
+      await auditar(uid, "pdvnet.sincronizarLojas", { ativas: ativos.size });
+      return { ok: true, ativas: ativos.size };
+    } catch (e) {
+      return { ok: false, erro: (e as Error).message };
+    }
+  },
+);
+
+/** Edita uma loja (incluir no sync, grupo de exibição, empresa). Só admin. */
+export const pdvnetSalvarLoja = onCall(opcoes, async (req) => {
+  const { uid } = exigirRole(req, ["admin"]);
+  const d = req.data ?? {};
+  const lojaId = String(d.lojaId ?? "").trim();
+  if (!lojaId) throw new HttpsError("invalid-argument", "lojaId obrigatório.");
+  const patch: Record<string, unknown> = { atualizadoEm: agoraISO() };
+  if (typeof d.ativoSync === "boolean") patch.ativoSync = d.ativoSync;
+  if (d.grupoNome !== undefined) patch.grupoNome = String(d.grupoNome ?? "").trim() || null;
+  if (d.empresaId !== undefined) patch.empresaId = d.empresaId ? String(d.empresaId) : null;
+  await db.collection("pdv_stores").doc(lojaId).set(patch, { merge: true });
+  await auditar(uid, "pdvnet.salvarLoja", { lojaId, ...patch });
+  return { ok: true };
+});
+
+/** Resumo de vendas filtrado por período e loja (grupo). Agrega no servidor. */
+export const pdvnetResumoVendas = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Autenticação necessária.");
+    const d = req.data ?? {};
+    const de = String(d.de ?? "");
+    const ate = String(d.ate ?? "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate)) {
+      throw new HttpsError("invalid-argument", "Período inválido.");
+    }
+    const grupoSel = d.grupo ? String(d.grupo) : "";
+
+    const stores = (await db.collection("pdv_stores").get()).docs.map((s) => s.data() as {
+      id: number; nome?: string; grupoNome?: string | null; ativoSync?: boolean;
+    });
+    const grupoDaLoja = new Map<string, string>();
+    for (const s of stores) grupoDaLoja.set(String(s.id), s.grupoNome || s.nome || String(s.id));
+    const grupos = [...new Set(stores.filter((s) => s.ativoSync).map((s) => s.grupoNome || s.nome || String(s.id)))].sort();
+    const lojaIdsSel = grupoSel
+      ? new Set(stores.filter((s) => (s.grupoNome || s.nome) === grupoSel).map((s) => String(s.id)))
+      : null;
+    const dentro = (lojaId: unknown) => !lojaIdsSel || lojaIdsSel.has(String(lojaId));
+
+    let totalVendido = 0, count = 0;
+    const salesSnap = await db.collection("sales").where("dia", ">=", de).where("dia", "<=", ate).get();
+    for (const doc of salesSnap.docs) {
+      const s = doc.data();
+      if (s.cancelada || !dentro(s.lojaId)) continue;
+      totalVendido += s.valorTotal || 0;
+      count++;
+    }
+    const porForma: Record<string, number> = {};
+    const paySnap = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
+    for (const doc of paySnap.docs) {
+      const p = doc.data();
+      if (!dentro(p.lojaId)) continue;
+      porForma[p.forma] = (porForma[p.forma] || 0) + (p.valor || 0);
+    }
+    let totalRecebiveis = 0, totalLiquido = 0, recebiveis = 0;
+    const recSnap = await db.collection("card_receivables").where("dia", ">=", de).where("dia", "<=", ate).get();
+    for (const doc of recSnap.docs) {
+      const r = doc.data();
+      if (!dentro(r.lojaId)) continue;
+      totalRecebiveis += r.valor || 0;
+      totalLiquido += r.liquido ?? r.valor ?? 0;
+      recebiveis++;
+    }
+    return { ok: true, de, ate, grupo: grupoSel || null, grupos, count, totalVendido, porForma, totalRecebiveis, totalLiquido, recebiveis };
   },
 );
 

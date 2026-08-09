@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { PRIMARY_NAV, SECONDARY_NAV, filtrarPorPermissao } from "@/lib/nav";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { cn } from "@/lib/utils";
+import { BrandMark } from "@/components/brand";
 
 /** Sidebar — só no desktop (lg+). No mobile a navegação é a BottomNav. */
 export function Sidebar() {
@@ -17,7 +18,7 @@ export function Sidebar() {
   return (
     <aside className="hidden w-60 shrink-0 border-r border-border bg-card lg:block">
       <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-        <span className="text-lg font-bold tracking-tight">Central NF-e</span>
+        <BrandMark />
       </div>
       <nav className="flex flex-col gap-1 p-3">
         {principais.map((i) => (

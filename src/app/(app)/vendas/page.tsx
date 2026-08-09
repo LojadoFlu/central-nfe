@@ -5,73 +5,100 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { StatCard } from "@/components/ui/stat-card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
-  obterResumoVendas,
+  pdvnetResumoVendas,
+  pdvnetSincronizarVendas,
   listarSales,
   listarRecebiveis,
-  pdvnetSincronizarVendas,
-  type ResumoVendas,
+  listarStores,
+  type ResumoVendasFiltrado,
   type Sale,
   type CardReceivable,
+  type StorePdv,
 } from "@/lib/nfe/repo";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
 import { ShoppingCart, RefreshCw } from "lucide-react";
 
 const FORMA_LABEL: Record<string, string> = {
-  dinheiro: "Dinheiro",
-  pix: "PIX",
-  cartaoDebito: "Cartão débito",
-  cartaoParcelado: "Cartão parcelado",
-  cartaoRotativo: "Cartão crédito",
-  crediario: "Crediário",
-  cheque: "Cheque",
-  vale: "Vale",
-  duplicata: "Duplicata",
+  dinheiro: "Dinheiro", pix: "PIX", cartaoDebito: "Cartão débito",
+  cartaoParcelado: "Cartão parcelado", cartaoRotativo: "Cartão crédito",
+  crediario: "Crediário", cheque: "Cheque", vale: "Vale", duplicata: "Duplicata",
 };
+
+function primeiroDiaMes(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+function hojeISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export default function VendasPage() {
   const { podeAcao } = useAuth();
   const podeSincronizar = podeAcao("integracoes.sincronizar");
-  const [resumo, setResumo] = useState<ResumoVendas | null>(null);
-  const [sales, setSales] = useState<Sale[] | null>(null);
+  const [de, setDe] = useState(primeiroDiaMes());
+  const [ate, setAte] = useState(hojeISO());
+  const [grupo, setGrupo] = useState("");
+  const [resumo, setResumo] = useState<ResumoVendasFiltrado | null>(null);
+  const [carregandoResumo, setCarregandoResumo] = useState(true);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [receb, setReceb] = useState<CardReceivable[]>([]);
+  const [stores, setStores] = useState<StorePdv[]>([]);
   const [aba, setAba] = useState<"vendas" | "recebiveis">("vendas");
   const [sincronizando, setSincronizando] = useState(false);
   const [resultado, setResultado] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
-  const carregar = useCallback(async () => {
+  // grupo de cada loja (p/ filtrar as listas no cliente)
+  const grupoDaLoja = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const s of stores) m.set(s.id, s.grupoNome || s.nome || String(s.id));
+    return m;
+  }, [stores]);
+
+  const carregarResumo = useCallback(async () => {
+    setCarregandoResumo(true);
+    setErro(null);
     try {
-      const [r, s, rc] = await Promise.all([obterResumoVendas(), listarSales(100), listarRecebiveis(100)]);
+      const r = await pdvnetResumoVendas(de, ate, grupo);
       setResumo(r);
-      setSales(s);
-      setReceb(rc);
     } catch (e) {
       setErro((e as Error).message);
-      setSales([]);
+    } finally {
+      setCarregandoResumo(false);
+    }
+  }, [de, ate, grupo]);
+
+  const carregarListas = useCallback(async () => {
+    try {
+      const [s, rc, st] = await Promise.all([listarSales(200), listarRecebiveis(200), listarStores()]);
+      setSales(s);
+      setReceb(rc);
+      setStores(st);
+    } catch {
+      /* silencioso */
     }
   }, []);
 
-  useEffect(() => {
-    void carregar();
-  }, [carregar]);
+  useEffect(() => { void carregarListas(); }, [carregarListas]);
+  useEffect(() => { void carregarResumo(); }, [carregarResumo]);
 
   async function sincronizar() {
     setSincronizando(true);
     setResultado(null);
     setErro(null);
     try {
-      const r = await pdvnetSincronizarVendas(0); // mês corrente
+      const r = await pdvnetSincronizarVendas(0);
       if (r.ok) {
-        setResultado(`${r.vendas ?? 0} venda(s) · ${formatBRL(r.totalVendido)} · ${r.recebiveis ?? 0} recebível(is).`);
-        await carregar();
-      } else {
-        setErro(r.erro ?? "Falha na sincronização.");
-      }
+        setResultado(`${r.vendas ?? 0} venda(s) · ${formatBRL(r.totalVendido)} importado(s).`);
+        await Promise.all([carregarResumo(), carregarListas()]);
+      } else setErro(r.erro ?? "Falha na sincronização.");
     } catch (e) {
       setErro((e as Error).message);
     } finally {
@@ -79,18 +106,33 @@ export default function VendasPage() {
     }
   }
 
-  const formas = useMemo(() => {
-    const pf = resumo?.porForma ?? {};
-    return Object.entries(pf)
-      .filter(([, v]) => (v as number) > 0)
-      .sort((a, b) => (b[1] as number) - (a[1] as number));
-  }, [resumo]);
+  const formas = useMemo(
+    () => Object.entries(resumo?.porForma ?? {}).filter(([, v]) => (v as number) > 0).sort((a, b) => (b[1] as number) - (a[1] as number)),
+    [resumo],
+  );
+
+  // listas filtradas por grupo + período (cliente)
+  const noFiltro = (lojaId?: number, dia?: string) => {
+    if (grupo && grupoDaLoja.get(lojaId ?? -1) !== grupo) return false;
+    if (dia && (dia < de || dia > ate)) return false;
+    return true;
+  };
+  const salesFiltradas = useMemo(
+    () => sales.filter((s) => noFiltro(s.lojaId, (s.dataHora ?? "").slice(0, 10))),
+    [sales, grupo, de, ate, grupoDaLoja],
+  );
+  const recebFiltrados = useMemo(
+    () => receb.filter((r) => noFiltro(r.lojaId, (r.dataVencimento ?? "").slice(0, 10) || undefined)),
+    [receb, grupo, grupoDaLoja],
+  );
+
+  const semDados = !carregandoResumo && resumo && resumo.count === 0 && (resumo.totalVendido ?? 0) === 0;
 
   return (
     <div>
       <PageHeader
         title="Vendas (PDV)"
-        description="Vendas do PDVnet — formas de pagamento e recebíveis de cartão."
+        description="Vendas do PDVnet — por loja e período."
         action={
           podeSincronizar ? (
             <Button size="sm" variant="outline" disabled={sincronizando} onClick={sincronizar}>
@@ -101,34 +143,51 @@ export default function VendasPage() {
         }
       />
 
+      {/* Filtros */}
+      <div className="mb-4 flex flex-wrap items-end gap-3 rounded-md border border-border bg-card p-3">
+        <div className="space-y-1">
+          <label className="block text-xs text-muted-foreground">Loja</label>
+          <select value={grupo} onChange={(e) => setGrupo(e.target.value)}
+            className="h-9 w-52 rounded-md border border-input bg-background px-3 text-sm">
+            <option value="">Todas as lojas</option>
+            {(resumo?.grupos ?? []).map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+        <div className="space-y-1">
+          <label className="block text-xs text-muted-foreground">De</label>
+          <Input type="date" value={de} onChange={(e) => setDe(e.target.value)} className="h-9 w-40" />
+        </div>
+        <div className="space-y-1">
+          <label className="block text-xs text-muted-foreground">Até</label>
+          <Input type="date" value={ate} onChange={(e) => setAte(e.target.value)} className="h-9 w-40" />
+        </div>
+      </div>
+
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
       {resultado ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{resultado}</p> : null}
 
-      {sales === null ? (
+      {carregandoResumo && !resumo ? (
         <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-24" /></div>
-      ) : !resumo || (resumo.vendas ?? 0) === 0 ? (
-        <ModulePlaceholder icon={ShoppingCart} title="Sem vendas ainda" etapa="Etapa 3">
-          Configure o PDVnet em Configurações e clique em <strong>Sincronizar</strong> para importar as vendas do mês.
+      ) : semDados ? (
+        <ModulePlaceholder icon={ShoppingCart} title="Sem vendas no filtro" etapa="Vendas">
+          Ajuste o período/loja, ou clique em <strong>Sincronizar</strong> para importar as vendas do mês.
         </ModulePlaceholder>
       ) : (
         <>
           <div className="grid grid-cols-3 gap-3">
-            <StatCard label="Vendido no período" value={formatBRL(resumo.totalVendido)} />
-            <StatCard label="Cartões a receber" value={formatBRL(resumo.totalRecebiveis)} tone="warning" />
-            <StatCard label="Líquido previsto" value={formatBRL(resumo.totalLiquido)} tone="success" />
+            <StatCard label="Vendido no período" value={formatBRL(resumo?.totalVendido)} />
+            <StatCard label="Cartões a receber" value={formatBRL(resumo?.totalRecebiveis)} tone="warning" />
+            <StatCard label="Líquido previsto" value={formatBRL(resumo?.totalLiquido)} tone="success" />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            {resumo.vendas} venda(s) · {resumo.lojas} loja(s) · período {formatarData(resumo.periodoInicio)} a{" "}
-            {formatarData(resumo.periodoFim)} · última sync {formatarDataHora(resumo.ultimaSync)}.
+            {resumo?.count ?? 0} venda(s){grupo ? ` · ${grupo}` : " · todas as lojas"} · {formatarData(de)} a {formatarData(ate)}
+            {carregandoResumo ? " · atualizando…" : ""}
           </p>
 
-          {/* Por forma de pagamento */}
           {formas.length > 0 ? (
             <Card className="mt-4">
               <CardContent className="py-4">
-                <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                  Por forma de pagamento
-                </h2>
+                <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Por forma de pagamento</h2>
                 <div className="divide-y divide-border">
                   {formas.map(([k, v]) => (
                     <div key={k} className="flex items-center justify-between py-1.5 text-sm">
@@ -141,19 +200,18 @@ export default function VendasPage() {
             </Card>
           ) : null}
 
-          {/* Abas: vendas / recebíveis */}
           <div className="my-4 flex gap-2">
             {(["vendas", "recebiveis"] as const).map((a) => (
               <button key={a} onClick={() => setAba(a)}
                 className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${aba === a ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
-                {a === "vendas" ? "Últimas vendas" : "Recebíveis de cartão"}
+                {a === "vendas" ? "Vendas recentes" : "Recebíveis"}
               </button>
             ))}
           </div>
 
           {aba === "vendas" ? (
             <div className="space-y-2">
-              {(sales ?? []).map((s) => (
+              {salesFiltradas.slice(0, 100).map((s) => (
                 <Card key={s.id}>
                   <CardContent className="flex items-center justify-between gap-3 py-3">
                     <div className="min-w-0">
@@ -162,29 +220,25 @@ export default function VendasPage() {
                         {s.cancelada ? <Badge variant="destructive" className="ml-2">Cancelada</Badge> : null}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {formatarDataHora(s.dataHora)}{s.qtdItens ? ` · ${s.qtdItens} item(ns)` : ""}
-                        {s.docChave ? " · c/ cupom" : ""}
+                        {formatarDataHora(s.dataHora)}{s.qtdItens ? ` · ${s.qtdItens} item(ns)` : ""}{s.docChave ? " · c/ cupom" : ""}
                       </p>
                     </div>
-                    <p className={`font-bold tnum ${s.cancelada ? "text-muted-foreground line-through" : ""}`}>
-                      {formatBRL(s.valorTotal)}
-                    </p>
+                    <p className={`font-bold tnum ${s.cancelada ? "text-muted-foreground line-through" : ""}`}>{formatBRL(s.valorTotal)}</p>
                   </CardContent>
                 </Card>
               ))}
-              <p className="pt-1 text-xs text-muted-foreground">Mostrando as {sales?.length ?? 0} vendas mais recentes.</p>
+              {salesFiltradas.length === 0 ? <p className="text-sm text-muted-foreground">Sem vendas recentes neste filtro.</p> : null}
             </div>
           ) : (
             <div className="space-y-2">
-              {receb.map((r) => (
+              {recebFiltrados.slice(0, 100).map((r) => (
                 <Card key={r.id}>
                   <CardContent className="py-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium">{r.descricaoCartao ?? "Cartão"}</p>
                         <p className="text-xs text-muted-foreground">
-                          Parc. {r.parcela ?? 1} · vence {formatarData(r.dataVencimento)}
-                          {r.taxaPct != null ? ` · taxa ${r.taxaPct}%` : ""}
+                          Parc. {r.parcela ?? 1} · vence {formatarData(r.dataVencimento)}{r.taxaPct != null ? ` · taxa ${r.taxaPct}%` : ""}
                         </p>
                       </div>
                       <div className="text-right">
@@ -195,9 +249,7 @@ export default function VendasPage() {
                   </CardContent>
                 </Card>
               ))}
-              <p className="pt-1 text-xs text-muted-foreground">
-                Recebíveis previstos (líquido já com a taxa da adquirente). Viram “recebido” após a conciliação bancária (etapa futura).
-              </p>
+              {recebFiltrados.length === 0 ? <p className="text-sm text-muted-foreground">Sem recebíveis recentes neste filtro.</p> : null}
             </div>
           )}
         </>

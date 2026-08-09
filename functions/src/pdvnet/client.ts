@@ -89,9 +89,22 @@ export class PdvnetClient {
     return r.Registros ?? [];
   }
 
+  /** Todas as lojas (percorre todas as páginas — a rede tem >50 lojas). */
   async listarLojas(): Promise<PdvLoja[]> {
-    const r = await this.get<PdvListaResponse<PdvLoja>>("/api/public/lojas", { tamanhoPagina: 50 });
-    return r.Registros ?? [];
+    const todas: PdvLoja[] = [];
+    let pagina = 1;
+    for (;;) {
+      const r = await this.get<PdvListaResponse<PdvLoja>>("/api/public/lojas", {
+        pagina,
+        tamanhoPagina: 50,
+      });
+      const reg = r.Registros ?? [];
+      todas.push(...reg);
+      if (reg.length === 0 || !r.PaginacaoInfo?.TemProximaPagina) break;
+      pagina += 1;
+      if (pagina > 40) break; // trava de segurança
+    }
+    return todas;
   }
 
   /** Uma página de vendas no intervalo [inicio, fim] (datas yyyy-MM-dd). */

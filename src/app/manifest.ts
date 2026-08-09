@@ -3,10 +3,10 @@ import type { MetadataRoute } from "next";
 // PWA — instalável na tela inicial (iPhone/Android). Nome/ícones fáceis de trocar.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Central NF-e",
-    short_name: "Central NF-e",
+    name: "Financeiro Loja do Flu",
+    short_name: "Financeiro Flu",
     description:
-      "Central Fiscal, Financeira e de Compras — NF-e dos CNPJs da empresa.",
+      "Gestão financeira, fiscal e de compras da Loja do Fluminense.",
     start_url: "/inicio",
     display: "standalone",
     background_color: "#ffffff",

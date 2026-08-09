@@ -617,6 +617,65 @@ export async function pdvnetSondarVendas(dias = 3): Promise<SondagemVendas> {
   return res.data as SondagemVendas;
 }
 
+// ---- Lojas (PDVnet) ----
+
+export interface StorePdv {
+  id: number;
+  nome?: string;
+  grupoNome?: string | null;
+  empresaId?: string | null;
+  ativoSync?: boolean;
+  varejo?: boolean;
+  inativa?: boolean;
+}
+
+export async function listarStores(): Promise<StorePdv[]> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, "pdv_stores"));
+  const arr = snap.docs.map((d) => ({ id: Number(d.id), ...(d.data() as object) })) as StorePdv[];
+  return arr.sort((a, b) => (a.nome ?? "").localeCompare(b.nome ?? ""));
+}
+
+export async function pdvnetSincronizarLojas(): Promise<{ ok: boolean; ativas?: number; erro?: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "pdvnetSincronizarLojas");
+  const res = await fn({});
+  return res.data as { ok: boolean; ativas?: number; erro?: string };
+}
+
+export async function pdvnetSalvarLoja(input: {
+  lojaId: string | number;
+  ativoSync?: boolean;
+  grupoNome?: string;
+  empresaId?: string | null;
+}): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "pdvnetSalvarLoja");
+  const res = await fn({ ...input, lojaId: String(input.lojaId) });
+  return res.data as { ok: boolean };
+}
+
+export interface ResumoVendasFiltrado {
+  ok: boolean;
+  de: string;
+  ate: string;
+  grupo: string | null;
+  grupos: string[];
+  count: number;
+  totalVendido: number;
+  porForma: Record<string, number>;
+  totalRecebiveis: number;
+  totalLiquido: number;
+  recebiveis: number;
+}
+
+export async function pdvnetResumoVendas(de: string, ate: string, grupo?: string): Promise<ResumoVendasFiltrado> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "pdvnetResumoVendas");
+  const res = await fn({ de, ate, grupo: grupo || undefined });
+  return res.data as ResumoVendasFiltrado;
+}
+
 // ---- Vendas (PDVnet) ----
 
 export interface ResumoVendas {

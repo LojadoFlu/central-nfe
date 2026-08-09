@@ -22,26 +22,21 @@ export async function materializarLojas(cli: PdvnetClient): Promise<Map<number, 
   const ativos = new Map<number, { nome: string; empresaId: string | null }>();
   for (const l of lojas) {
     const varejo = ehVarejo(l);
+    const nome = l.NomeFantasia || l.RazaoSocial || `Loja ${l.Id}`;
     const ref = db.collection("pdv_stores").doc(String(l.Id));
-    const existente = (await ref.get()).data() as { empresaId?: string | null; ativoSync?: boolean } | undefined;
+    const existente = (await ref.get()).data() as
+      | { empresaId?: string | null; ativoSync?: boolean; grupoNome?: string }
+      | undefined;
     const empresaId = existente?.empresaId ?? null;
-    // ativoSync: respeita escolha manual; senão default = varejo.
+    // ativoSync/grupo: respeitam escolha manual; senão default (varejo / próprio nome).
     const ativoSync = existente?.ativoSync ?? varejo;
+    const grupoNome = existente?.grupoNome ?? nome;
     batch.set(
       ref,
-      {
-        id: l.Id,
-        nome: l.NomeFantasia || l.RazaoSocial || `Loja ${l.Id}`,
-        redeId: l.RedeId ?? null,
-        inativa: !!l.Inativa,
-        varejo,
-        ativoSync,
-        empresaId,
-        atualizadoEm: now,
-      },
+      { id: l.Id, nome, redeId: l.RedeId ?? null, inativa: !!l.Inativa, varejo, ativoSync, grupoNome, empresaId, atualizadoEm: now },
       { merge: true },
     );
-    if (ativoSync) ativos.set(l.Id, { nome: l.NomeFantasia || l.RazaoSocial || `Loja ${l.Id}`, empresaId });
+    if (ativoSync) ativos.set(l.Id, { nome, empresaId });
   }
   await batch.commit();
   return ativos;
@@ -152,7 +147,7 @@ export async function sincronizarVendas(
           batch.set(
             db.collection("card_receivables").doc(`${v.Id}_${seq}`),
             {
-              vendaId: v.Id, lojaId: v.LojaId ?? p.LojaId ?? null, empresaId: loja.empresaId,
+              vendaId: v.Id, lojaId: v.LojaId ?? p.LojaId ?? null, empresaId: loja.empresaId, dia,
               cartaoId: p.CartaoId ?? null,
               descricaoCartao: p.DescricaoCartao ?? null,
               valor: p.Valor ?? 0,

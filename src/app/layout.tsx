@@ -3,10 +3,10 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
-  title: "Central NF-e",
+  title: "Financeiro Loja do Flu",
   description:
-    "Central Fiscal, Financeira e de Compras — NF-e emitidas contra os CNPJs da empresa.",
-  applicationName: "Central NF-e",
+    "Gestão financeira, fiscal e de compras da Loja do Fluminense.",
+  applicationName: "Financeiro Loja do Flu",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Central NF-e",
+    title: "Financeiro Loja do Flu",
   },
   formatDetection: { telephone: false },
 };
