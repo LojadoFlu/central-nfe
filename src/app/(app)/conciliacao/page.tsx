@@ -1,0 +1,151 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { PageHeader } from "@/components/layout/page-header";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
+import { obterConciliacao, listarEmpresas, type Conciliacao } from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
+import { formatBRL, formatarData } from "@/lib/utils";
+import { Scale, CheckCircle2, AlertTriangle } from "lucide-react";
+
+function periodoEsteMes(): Periodo {
+  const d = new Date();
+  const de = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+  const u = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  return { de, ate: `${u.getFullYear()}-${String(u.getMonth() + 1).padStart(2, "0")}-${String(u.getDate()).padStart(2, "0")}` };
+}
+
+export default function ConciliacaoPage() {
+  const [empresas, setEmpresas] = useState<Company[]>([]);
+  const [empresaId, setEmpresaId] = useState("");
+  const [periodo, setPeriodo] = useState<Periodo>(periodoEsteMes());
+  const [dados, setDados] = useState<Conciliacao | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    void listarEmpresas().then((es) => {
+      setEmpresas(es);
+      if (es.length && !empresaId) setEmpresaId(es[0].id);
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const carregar = useCallback(async () => {
+    if (!empresaId || !periodo.de || !periodo.ate) return;
+    setCarregando(true);
+    setErro(null);
+    try {
+      setDados(await obterConciliacao(empresaId, periodo.de, periodo.ate));
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setCarregando(false);
+    }
+  }, [empresaId, periodo]);
+
+  useEffect(() => { void carregar(); }, [carregar]);
+
+  return (
+    <div>
+      <PageHeader
+        title="Conciliação"
+        description="O que o banco recebeu × o que o PDV previa. A diferença é a exceção a investigar."
+      />
+
+      <div className="mb-4 space-y-2">
+        {empresas.length > 1 ? (
+          <select
+            value={empresaId}
+            onChange={(e) => setEmpresaId(e.target.value)}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+          >
+            {empresas.map((e) => (
+              <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+            ))}
+          </select>
+        ) : null}
+        <FiltroPeriodo value={periodo} onChange={setPeriodo} allowClear={false} />
+      </div>
+
+      {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
+
+      {carregando && !dados ? (
+        <div className="space-y-3"><Skeleton className="h-40" /><Skeleton className="h-40" /></div>
+      ) : dados ? (
+        <>
+          <div className="space-y-3">
+            <LinhaConc titulo="Cartões" banco={dados.banco.cartao} previsto={dados.previsto.cartao} dif={dados.dif.cartao}
+              nota="Banco: liquidações de cartão (crédito antecipado + débito). PDV: recebíveis pelo valor líquido, na data de vencimento." />
+            <LinhaConc titulo="PIX" banco={dados.banco.pix} previsto={dados.previsto.pix} dif={dados.dif.pix}
+              nota="Banco: PIX recebido na maquininha. PDV: vendas em PIX." />
+          </div>
+
+          {/* Contexto do banco */}
+          <Card className="mt-4">
+            <CardContent className="py-4">
+              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Também no extrato (período)</h2>
+              <div className="divide-y divide-border text-sm">
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-muted-foreground">Outras entradas</span>
+                  <span className="font-medium tnum text-success">{formatBRL(dados.banco.outrasEntradas)}</span>
+                </div>
+                <div className="flex items-center justify-between py-1.5">
+                  <span className="text-muted-foreground">Saídas (pagamentos, transferências, tarifas)</span>
+                  <span className="font-medium tnum text-destructive">{formatBRL(dados.banco.saidas)}</span>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <p className="mt-4 text-xs text-muted-foreground">
+            Diferença ≈ 0 = bate. Diferenças podem ser: vendas ainda não sincronizadas no período, taxas/ajustes,
+            estornos, ou lançamentos de outra natureza. A conciliação depende de o período estar coberto dos dois lados
+            (vendas do PDV sincronizadas + extrato importado cobrindo as datas de {formatarData(dados.de)} a {formatarData(dados.ate)}).
+          </p>
+        </>
+      ) : (
+        <p className="text-sm text-muted-foreground">Selecione a empresa e o período. Importe o extrato em Banco antes.</p>
+      )}
+    </div>
+  );
+}
+
+function LinhaConc({ titulo, banco, previsto, dif, nota }: { titulo: string; banco: number; previsto: number; dif: number; nota: string }) {
+  const tolerancia = Math.max(50, Math.abs(previsto) * 0.02);
+  const confere = Math.abs(dif) <= tolerancia;
+  return (
+    <Card className={confere ? undefined : "border-warning/50"}>
+      <CardContent className="py-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="font-semibold">{titulo}</h2>
+          {confere ? (
+            <Badge variant="success"><CheckCircle2 className="mr-1 size-3.5" /> Confere</Badge>
+          ) : (
+            <Badge variant="warning"><AlertTriangle className="mr-1 size-3.5" /> Diverge</Badge>
+          )}
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Banco</p>
+            <p className="font-bold tnum">{formatBRL(banco)}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">PDV previa</p>
+            <p className="font-bold tnum">{formatBRL(previsto)}</p>
+          </div>
+          <div>
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Diferença</p>
+            <p className={`font-bold tnum ${confere ? "text-muted-foreground" : "text-warning"}`}>
+              {dif >= 0 ? "+" : "−"}{formatBRL(Math.abs(dif))}
+            </p>
+          </div>
+        </div>
+        <p className="mt-2 text-[11px] text-muted-foreground">{nota}</p>
+      </CardContent>
+    </Card>
+  );
+}

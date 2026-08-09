@@ -766,6 +766,22 @@ export async function obterExtrato(empresaId: string, de?: string, ate?: string)
   return res.data as ExtratoBanco;
 }
 
+export interface Conciliacao {
+  ok: boolean;
+  de: string;
+  ate: string;
+  empresaId: string;
+  banco: { cartao: number; pix: number; outrasEntradas: number; saidas: number };
+  previsto: { cartao: number; pix: number };
+  dif: { cartao: number; pix: number };
+}
+export async function obterConciliacao(empresaId: string, de: string, ate: string): Promise<Conciliacao> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "conciliacao");
+  const res = await fn({ empresaId, de, ate });
+  return res.data as Conciliacao;
+}
+
 // ---- Vendas (PDVnet) ----
 
 export interface ResumoVendas {

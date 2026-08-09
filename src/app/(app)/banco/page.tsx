@@ -78,9 +78,15 @@ export default function BancoPage() {
     setMsg(null);
     setErro(null);
     try {
-      // OFX da Stone vem em Windows-1252 — decodifica certo p/ preservar acentos.
+      // Encoding do OFX varia (UTF-8 ou Windows-1252 apesar do header CHARSET:1252).
+      // Tenta UTF-8 estrito; se os bytes não forem UTF-8 válido, cai pra Windows-1252.
       const buf = await file.arrayBuffer();
-      const texto = new TextDecoder("windows-1252").decode(buf);
+      let texto: string;
+      try {
+        texto = new TextDecoder("utf-8", { fatal: true }).decode(buf);
+      } catch {
+        texto = new TextDecoder("windows-1252").decode(buf);
+      }
       const r = await importarExtrato(texto, empresaId);
       setMsg(`${r.transacoes} lançamento(s) importado(s) · saldo ${formatBRL(r.saldo ?? 0)}${r.org ? ` · ${r.org}` : ""}.`);
       await carregar();

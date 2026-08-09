@@ -1511,6 +1511,64 @@ export const extratoBanco = onCall(
   },
 );
 
+/**
+ * Conciliação do período: o que o BANCO recebeu (cartão/PIX no extrato) × o que o
+ * PDV PREVIU (recebíveis de cartão pelo líquido + PIX das vendas), por empresa.
+ * Diferença = exceção a investigar. Tudo de dado real, rastreável.
+ */
+export const conciliacao = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+    const empresaId = String(req.data?.empresaId ?? "").trim();
+    if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa (conta).");
+    const de = String(req.data?.de ?? "").slice(0, 10);
+    const ate = String(req.data?.ate ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
+      throw new HttpsError("invalid-argument", "Período inválido.");
+    }
+    const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
+
+    // BANCO (extrato) — por categoria, no período (pela data do lançamento)
+    let bancoCartao = 0, bancoPix = 0, bancoOutrasEnt = 0, bancoSaidas = 0;
+    const bt = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
+    for (const doc of bt.docs) {
+      const t = doc.data();
+      const dia = d10(t.dia);
+      if (dia < de || dia > ate) continue;
+      const v = Number(t.valor ?? 0);
+      if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") bancoCartao += v;
+      else if (t.categoria === "pix_venda") bancoPix += v;
+      else if (v > 0) bancoOutrasEnt += v;
+      else bancoSaidas += v;
+    }
+
+    // PREVISTO (PDV) — recebíveis de cartão (líquido) por dataVencimento + PIX das vendas por dia
+    let previstoCartao = 0;
+    const rc = await db.collection("card_receivables")
+      .where("dataVencimento", ">=", de).where("dataVencimento", "<=", ate + "T99").get();
+    for (const doc of rc.docs) {
+      const r = doc.data();
+      if (String(r.empresaId ?? "") !== empresaId) continue;
+      previstoCartao += Number(r.liquido ?? r.valor ?? 0);
+    }
+    let previstoPix = 0;
+    const sp = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
+    for (const doc of sp.docs) {
+      const p = doc.data();
+      if (String(p.empresaId ?? "") !== empresaId || p.forma !== "pix") continue;
+      previstoPix += Number(p.valor ?? 0);
+    }
+
+    return {
+      ok: true, de, ate, empresaId,
+      banco: { cartao: bancoCartao, pix: bancoPix, outrasEntradas: bancoOutrasEnt, saidas: bancoSaidas },
+      previsto: { cartao: previstoCartao, pix: previstoPix },
+      dif: { cartao: bancoCartao - previstoCartao, pix: bancoPix - previstoPix },
+    };
+  },
+);
+
 /** Resolve a empresa (nfe_companies) para associar a registros manuais. */
 async function resolverEmpresa(companyId: string): Promise<{ id: string; nome: string } | null> {
   if (!companyId) return null;
