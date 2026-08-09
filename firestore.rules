@@ -153,6 +153,33 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // PDVnet — vendas, recebimentos, recebíveis de cartão, lojas, estado de sync.
+    match /sales/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+    match /sale_payments/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+    match /card_receivables/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+    match /pdv_stores/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+    match /pdv_sync_state/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+    // Configurações gerais (inclui flag/baseUrl do PDVnet — sem segredos).
+    match /configuracoes/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
     // Fallback: nega tudo que não foi explicitamente liberado acima.
     match /{document=**} {
       allow read, write: if false;

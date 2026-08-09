@@ -4,6 +4,7 @@ import {
   Wallet,
   Truck,
   MoreHorizontal,
+  ShoppingCart,
   Building2,
   ShieldCheck,
   BarChart3,
@@ -38,6 +39,7 @@ export const PRIMARY_NAV: NavItem[] = [
 
 /** Itens secundários — ficam em "Mais" (mobile) e na sidebar (desktop). */
 export const SECONDARY_NAV: NavItem[] = [
+  { label: "Vendas (PDV)", href: "/vendas", icon: ShoppingCart, modulo: "vendas" },
   { label: "Fretes (CT-e)", href: "/ctes", icon: Container, modulo: "ctes" },
   { label: "Serviços (NFS-e)", href: "/nfses", icon: Wrench, modulo: "nfses" },
   { label: "Acordos", href: "/acordos", icon: Handshake, modulo: "acordos" },

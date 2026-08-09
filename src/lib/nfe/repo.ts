@@ -617,6 +617,76 @@ export async function pdvnetSondarVendas(dias = 3): Promise<SondagemVendas> {
   return res.data as SondagemVendas;
 }
 
+// ---- Vendas (PDVnet) ----
+
+export interface ResumoVendas {
+  ultimaSync?: string;
+  periodoInicio?: string;
+  periodoFim?: string;
+  vendas?: number;
+  recebimentos?: number;
+  recebiveis?: number;
+  lojas?: number;
+  totalVendido?: number;
+  totalRecebiveis?: number;
+  totalLiquido?: number;
+  porForma?: Record<string, number>;
+}
+
+export interface Sale {
+  id: string;
+  lojaNome?: string;
+  lojaId?: number;
+  empresaId?: string | null;
+  dataHora?: string;
+  valorTotal?: number;
+  cancelada?: boolean;
+  docChave?: string | null;
+  qtdItens?: number;
+}
+
+export interface CardReceivable {
+  id: string;
+  descricaoCartao?: string | null;
+  valor?: number;
+  taxaPct?: number | null;
+  liquido?: number | null;
+  parcela?: number;
+  dataVencimento?: string | null;
+  dataLiquidacao?: string | null;
+  status?: string;
+  lojaId?: number;
+}
+
+export async function pdvnetSincronizarVendas(
+  dias = 0,
+): Promise<{ ok: boolean; erro?: string; vendas?: number; recebiveis?: number; totalVendido?: number }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "pdvnetSincronizarVendas");
+  const res = await fn({ dias });
+  return res.data as { ok: boolean; erro?: string; vendas?: number; recebiveis?: number; totalVendido?: number };
+}
+
+export async function obterResumoVendas(): Promise<ResumoVendas | null> {
+  const { db } = fb();
+  const d = await getDoc(doc(db, "pdv_sync_state", "vendas"));
+  return d.exists() ? (d.data() as ResumoVendas) : null;
+}
+
+export async function listarSales(max = 100): Promise<Sale[]> {
+  const { db } = fb();
+  const q = query(collection(db, "sales"), orderBy("dataHora", "desc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Sale[];
+}
+
+export async function listarRecebiveis(max = 100): Promise<CardReceivable[]> {
+  const { db } = fb();
+  const q = query(collection(db, "card_receivables"), orderBy("dataVencimento", "asc"), limit(max));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as CardReceivable[];
+}
+
 // ---- Usuários e perfis (RBAC) ----
 
 export interface Usuario {

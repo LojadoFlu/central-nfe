@@ -20,6 +20,7 @@ import {
   lerSegredoPdvnet,
 } from "./lib/secrets";
 import { PdvnetClient } from "./pdvnet/client";
+import { sincronizarVendas } from "./pdvnet/sincronizar-vendas";
 import { getStorage } from "firebase-admin/storage";
 import { getAuth } from "firebase-admin/auth";
 import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
@@ -1066,6 +1067,39 @@ export const pdvnetSondarVendas = onCall(
     } catch (e) {
       const msg = (e as Error).message || String(e);
       logger.error("pdvnetSondarVendas falhou", { erro: msg });
+      return { ok: false, erro: msg };
+    }
+  },
+);
+
+/**
+ * Sincroniza as vendas do PDVnet (mês corrente por padrão) → sales +
+ * sale_payments + card_receivables, escopadas às lojas ativas. admin/fiscal.
+ */
+export const pdvnetSincronizarVendas = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
+    let cred;
+    try {
+      cred = await lerSegredoPdvnet();
+    } catch {
+      throw new HttpsError("failed-precondition", "Credenciais do PDVnet não configuradas.");
+    }
+    const cli = new PdvnetClient(cred);
+    const hoje = new Date();
+    const dias = Math.floor(Number(req.data?.dias ?? 0));
+    const ini = dias > 0
+      ? new Date(hoje.getTime() - dias * 86_400_000)
+      : new Date(hoje.getFullYear(), hoje.getMonth(), 1); // 1º dia do mês corrente
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    try {
+      const r = await sincronizarVendas(cli, fmt(ini), fmt(hoje));
+      await auditar(uid, "pdvnet.sincronizarVendas", { periodo: `${fmt(ini)}..${fmt(hoje)}`, vendas: r.vendas });
+      return { ok: true, periodo: { inicio: fmt(ini), fim: fmt(hoje) }, ...r };
+    } catch (e) {
+      const msg = (e as Error).message || String(e);
+      logger.error("pdvnetSincronizarVendas falhou", { erro: msg });
       return { ok: false, erro: msg };
     }
   },

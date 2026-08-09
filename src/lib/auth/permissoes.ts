@@ -9,6 +9,7 @@ export interface ModuloDef {
 
 /** Módulos (telas) que um perfil pode liberar. "Início" é sempre visível. */
 export const MODULOS: ModuloDef[] = [
+  { key: "vendas", label: "Vendas (PDV)", href: "/vendas" },
   { key: "notas", label: "Notas (NF-e)", href: "/notas" },
   { key: "ctes", label: "Fretes (CT-e)", href: "/ctes" },
   { key: "nfses", label: "Serviços (NFS-e)", href: "/nfses" },
