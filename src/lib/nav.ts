@@ -24,6 +24,7 @@ import {
   Container,
   Wrench,
   Users,
+  PackageCheck,
   type LucideIcon,
 } from "lucide-react";
 
@@ -47,6 +48,7 @@ export const PRIMARY_NAV: NavItem[] = [
 
 /** Itens secundários — ficam em "Mais" (mobile) e na sidebar (desktop). */
 export const SECONDARY_NAV: NavItem[] = [
+  { label: "Recebimento de compras", href: "/recebimento", icon: PackageCheck, modulo: "notas" },
   { label: "Pendências", href: "/pendencias", icon: ClipboardCheck, modulo: "financeiro" },
   { label: "Fluxo de caixa", href: "/fluxo", icon: LineChart, modulo: "financeiro" },
   { label: "Banco", href: "/banco", icon: Landmark, modulo: "financeiro" },

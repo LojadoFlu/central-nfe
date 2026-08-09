@@ -654,6 +654,108 @@ export const nfeManifestar = onCall(
   },
 );
 
+// ============ RECEBIMENTO DE COMPRAS (SEFAZ × entrada na loja) ============
+
+/**
+ * Lista as NF-e de COMPRA (emitente terceiro) capturadas da SEFAZ no período,
+ * com o estado de RECEBIMENTO na loja. "Recebida" vem do PDVnet (auto, por chave)
+ * ou de marcação MANUAL — nunca é inferida do XML. Só leitura (fiscal/financeiro).
+ */
+export const notasCompra = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    await exigirModulo(req, "fiscal", ["admin", "fiscal", "financeiro"]);
+    const d = req.data ?? {};
+    const de = String(d.de ?? "").slice(0, 10);
+    const ate = String(d.ate ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
+      throw new HttpsError("invalid-argument", "Período inválido.");
+    }
+    const companyId = d.companyId ? String(d.companyId) : "";
+    const status = String(d.status ?? "todas"); // todas | pendentes | recebidas
+
+    // mapa companyId → cnpj (identifica COMPRAS: emitente ≠ nós) e nome de exibição
+    const emps = await db.collection("nfe_companies").get();
+    const cnpjPorId = new Map<string, string>();
+    const nomePorId = new Map<string, string>();
+    for (const e of emps.docs) {
+      const x = e.data();
+      cnpjPorId.set(e.id, somenteDigitos(String(x.cnpj ?? "")));
+      nomePorId.set(e.id, String(x.nomeFantasia || x.razaoSocial || e.id));
+    }
+
+    const snap = await db.collection("nfe_documents")
+      .where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get();
+
+    interface Item {
+      chNFe: string; companyId: string; lojaNome: string; cnpjEmit: string;
+      xNomeEmit: string | null; nNF: string | null; serie: string | null;
+      vNF: number; dhEmi: string | null; situacao: string | null;
+      recebida: boolean; recebidaOrigem: string | null; recebidaEm: string | null;
+    }
+    const itens: Item[] = [];
+    let totQtd = 0, totVal = 0, recQtd = 0, recVal = 0, pendQtd = 0, pendVal = 0;
+    for (const doc of snap.docs) {
+      const r = doc.data();
+      const cid = String(r.companyId ?? "");
+      if (companyId && cid !== companyId) continue;
+      const meuCnpj = cnpjPorId.get(cid) ?? "";
+      const emit = somenteDigitos(String(r.cnpjEmit ?? ""));
+      if (!emit || emit === meuCnpj) continue; // só COMPRAS (fornecedor terceiro)
+      const recebida = r.recebida === true;
+      if (status === "pendentes" && recebida) continue;
+      if (status === "recebidas" && !recebida) continue;
+      const valor = Number(r.vNF ?? 0);
+      totQtd++; totVal += valor;
+      if (recebida) { recQtd++; recVal += valor; } else { pendQtd++; pendVal += valor; }
+      itens.push({
+        chNFe: String(r.chNFe ?? doc.id),
+        companyId: cid,
+        lojaNome: nomePorId.get(cid) ?? cid,
+        cnpjEmit: emit,
+        xNomeEmit: r.xNomeEmit ?? null,
+        nNF: r.nNF ?? null,
+        serie: r.serie ?? null,
+        vNF: valor,
+        dhEmi: r.dhEmi ?? null,
+        situacao: r.situacao ?? null,
+        recebida,
+        recebidaOrigem: r.recebidaOrigem ?? null,
+        recebidaEm: r.recebidaEm ?? null,
+      });
+    }
+    itens.sort((a, b) => String(b.dhEmi ?? "").localeCompare(String(a.dhEmi ?? "")));
+    return {
+      ok: true, de, ate,
+      total: { qtd: totQtd, valor: totVal },
+      recebidas: { qtd: recQtd, valor: recVal },
+      pendentes: { qtd: pendQtd, valor: pendVal },
+      itens,
+    };
+  },
+);
+
+/**
+ * Marca/desmarca uma NF-e de compra como RECEBIDA na loja (ação MANUAL).
+ * Registrada com autor e horário — nunca inferida. Só admin/fiscal/financeiro.
+ */
+export const marcarNotaRecebida = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "nfe.receber", ["admin", "fiscal", "financeiro"]);
+  const d = req.data ?? {};
+  const chNFe = somenteDigitos(String(d.chNFe ?? ""));
+  if (chNFe.length !== 44) throw new HttpsError("invalid-argument", "Chave de acesso inválida.");
+  const recebida = d.recebida !== false;
+  const now = agoraISO();
+  await db.collection("nfe_documents").doc(chNFe).set(
+    recebida
+      ? { recebida: true, recebidaOrigem: "manual", recebidaEm: now, recebidaPor: uid, updatedAt: now }
+      : { recebida: false, recebidaOrigem: null, recebidaEm: null, recebidaPor: null, updatedAt: now },
+    { merge: true },
+  );
+  await auditar(uid, "nfe.receber", { chNFe, recebida });
+  return { ok: true, chNFe, recebida };
+});
+
 /**
  * Baixa (conciliação) de uma parcela: marca como paga ou reabre.
  * IMPORTANTE: "pago" NUNCA é inferido do XML — é sempre uma ação manual,

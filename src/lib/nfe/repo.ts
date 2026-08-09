@@ -802,6 +802,48 @@ export async function obterConciliacao(empresaId: string, de: string, ate: strin
   return res.data as Conciliacao;
 }
 
+// ——— Recebimento de compras (SEFAZ × entrada na loja) ———
+export interface NotaCompra {
+  chNFe: string;
+  companyId: string;
+  lojaNome: string;
+  cnpjEmit: string;
+  xNomeEmit: string | null;
+  nNF: string | null;
+  serie: string | null;
+  vNF: number;
+  dhEmi: string | null;
+  situacao: string | null;
+  recebida: boolean;
+  recebidaOrigem: string | null; // "manual" | "pdvnet" | null
+  recebidaEm: string | null;
+}
+export interface NotasCompraResp {
+  ok: boolean;
+  de: string;
+  ate: string;
+  total: { qtd: number; valor: number };
+  recebidas: { qtd: number; valor: number };
+  pendentes: { qtd: number; valor: number };
+  itens: NotaCompra[];
+}
+export async function listarNotasCompra(
+  de: string,
+  ate: string,
+  companyId = "",
+  status: "todas" | "pendentes" | "recebidas" = "todas",
+): Promise<NotasCompraResp> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "notasCompra");
+  const res = await fn({ de, ate, companyId, status });
+  return res.data as NotasCompraResp;
+}
+export async function marcarNotaRecebida(chNFe: string, recebida: boolean): Promise<void> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "marcarNotaRecebida");
+  await fn({ chNFe, recebida });
+}
+
 // ——— Taxas de cartão (configuração por loja) ———
 export interface TaxaCartao {
   id: string;
