@@ -15,11 +15,16 @@ import {
   listarDocumentos,
   listarParcelas,
   listarNfses,
+  pdvnetResumoVendas,
+  obterPendencias,
   type NfeDocumento,
   type Parcela,
   type NfseDocumento,
+  type ResumoVendasFiltrado,
+  type Pendencias,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
+import { useAuth } from "@/lib/auth/auth-provider";
 import { FileText } from "lucide-react";
 
 function mesmoMes(iso: string | null | undefined, ref: Date): boolean {
@@ -27,14 +32,27 @@ function mesmoMes(iso: string | null | undefined, ref: Date): boolean {
   const d = new Date(iso);
   return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
 }
+function primeiroDiaMes(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+function hojeISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 export default function InicioPage() {
+  const { isAdmin, podeModulo } = useAuth();
+  const podeFin = isAdmin || podeModulo("financeiro");
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
   const [parcelas, setParcelas] = useState<Parcela[]>([]);
   const [nfses, setNfses] = useState<NfseDocumento[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   const [fornecedor, setFornecedor] = useState("");
+  // Painel do dono (grupo) — só p/ quem tem o módulo financeiro
+  const [vendasMes, setVendasMes] = useState<ResumoVendasFiltrado | null>(null);
+  const [pend, setPend] = useState<Pendencias | null>(null);
 
   const carregar = useCallback(async () => {
     const [emps, ds, ps, ns] = await Promise.all([
@@ -49,9 +67,22 @@ export default function InicioPage() {
     setNfses(ns);
   }, []);
 
+  const carregarPainel = useCallback(async () => {
+    if (!podeFin) return;
+    try {
+      const [v, p] = await Promise.all([
+        pdvnetResumoVendas(primeiroDiaMes(), hojeISO()),
+        obterPendencias(),
+      ]);
+      setVendasMes(v);
+      setPend(p);
+    } catch { /* sem permissão/dados — silencioso */ }
+  }, [podeFin]);
+
   useEffect(() => {
     void carregar();
-  }, [carregar]);
+    void carregarPainel();
+  }, [carregar, carregarPainel]);
 
   const filtrados = useMemo(() => {
     const termo = normalizar(fornecedor);
@@ -87,11 +118,39 @@ export default function InicioPage() {
     return { comprasMes, notasMes: doMes.length, total: filtrados.length, aVencer, vencido, servicosMes };
   }, [filtrados, parcelas, empresaId, nfses]);
 
+  // A pagar do GRUPO (todas as empresas, parcelas não pagas) — para o painel do dono.
+  const aPagarGrupo = useMemo(
+    () => parcelas.reduce((s, p) => s + (p.statusPagamento === "pago" ? 0 : p.valor ?? 0), 0),
+    [parcelas],
+  );
+  const pendCount = (pend?.resumo.criticas ?? 0) + (pend?.resumo.atencao ?? 0);
+
   const carregando = docs === null;
 
   return (
     <div>
       <PageHeader title="Início" description="Visão geral das compras e contas do mês." />
+
+      {/* Painel do dono (grupo) — só p/ módulo financeiro */}
+      {podeFin ? (
+        <section className="mb-6">
+          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Seu mês</h2>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Link href="/vendas" className="rounded-lg">
+              <StatCard label="Vendas do mês" value={vendasMes ? formatBRL(vendasMes.totalVendido) : "…"} />
+            </Link>
+            <Link href="/vendas" className="rounded-lg">
+              <StatCard label="Cartões a receber (líq.)" value={vendasMes ? formatBRL(vendasMes.totalLiquido) : "…"} tone="success" />
+            </Link>
+            <Link href="/financeiro" className="rounded-lg">
+              <StatCard label="Contas a pagar" value={carregando ? "…" : formatBRL(aPagarGrupo)} tone="warning" />
+            </Link>
+            <Link href="/pendencias" className="rounded-lg">
+              <StatCard label="Pendências" value={pend ? String(pendCount) : "…"} tone={pendCount > 0 ? "destructive" : "default"} />
+            </Link>
+          </div>
+        </section>
+      ) : null}
 
       {/* Filtros */}
       <div className="mb-4 grid gap-2 sm:grid-cols-2">
