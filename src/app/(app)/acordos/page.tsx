@@ -104,7 +104,7 @@ export default function AcordosPage() {
   const [fObs, setFObs] = useState("");
   const [linhas, setLinhas] = useState<LinhaParcela[]>([{ valor: "", vencimento: hojeISO() }]);
   // Gerador de parcelas
-  const [gTotal, setGTotal] = useState("");
+  const [gValorParcela, setGValorParcela] = useState("");
   const [gQtd, setGQtd] = useState("");
   const [gPrimeira, setGPrimeira] = useState(hojeISO());
   const [gPeriod, setGPeriod] = useState("mensal");
@@ -150,7 +150,7 @@ export default function AcordosPage() {
     setFDescricao("");
     setFObs("");
     setLinhas([{ valor: "", vencimento: hojeISO() }]);
-    setGTotal("");
+    setGValorParcela("");
     setGQtd("");
     setGPrimeira(hojeISO());
     setGPeriod("mensal");
@@ -181,17 +181,14 @@ export default function AcordosPage() {
   }
 
   function gerarParcelas() {
-    const total = Number(gTotal);
+    const valor = Number(gValorParcela);
     const qtd = Math.floor(Number(gQtd));
-    if (!Number.isFinite(total) || total <= 0 || !Number.isInteger(qtd) || qtd < 1 || qtd > 60) return;
+    if (!Number.isFinite(valor) || valor <= 0 || !Number.isInteger(qtd) || qtd < 1 || qtd > 60) return;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(gPrimeira)) return;
-    const centavos = Math.round(total * 100);
-    const base = Math.floor(centavos / qtd);
-    const resto = centavos - base * qtd;
+    const v = valor.toFixed(2);
     const novas: LinhaParcela[] = [];
     for (let i = 0; i < qtd; i++) {
-      const c = base + (i === qtd - 1 ? resto : 0); // sobra na última
-      novas.push({ valor: (c / 100).toFixed(2), vencimento: vencimentoParcela(gPrimeira, i, gPeriod) });
+      novas.push({ valor: v, vencimento: vencimentoParcela(gPrimeira, i, gPeriod) });
     }
     setLinhas(novas);
   }
@@ -353,8 +350,8 @@ export default function AcordosPage() {
               <p className="mb-2 text-xs font-medium text-muted-foreground">Gerar parcelas iguais</p>
               <div className="flex flex-wrap items-end gap-2">
                 <div className="space-y-1">
-                  <label className="text-[11px] text-muted-foreground">Valor total (R$)</label>
-                  <Input type="number" step="0.01" inputMode="decimal" value={gTotal} onChange={(e) => setGTotal(e.target.value)} className="h-9 w-32" />
+                  <label className="text-[11px] text-muted-foreground">Valor da parcela (R$)</label>
+                  <Input type="number" step="0.01" inputMode="decimal" value={gValorParcela} onChange={(e) => setGValorParcela(e.target.value)} className="h-9 w-32" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[11px] text-muted-foreground">Nº parcelas</label>
