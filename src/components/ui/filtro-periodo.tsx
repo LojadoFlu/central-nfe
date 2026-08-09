@@ -123,24 +123,19 @@ export function FiltroPeriodo({
 
   return (
     <div className={className}>
-      <div className="flex items-center gap-2">
-        <span className="hidden shrink-0 text-xs font-medium uppercase tracking-wide text-muted-foreground sm:inline">
-          Período
-        </span>
-        <select
-          value={selecionado}
-          onChange={(e) => aoSelecionar(e.target.value)}
-          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-        >
-          {allowClear ? <option value="tudo">Todo o período</option> : null}
-          {PRESETS.map((p) => (
-            <option key={p.key} value={p.key}>
-              {p.label}
-            </option>
-          ))}
-          <option value="personalizado">Personalizado…</option>
-        </select>
-      </div>
+      <select
+        value={selecionado}
+        onChange={(e) => aoSelecionar(e.target.value)}
+        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+      >
+        {allowClear ? <option value="tudo">Todo o período</option> : null}
+        {PRESETS.map((p) => (
+          <option key={p.key} value={p.key}>
+            {p.label}
+          </option>
+        ))}
+        <option value="personalizado">Personalizado…</option>
+      </select>
 
       {personalizado ? (
         <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-card p-2">

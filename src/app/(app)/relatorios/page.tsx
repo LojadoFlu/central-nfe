@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   listarDocumentos,
@@ -18,6 +17,7 @@ import {
   type DespesaFixa,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
+import { FiltroPeriodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatCNPJ, formatarData, diasAte } from "@/lib/utils";
 import { Download, X } from "lucide-react";
 
@@ -304,16 +304,10 @@ export default function RelatoriosPage() {
           ) : null}
 
           {usaPeriodo ? (
-            <>
-              <div className="space-y-1">
-                <label className="block text-xs text-muted-foreground">De</label>
-                <Input type="date" value={de} onChange={(e) => setDe(e.target.value)} className="h-9 w-40" />
-              </div>
-              <div className="space-y-1">
-                <label className="block text-xs text-muted-foreground">Até</label>
-                <Input type="date" value={ate} onChange={(e) => setAte(e.target.value)} className="h-9 w-40" />
-              </div>
-            </>
+            <div className="w-full space-y-1 sm:w-72">
+              <label className="block text-xs text-muted-foreground">Período</label>
+              <FiltroPeriodo value={{ de, ate }} onChange={(p) => { setDe(p.de); setAte(p.ate); }} />
+            </div>
           ) : null}
 
           {usaFornecedor ? (

@@ -21,6 +21,7 @@ import {
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatCNPJ, formatarData, diasAte } from "@/lib/utils";
 import { Handshake, Plus, Trash2, Check, RotateCcw, X, Pencil, ChevronDown } from "lucide-react";
 
@@ -47,6 +48,26 @@ function addMesesISO(iso: string, k: number): string {
   return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
 }
 
+/** Soma `n` dias a uma data YYYY-MM-DD. */
+function addDiasISO(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const base = new Date(y, m - 1, d + n);
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
+}
+
+/** Vencimento da parcela `i` (0-based) conforme a periodicidade. */
+function vencimentoParcela(primeira: string, i: number, periodicidade: string): string {
+  if (periodicidade === "semanal") return addDiasISO(primeira, i * 7);
+  if (periodicidade === "quinzenal") return addDiasISO(primeira, i * 14);
+  return addMesesISO(primeira, i);
+}
+
+const PERIODICIDADES: { key: string; label: string }[] = [
+  { key: "semanal", label: "Semanal" },
+  { key: "quinzenal", label: "Quinzenal" },
+  { key: "mensal", label: "Mensal" },
+];
+
 function resumoAcordo(a: Acordo) {
   const parcelas = a.parcelas ?? [];
   const total = a.valorAcordado ?? parcelas.reduce((s, p) => s + (p.valor ?? 0), 0);
@@ -64,6 +85,7 @@ export default function AcordosPage() {
   const [acordos, setAcordos] = useState<Acordo[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [filtroEmp, setFiltroEmp] = useState(""); // "" = todas
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [dividaPorCnpj, setDividaPorCnpj] = useState<Map<string, number>>(new Map());
   const [erro, setErro] = useState<string | null>(null);
@@ -85,6 +107,7 @@ export default function AcordosPage() {
   const [gTotal, setGTotal] = useState("");
   const [gQtd, setGQtd] = useState("");
   const [gPrimeira, setGPrimeira] = useState(hojeISO());
+  const [gPeriod, setGPeriod] = useState("mensal");
 
   const carregar = useCallback(async () => {
     setErro(null);
@@ -130,6 +153,7 @@ export default function AcordosPage() {
     setGTotal("");
     setGQtd("");
     setGPrimeira(hojeISO());
+    setGPeriod("mensal");
   }
 
   function abrirNovo() {
@@ -167,7 +191,7 @@ export default function AcordosPage() {
     const novas: LinhaParcela[] = [];
     for (let i = 0; i < qtd; i++) {
       const c = base + (i === qtd - 1 ? resto : 0); // sobra na última
-      novas.push({ valor: (c / 100).toFixed(2), vencimento: addMesesISO(gPrimeira, i) });
+      novas.push({ valor: (c / 100).toFixed(2), vencimento: vencimentoParcela(gPrimeira, i, gPeriod) });
     }
     setLinhas(novas);
   }
@@ -239,7 +263,12 @@ export default function AcordosPage() {
   }
 
   const dividaSelec = fCnpj ? dividaPorCnpj.get(fCnpj) ?? 0 : 0;
-  const visiveis = (acordos ?? []).filter((a) => !filtroEmp || (a.companyId ?? "") === filtroEmp);
+  const semPeriodo = !periodo.de && !periodo.ate;
+  const visiveis = (acordos ?? []).filter(
+    (a) =>
+      (!filtroEmp || (a.companyId ?? "") === filtroEmp) &&
+      (semPeriodo || (a.parcelas ?? []).some((p) => noPeriodo(p.vencimento, periodo))),
+  );
 
   return (
     <div>
@@ -321,7 +350,7 @@ export default function AcordosPage() {
 
             {/* Gerador de parcelas */}
             <div className="rounded-md border border-dashed border-border p-3">
-              <p className="mb-2 text-xs font-medium text-muted-foreground">Gerar parcelas iguais (mensais)</p>
+              <p className="mb-2 text-xs font-medium text-muted-foreground">Gerar parcelas iguais</p>
               <div className="flex flex-wrap items-end gap-2">
                 <div className="space-y-1">
                   <label className="text-[11px] text-muted-foreground">Valor total (R$)</label>
@@ -330,6 +359,18 @@ export default function AcordosPage() {
                 <div className="space-y-1">
                   <label className="text-[11px] text-muted-foreground">Nº parcelas</label>
                   <Input type="number" inputMode="numeric" value={gQtd} onChange={(e) => setGQtd(e.target.value)} className="h-9 w-24" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[11px] text-muted-foreground">Periodicidade</label>
+                  <select
+                    value={gPeriod}
+                    onChange={(e) => setGPeriod(e.target.value)}
+                    className="h-9 w-32 rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    {PERIODICIDADES.map((p) => (
+                      <option key={p.key} value={p.key}>{p.label}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="space-y-1">
                   <label className="text-[11px] text-muted-foreground">1º vencimento</label>
@@ -428,6 +469,10 @@ export default function AcordosPage() {
             </option>
           ))}
         </select>
+      ) : null}
+
+      {!formAberto ? (
+        <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
       ) : null}
 
       {/* Lista */}

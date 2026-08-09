@@ -27,6 +27,7 @@ import {
   type SyncEstado,
 } from "@/lib/nfe/repo";
 import { situacaoCertificado, type CertificateMeta } from "@/lib/nfe/types";
+import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatarData, diasAte } from "@/lib/utils";
 
 type Sev = "destructive" | "warning" | "info";
@@ -51,6 +52,7 @@ export default function AlertasPage() {
   const [docs, setDocs] = useState<NfeDocumento[]>([]);
   const [sync, setSync] = useState<SyncEstado[]>([]);
   const [limite, setLimite] = useState(50000);
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
 
   useEffect(() => {
     const v = Number(localStorage.getItem("nfe_alerta_limite") || "50000");
@@ -80,6 +82,9 @@ export default function AlertasPage() {
 
   const alertas = useMemo(() => {
     const out: Alerta[] = [];
+    // O período escopa os alertas baseados em data: contas (por vencimento) e NF-e (por emissão).
+    const parcelasP = parcelas.filter((p) => noPeriodo(p.vencimento, periodo));
+    const docsP = docs.filter((d) => noPeriodo(d.dhEmi, periodo));
 
     // Certificado vencendo/vencido
     for (const c of certs ?? []) {
@@ -110,7 +115,7 @@ export default function AlertasPage() {
     let vencidasV = 0;
     let proxN = 0;
     let proxV = 0;
-    for (const p of parcelas) {
+    for (const p of parcelasP) {
       if (p.statusPagamento === "pago") continue; // baixada — fora dos alertas
       const dias = diasAte(p.vencimento);
       if (dias === null) continue;
@@ -144,7 +149,7 @@ export default function AlertasPage() {
     }
 
     // NF-e acima do limite
-    const acima = docs.filter((d) => (d.vNF ?? 0) >= limite);
+    const acima = docsP.filter((d) => (d.vNF ?? 0) >= limite);
     if (acima.length > 0) {
       out.push({
         sev: "info",
@@ -157,7 +162,7 @@ export default function AlertasPage() {
     }
 
     // Manifestação pendente (notas resumo)
-    const resumo = docs.filter((d) => !d.temXmlCompleto);
+    const resumo = docsP.filter((d) => !d.temXmlCompleto);
     if (resumo.length > 0) {
       out.push({
         sev: "info",
@@ -184,11 +189,16 @@ export default function AlertasPage() {
     }
 
     return out;
-  }, [certs, parcelas, docs, sync, limite]);
+  }, [certs, parcelas, docs, sync, limite, periodo]);
 
   return (
     <div>
       <PageHeader title="Alertas" description="Central de avisos da operação." />
+
+      <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-1" />
+      <p className="mb-4 px-1 text-[11px] text-muted-foreground">
+        O período filtra contas (por vencimento) e NF-e (por emissão). Certificado e sincronização aparecem sempre.
+      </p>
 
       {/* Config do limite */}
       <Card className="mb-4">
