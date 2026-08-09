@@ -1106,6 +1106,46 @@ export const pdvnetSincronizarVendas = onCall(
   },
 );
 
+/**
+ * Sincronização AUTOMÁTICA diária das vendas do PDVnet (06:00 BRT).
+ * Reprocessa os últimos ~35 dias (mês corrente + virada de mês + atualização das
+ * liquidações de cartão). Idempotente (merge). Preserva o agrupamento manual das
+ * lojas (materializarLojas respeita ativoSync/grupoNome já definidos).
+ */
+export const pdvnetSyncVendasAgendado = onSchedule(
+  {
+    schedule: "every day 06:00",
+    timeZone: "America/Sao_Paulo",
+    region: REGIAO,
+    memory: "512MiB",
+    timeoutSeconds: 540,
+  },
+  async () => {
+    let cred;
+    try {
+      cred = await lerSegredoPdvnet();
+    } catch {
+      logger.info("pdvnetSyncVendasAgendado: credenciais do PDVnet não configuradas — pulando.");
+      return;
+    }
+    const cli = new PdvnetClient(cred);
+    const hoje = new Date();
+    const ini = new Date(hoje.getTime() - 35 * 86_400_000);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    try {
+      const r = await sincronizarVendas(cli, fmt(ini), fmt(hoje));
+      logger.info("pdvnetSyncVendasAgendado ok", {
+        periodo: `${fmt(ini)}..${fmt(hoje)}`,
+        vendas: r.vendas,
+        recebiveis: r.recebiveis,
+        lojas: r.lojas,
+      });
+    } catch (e) {
+      logger.error("pdvnetSyncVendasAgendado falhou", { erro: (e as Error).message });
+    }
+  },
+);
+
 /** Materializa/atualiza a lista de lojas do PDVnet (sem puxar vendas). admin/fiscal. */
 export const pdvnetSincronizarLojas = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },

@@ -133,7 +133,7 @@ export default function VendasPage() {
     <div>
       <PageHeader
         title="Vendas (PDV)"
-        description="Vendas do PDVnet — por loja e período."
+        description="Vendas do PDVnet — por loja e período. Sincroniza automaticamente todo dia às 6h."
         action={
           podeSincronizar ? (
             <Button size="sm" variant="outline" disabled={sincronizando} onClick={sincronizar}>
