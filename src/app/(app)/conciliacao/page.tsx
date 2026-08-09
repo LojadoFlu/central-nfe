@@ -24,6 +24,7 @@ export default function ConciliacaoPage() {
   const [periodo, setPeriodo] = useState<Periodo>(periodoEsteMes());
   const [dados, setDados] = useState<Conciliacao | null>(null);
   const [carregando, setCarregando] = useState(false);
+  const [verDia, setVerDia] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
@@ -83,6 +84,55 @@ export default function ConciliacaoPage() {
             <LinhaConc titulo="PIX" banco={dados.banco.pix} previsto={dados.previsto.pix} dif={dados.dif.pix}
               nota="Banco: PIX recebido na maquininha. PDV: vendas em PIX." />
           </div>
+
+          {/* Detalhe por dia */}
+          {dados.porDia?.length ? (
+            <Card className="mt-4">
+              <CardContent className="py-4">
+                <button type="button" onClick={() => setVerDia((v) => !v)} className="flex w-full items-center justify-between">
+                  <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Detalhe por dia</h2>
+                  <span className="text-xs font-medium text-primary">{verDia ? "ocultar" : "ver onde diverge"}</span>
+                </button>
+                {verDia ? (
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full text-right text-xs">
+                      <thead>
+                        <tr className="border-b border-border text-[10px] uppercase text-muted-foreground">
+                          <th className="py-1 pr-2 text-left font-medium">Dia</th>
+                          <th className="py-1 px-2 font-medium">Cart. banco</th>
+                          <th className="py-1 px-2 font-medium">Cart. prev.</th>
+                          <th className="py-1 px-2 font-medium">Cart. dif.</th>
+                          <th className="py-1 px-2 font-medium">PIX banco</th>
+                          <th className="py-1 px-2 font-medium">PIX prev.</th>
+                          <th className="py-1 pl-2 font-medium">PIX dif.</th>
+                        </tr>
+                      </thead>
+                      <tbody className="tnum">
+                        {dados.porDia.map((d) => {
+                          const diverge = Math.abs(d.difCartao) + Math.abs(d.difPix) > 100;
+                          return (
+                            <tr key={d.dia} className={`border-b border-border/50 ${diverge ? "bg-warning/5" : ""}`}>
+                              <td className="py-1 pr-2 text-left font-medium">{formatarData(d.dia)}</td>
+                              <td className="py-1 px-2">{formatBRL(d.bancoCartao)}</td>
+                              <td className="py-1 px-2 text-muted-foreground">{formatBRL(d.previstoCartao)}</td>
+                              <td className={`py-1 px-2 ${Math.abs(d.difCartao) > 100 ? "font-semibold text-warning" : "text-muted-foreground"}`}>{formatBRL(d.difCartao)}</td>
+                              <td className="py-1 px-2">{formatBRL(d.bancoPix)}</td>
+                              <td className="py-1 px-2 text-muted-foreground">{formatBRL(d.previstoPix)}</td>
+                              <td className={`py-1 pl-2 ${Math.abs(d.difPix) > 100 ? "font-semibold text-warning" : "text-muted-foreground"}`}>{formatBRL(d.difPix)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <p className="mt-2 text-[11px] text-muted-foreground">
+                      Cartões: banco pela data do crédito; PDV pela data de vencimento do recebível. Dias destacados = onde a diferença se concentra
+                      (ex.: fim do período, quando o recebível ainda não caiu).
+                    </p>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
 
           {/* Contexto do banco */}
           <Card className="mt-4">

@@ -1529,6 +1529,15 @@ export const conciliacao = onCall(
     }
     const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
 
+    // acumulador por dia
+    interface Dia { bancoCartao: number; bancoPix: number; previstoCartao: number; previstoPix: number }
+    const dias = new Map<string, Dia>();
+    const bd = (dia: string): Dia => {
+      let x = dias.get(dia);
+      if (!x) { x = { bancoCartao: 0, bancoPix: 0, previstoCartao: 0, previstoPix: 0 }; dias.set(dia, x); }
+      return x;
+    };
+
     // BANCO (extrato) — por categoria, no período (pela data do lançamento)
     let bancoCartao = 0, bancoPix = 0, bancoOutrasEnt = 0, bancoSaidas = 0;
     const bt = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
@@ -1537,8 +1546,8 @@ export const conciliacao = onCall(
       const dia = d10(t.dia);
       if (dia < de || dia > ate) continue;
       const v = Number(t.valor ?? 0);
-      if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") bancoCartao += v;
-      else if (t.categoria === "pix_venda") bancoPix += v;
+      if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") { bancoCartao += v; bd(dia).bancoCartao += v; }
+      else if (t.categoria === "pix_venda") { bancoPix += v; bd(dia).bancoPix += v; }
       else if (v > 0) bancoOutrasEnt += v;
       else bancoSaidas += v;
     }
@@ -1550,21 +1559,34 @@ export const conciliacao = onCall(
     for (const doc of rc.docs) {
       const r = doc.data();
       if (String(r.empresaId ?? "") !== empresaId) continue;
-      previstoCartao += Number(r.liquido ?? r.valor ?? 0);
+      const v = Number(r.liquido ?? r.valor ?? 0);
+      previstoCartao += v;
+      bd(d10(r.dataVencimento)).previstoCartao += v;
     }
     let previstoPix = 0;
     const sp = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of sp.docs) {
       const p = doc.data();
       if (String(p.empresaId ?? "") !== empresaId || p.forma !== "pix") continue;
-      previstoPix += Number(p.valor ?? 0);
+      const v = Number(p.valor ?? 0);
+      previstoPix += v;
+      bd(d10(p.dia)).previstoPix += v;
     }
+
+    const porDia = [...dias.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([dia, x]) => ({
+        dia,
+        bancoCartao: x.bancoCartao, previstoCartao: x.previstoCartao, difCartao: x.bancoCartao - x.previstoCartao,
+        bancoPix: x.bancoPix, previstoPix: x.previstoPix, difPix: x.bancoPix - x.previstoPix,
+      }));
 
     return {
       ok: true, de, ate, empresaId,
       banco: { cartao: bancoCartao, pix: bancoPix, outrasEntradas: bancoOutrasEnt, saidas: bancoSaidas },
       previsto: { cartao: previstoCartao, pix: previstoPix },
       dif: { cartao: bancoCartao - previstoCartao, pix: bancoPix - previstoPix },
+      porDia,
     };
   },
 );
