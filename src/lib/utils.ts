@@ -72,3 +72,28 @@ export function diasAte(iso: string | undefined | null): number | null {
   const ms = d.setHours(0, 0, 0, 0) - hoje.setHours(0, 0, 0, 0);
   return Math.round(ms / 86_400_000);
 }
+
+const DIAS_SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+/** Abreviação do dia da semana de uma data YYYY-MM-DD (fuso local). */
+export function diaSemana(iso: string | undefined | null): string {
+  if (!iso) return "";
+  const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1);
+  return DIAS_SEMANA[dt.getDay()] ?? "";
+}
+
+/**
+ * Data em que o cartão cai na conta, pela regra: D+1; se cair no fim de semana,
+ * empurra para segunda (sexta→seg, sábado→seg, domingo→seg). Entrada/saída YYYY-MM-DD.
+ * Obs.: é uma PROJEÇÃO — o dado real do PDV (dataVencimento) é a fonte quando existe.
+ */
+export function dataCredito(vendaISO: string | undefined | null): string {
+  if (!vendaISO) return "";
+  const [y, m, d] = vendaISO.slice(0, 10).split("-").map(Number);
+  const dt = new Date(y, (m || 1) - 1, d || 1);
+  dt.setDate(dt.getDate() + 1); // D+1
+  const dow = dt.getDay();
+  if (dow === 6) dt.setDate(dt.getDate() + 2); // sábado → segunda
+  else if (dow === 0) dt.setDate(dt.getDate() + 1); // domingo → segunda
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+}

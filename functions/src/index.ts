@@ -1304,6 +1304,7 @@ export const fluxoCaixa = onCall(
     };
 
     // ENTRADAS — cartões (líquido, na liquidação/vencimento)
+    const proxCartaoMap = new Map<string, number>(); // créditos de cartão a cair (dia >= hoje)
     const recSnap = await db.collection("card_receivables")
       .where("dataVencimento", ">=", de).where("dataVencimento", "<=", ate + "").get();
     for (const doc of recSnap.docs) {
@@ -1311,8 +1312,13 @@ export const fluxoCaixa = onCall(
       if (!daEmpresa(r.empresaId)) continue;
       const liq = !!r.dataLiquidacao;
       const dia = d10(liq ? r.dataLiquidacao : r.dataVencimento);
-      entrada(dia, Number(r.liquido ?? r.valor ?? 0), liq || dia <= hoje, "cartao");
+      const val = Number(r.liquido ?? r.valor ?? 0);
+      entrada(dia, val, liq || dia <= hoje, "cartao");
+      if (!liq && dia >= hoje && val > 0) proxCartaoMap.set(dia, (proxCartaoMap.get(dia) ?? 0) + val);
     }
+    const proximosCartao = [...proxCartaoMap.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([dia, valor]) => ({ dia, valor }));
     // ENTRADAS — PIX/dinheiro (na data da venda)
     const spSnap = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of spSnap.docs) {
@@ -1370,6 +1376,7 @@ export const fluxoCaixa = onCall(
       linhas,
       totais: { ...tot, saldo: tot.entrada - tot.saida },
       porOrigem,
+      proximosCartao,
     };
   },
 );

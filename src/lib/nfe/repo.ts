@@ -693,6 +693,7 @@ export interface FluxoCaixa {
   linhas: FluxoDia[];
   totais: { entrada: number; saida: number; entradaReal: number; saidaReal: number; saldo: number };
   porOrigem: Record<string, number>;
+  proximosCartao: { dia: string; valor: number }[];
 }
 export async function obterFluxoCaixa(de: string, ate: string, empresaId?: string): Promise<FluxoCaixa> {
   const { functions } = fb();

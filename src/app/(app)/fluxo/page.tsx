@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import { obterFluxoCaixa, listarEmpresas, type FluxoCaixa, type FluxoDia } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
-import { formatBRL, formatarData } from "@/lib/utils";
+import { formatBRL, formatarData, diaSemana } from "@/lib/utils";
 import { LineChart, ArrowDownRight, ArrowUpRight } from "lucide-react";
 
 function ymd(d: Date): string {
@@ -273,6 +273,28 @@ export default function FluxoPage() {
                             </div>
                           );
                         })}
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {/* Próximos créditos de cartão (quando cai — regra D+1 / fim de semana → segunda) */}
+              {dados?.proximosCartao?.length ? (
+                <Card className="mt-3">
+                  <CardContent className="py-4">
+                    <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Próximos créditos de cartão</h2>
+                    <p className="mb-2 text-[11px] text-muted-foreground">Quando o cartão já vendido vai cair na conta. Fins de semana caem na segunda.</p>
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {dados.proximosCartao.slice(0, 14).map((c) => {
+                        const ds = diaSemana(c.dia);
+                        const fds = ds === "seg";
+                        return (
+                          <div key={c.dia} className={`min-w-[92px] shrink-0 rounded-md border p-2 text-center ${fds ? "border-success/40 bg-success/5" : "border-border"}`}>
+                            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{ds} · {formatarData(c.dia).slice(0, 5)}</p>
+                            <p className="mt-0.5 text-sm font-bold tnum text-success">{formatBRL(c.valor)}</p>
+                          </div>
+                        );
+                      })}
                     </div>
                   </CardContent>
                 </Card>
