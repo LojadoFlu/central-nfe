@@ -838,6 +838,11 @@ export async function copiarTaxasCartao(de: string, para: string): Promise<{ ok:
   const fn = httpsCallable(functions, "copiarTaxasCartao");
   return (await fn({ de, para })).data as { ok: boolean; copiados: number };
 }
+export async function importarCartoesPDV(empresaId: string): Promise<{ ok: boolean; importados: number }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "importarCartoesPDV");
+  return (await fn({ empresaId })).data as { ok: boolean; importados: number };
+}
 
 // ---- Vendas (PDVnet) ----
 

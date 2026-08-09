@@ -16,11 +16,12 @@ import {
   excluirTaxaCartao,
   salvarConfigCartao,
   copiarTaxasCartao,
+  importarCartoesPDV,
   type TaxaCartao,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { CreditCard, Plus, Trash2, Check, X, Pencil, Copy } from "lucide-react";
+import { CreditCard, Plus, Trash2, Check, X, Pencil, Copy, Download } from "lucide-react";
 
 const fmtPct = (n: number | undefined) => `${(n ?? 0).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 
@@ -37,6 +38,7 @@ export default function TaxasPage() {
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [copiaDe, setCopiaDe] = useState("");
   const [copiando, setCopiando] = useState(false);
+  const [importando, setImportando] = useState(false);
 
   // Formulário
   const [formAberto, setFormAberto] = useState(false);
@@ -81,6 +83,22 @@ export default function TaxasPage() {
     } catch (e) {
       setErro((e as Error).message);
       await carregar();
+    }
+  }
+
+  async function importarPdv() {
+    if (!empresaId) return;
+    setImportando(true);
+    setErro(null);
+    setMsg(null);
+    try {
+      const r = await importarCartoesPDV(empresaId);
+      setMsg(`${r.importados} cartão(ões) importado(s) do PDV (taxas reais dos recebíveis).`);
+      await carregar();
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setImportando(false);
     }
   }
 
@@ -170,7 +188,12 @@ export default function TaxasPage() {
         description="Cartões e taxas por loja — cada loja pode ter juros e antecipação diferentes."
         action={
           podeEditar && !formAberto && empresaId ? (
-            <Button size="sm" onClick={abrirNovo}><Plus className="size-4" /> Novo cartão</Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" disabled={importando} onClick={importarPdv}>
+                <Download className="size-4" /> {importando ? "Importando…" : "Importar do PDV"}
+              </Button>
+              <Button size="sm" onClick={abrirNovo}><Plus className="size-4" /> Novo cartão</Button>
+            </div>
           ) : undefined
         }
       />

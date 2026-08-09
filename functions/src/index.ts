@@ -1267,6 +1267,68 @@ export const copiarTaxasCartao = onCall(opcoes, async (req) => {
   return { ok: true, copiados: origem.size };
 });
 
+/**
+ * Importa os cartões da loja a partir dos RECEBÍVEIS reais do PDV (últimos 120 dias):
+ * cada DescricaoCartao vira um cartão, com as taxas efetivas observadas (débito, crédito
+ * à vista e parcelado). Preserva PIX/antecipação já digitados. Mantém alinhado ao cobrado.
+ */
+export const importarCartoesPDV = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+    const empresaId = String(req.data?.empresaId ?? "").trim();
+    if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
+    const desde = new Date(Date.now() - 120 * 86_400_000).toISOString().slice(0, 10);
+    const snap = await db.collection("card_receivables").where("dia", ">=", desde).get();
+    interface Acc { deb: number[]; cred1: number[]; credN: number[] }
+    const cards = new Map<string, Acc>();
+    for (const doc of snap.docs) {
+      const r = doc.data();
+      if (String(r.empresaId ?? "") !== empresaId) continue;
+      const nome = String(r.descricaoCartao ?? "").trim();
+      const taxa = Number(r.taxaPct);
+      if (!nome || !Number.isFinite(taxa)) continue;
+      let a = cards.get(nome);
+      if (!a) { a = { deb: [], cred1: [], credN: [] }; cards.set(nome, a); }
+      if (/debito|débito/i.test(nome)) a.deb.push(taxa);
+      else if (Number(r.parcela ?? 1) <= 1) a.cred1.push(taxa);
+      else a.credN.push(taxa);
+    }
+    if (cards.size === 0) throw new HttpsError("failed-precondition", "Sem recebíveis de cartão sincronizados nos últimos 120 dias para esta loja.");
+    const avg = (arr: number[]) => (arr.length ? Math.round((arr.reduce((s, x) => s + x, 0) / arr.length) * 100) / 100 : 0);
+    // existentes: preserva PIX/antecipação digitados e reusa o id (upsert por nome)
+    const exist = await db.collection("card_rates").where("empresaId", "==", empresaId).get();
+    const byNome = new Map<string, { id: string; taxaPix?: number; taxaAntecipacao?: number }>();
+    for (const d of exist.docs) { const x = d.data(); byNome.set(String(x.nome), { id: d.id, taxaPix: x.taxaPix, taxaAntecipacao: x.taxaAntecipacao }); }
+    let batch = db.batch();
+    let ops = 0;
+    let n = 0;
+    const flush = async () => { if (ops) { await batch.commit(); batch = db.batch(); ops = 0; } };
+    for (const [nome, a] of cards) {
+      const prev = byNome.get(nome);
+      const ref = prev ? db.collection("card_rates").doc(prev.id) : db.collection("card_rates").doc();
+      batch.set(ref, {
+        empresaId, nome,
+        taxaPix: prev?.taxaPix ?? 0,
+        taxaDebito: avg(a.deb),
+        taxaCredito: avg(a.cred1),
+        taxaParcelado: avg(a.credN),
+        taxaAntecipacao: prev?.taxaAntecipacao ?? 0,
+        ativo: true,
+        origem: "pdv",
+        atualizadoEm: agoraISO(),
+        atualizadoPor: uid,
+      }, { merge: true });
+      ops++;
+      n++;
+      if (ops >= 400) await flush();
+    }
+    await flush();
+    await auditar(uid, "cartao.importarPDV", { empresaId, cartoes: n });
+    return { ok: true, importados: n };
+  },
+);
+
 /** Resumo de vendas filtrado por período e loja (grupo). Agrega no servidor. */
 export const pdvnetResumoVendas = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
