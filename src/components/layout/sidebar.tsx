@@ -16,11 +16,11 @@ export function Sidebar() {
   const secundarios = filtrarPorPermissao(SECONDARY_NAV, ctx);
 
   return (
-    <aside className="hidden w-60 shrink-0 border-r border-border bg-card lg:block">
-      <div className="flex h-14 items-center gap-2 border-b border-border px-4">
+    <aside className="hidden w-60 shrink-0 border-r border-border/60 bg-card lg:block">
+      <div className="flex h-14 items-center gap-2 border-b border-border/60 px-4">
         <BrandMark />
       </div>
-      <nav className="flex flex-col gap-1 p-3">
+      <nav className="flex flex-col gap-0.5 overflow-y-auto p-3">
         {principais.map((i) => (
           <NavLink key={i.href} href={i.href} pathname={pathname} icon={i.icon} label={i.label} />
         ))}
@@ -48,14 +48,15 @@ function NavLink({
   return (
     <Link
       href={href}
+      aria-current={ativo ? "page" : undefined}
       className={cn(
-        "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+        "press flex items-center gap-3 rounded-full px-3 py-2 text-sm font-medium transition-colors duration-200",
         ativo
-          ? "bg-primary/10 text-primary"
-          : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+          ? "bg-primary/12 text-primary"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
       )}
     >
-      <Icon className="size-4 shrink-0" />
+      <Icon className={cn("size-[1.05rem] shrink-0", ativo && "stroke-[2.4]")} />
       {label}
     </Link>
   );

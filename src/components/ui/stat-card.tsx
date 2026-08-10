@@ -22,12 +22,14 @@ export function StatCard({
   tone?: Tone;
 }) {
   return (
-    <Card className="min-w-0 p-3 sm:p-4">
-      <p className="truncate text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">
+    <Card className="min-w-0 p-3.5 sm:p-4">
+      <p className="truncate text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
         {label}
       </p>
-      <p className={cn("mt-1 text-lg font-bold leading-tight tnum sm:text-2xl", toneText[tone])}>{value}</p>
-      {hint ? <p className="mt-1 text-[11px] text-muted-foreground sm:text-xs">{hint}</p> : null}
+      <p className={cn("mt-1.5 text-[1.35rem] font-bold leading-none tracking-[-0.02em] tnum sm:text-[1.6rem]", toneText[tone])}>
+        {value}
+      </p>
+      {hint ? <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground sm:text-xs">{hint}</p> : null}
     </Card>
   );
 }

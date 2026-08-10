@@ -9,7 +9,7 @@ import { BrandMark } from "@/components/brand";
 export function Topbar() {
   const { user, role, signOutUser } = useAuth();
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-border bg-background/95 px-4 backdrop-blur">
+    <header className="material sticky top-0 z-30 flex h-14 items-center justify-between gap-3 border-b border-border/50 px-4">
       {/* Marca só aparece no mobile (no desktop a sidebar já mostra). */}
       <BrandMark compact className="lg:hidden" />
       <div className="ml-auto flex items-center gap-3">
