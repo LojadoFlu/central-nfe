@@ -2155,18 +2155,25 @@ export const importarContasPagar = onCall(
     const titulos = todos.filter((t) => !ehMercadoria(t.categoria));
     const ignoradosMercadoria = todos.length - titulos.length;
 
-    // AGRUPA por (empresa, nome, valor, dia) — colapsa parcelas mensais iguais numa despesa fixa.
-    interface Grupo { empresaId: string | null; loja: string; nome: string; categoria: string; beneficiario: string; valor: number; dia: number | null; qtd: number }
+    // AGRUPA por (empresa, nome, valor) — colapsa TODAS as parcelas mensais iguais numa despesa
+    // fixa só (mesmo que o dia de vencimento varie); o dia é o MAIS COMUM entre as parcelas.
+    interface Grupo { empresaId: string | null; loja: string; nome: string; categoria: string; beneficiario: string; valor: number; dias: Map<number, number>; qtd: number }
     const grupos = new Map<string, Grupo>();
     for (const t of titulos) {
       const nome = (t.observacao || t.fornecedor || t.categoria).slice(0, 120);
       const diaN = Number(t.vencimento.slice(8, 10));
-      const dia = diaN >= 1 && diaN <= 31 ? diaN : null;
-      const key = `${t.empresaId ?? "?"}|${nome.toLowerCase()}|${t.valor.toFixed(2)}|${dia ?? "?"}`;
+      const key = `${t.empresaId ?? "?"}|${nome.toLowerCase()}|${t.valor.toFixed(2)}`;
       let g = grupos.get(key);
-      if (!g) { g = { empresaId: t.empresaId, loja: t.loja, nome, categoria: categoriaDespesaFixa(t.categoria), beneficiario: t.fornecedor, valor: t.valor, dia, qtd: 0 }; grupos.set(key, g); }
+      if (!g) { g = { empresaId: t.empresaId, loja: t.loja, nome, categoria: categoriaDespesaFixa(t.categoria), beneficiario: t.fornecedor, valor: t.valor, dias: new Map(), qtd: 0 }; grupos.set(key, g); }
+      if (diaN >= 1 && diaN <= 31) g.dias.set(diaN, (g.dias.get(diaN) ?? 0) + 1);
       g.qtd++;
     }
+    // dia de vencimento = o mais frequente do grupo
+    const diaMaisComum = (dias: Map<number, number>): number | null => {
+      let melhor: number | null = null, max = 0;
+      for (const [d, n] of dias) if (n > max) { max = n; melhor = d; }
+      return melhor;
+    };
     const lista = [...grupos.values()];
 
     // Prévia
@@ -2212,7 +2219,7 @@ export const importarContasPagar = onCall(
         valor: g.valor,
         recorrencia: "mensal",         // parcelas mensais → mensal (editável)
         mesBase: null,                 // em branco
-        diaVencimento: g.dia,
+        diaVencimento: diaMaisComum(g.dias),
         beneficiario: g.beneficiario || null,
         observacao: null,              // em branco p/ completar ao editar
         ativo: true,
