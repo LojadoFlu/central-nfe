@@ -54,6 +54,7 @@ export const SECONDARY_NAV: NavItem[] = [
   { label: "Pendências", href: "/pendencias", icon: ClipboardCheck, modulo: "financeiro" },
   { label: "Fluxo de caixa", href: "/fluxo", icon: LineChart, modulo: "financeiro" },
   { label: "DRE gerencial", href: "/dre", icon: TrendingUp, modulo: "financeiro" },
+  { label: "DRE comparativo", href: "/dre-comparativo", icon: BarChart3, modulo: "financeiro" },
   { label: "Banco", href: "/banco", icon: Landmark, modulo: "financeiro" },
   { label: "Conciliação", href: "/conciliacao", icon: Scale, modulo: "financeiro" },
   { label: "Conciliação de saídas", href: "/saidas", icon: ArrowDownLeft, modulo: "financeiro" },

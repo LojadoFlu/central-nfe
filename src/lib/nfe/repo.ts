@@ -906,6 +906,47 @@ export async function obterConciliacaoSaidas(de: string, ate: string, empresaId 
   return res.data as ConciliacaoSaidas;
 }
 
+// ——— DRE comparativo (mês a mês / lojas lado a lado) ———
+export interface DREColuna {
+  chave: string;
+  rotulo: string;
+  incompleto?: boolean;
+  receitaVendas: number;
+  receitaManual: number;
+  cmv: number;
+  compras: number;
+  lucroBruto: number;
+  margemBruta: number;
+  taxasCartao: number;
+  despesasFixas: number;
+  fretes: number;
+  servicos: number;
+  resultado: number;
+  margemLiquida: number;
+}
+export interface DREComparativo {
+  ok: boolean;
+  eixo: "mes" | "loja";
+  de: string;
+  ate: string;
+  cmvPct: number;
+  empresaId: string | null;
+  colunas: DREColuna[];
+  total: Omit<DREColuna, "chave" | "rotulo">;
+}
+export async function obterDREComparativo(
+  eixo: "mes" | "loja",
+  de: string,
+  ate: string,
+  empresaId = "",
+  cmvPct = 0,
+): Promise<DREComparativo> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "dreComparativo");
+  const res = await fn({ eixo, de, ate, empresaId, cmvPct });
+  return res.data as DREComparativo;
+}
+
 // ——— Taxas de cartão (configuração por loja) ———
 export interface TaxaCartao {
   id: string;

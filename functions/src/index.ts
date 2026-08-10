@@ -1577,6 +1577,120 @@ export const pdvnetResumoVendas = onCall(
  * menos Taxas de cartão, Despesas fixas, Fretes (CT-e) e Serviços (NFS-e) = Resultado.
  * Acordos ficam de fora (quitação de dívida, não despesa nova). Só leitura.
  */
+interface DREResultado {
+  de: string; ate: string; empresaId: string | null; cmvPct: number; cmvOrigem: string;
+  receitaVendas: number; receitaManual: number; cmv: number; compras: number;
+  lucroBruto: number; margemBruta: number; taxasCartao: number; despesasFixas: number;
+  fretes: number; servicos: number; resultado: number; margemLiquida: number;
+}
+/** Núcleo do DRE gerencial (competência). Reutilizado pelo comparativo. */
+async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: number): Promise<DREResultado> {
+  const daEmpresa = (cid: unknown) => !empresaId || String(cid ?? "") === empresaId;
+
+  const emps = await db.collection("nfe_companies").get();
+  const cnpjPorId = new Map<string, string>();
+  for (const e of emps.docs) cnpjPorId.set(e.id, somenteDigitos(String((e.data() as { cnpj?: string }).cnpj ?? "")));
+
+  // RECEITA — vendas PDV (competência = dia da venda)
+  let receitaVendas = 0;
+  const salesSnap = await db.collection("sales").where("dia", ">=", de).where("dia", "<=", ate).get();
+  for (const doc of salesSnap.docs) {
+    const s = doc.data();
+    if (s.cancelada || !daEmpresa(s.empresaId)) continue;
+    receitaVendas += Number(s.valorTotal ?? 0);
+  }
+  // TAXAS DE CARTÃO — recebíveis PDV (bruto − líquido), competência = dia da venda
+  let taxasCartao = 0;
+  const recSnap = await db.collection("card_receivables").where("dia", ">=", de).where("dia", "<=", ate).get();
+  for (const doc of recSnap.docs) {
+    const r = doc.data();
+    if (!daEmpresa(r.empresaId)) continue;
+    taxasCartao += Number(r.valor ?? 0) - Number(r.liquido ?? r.valor ?? 0);
+  }
+
+  // MANUAL — receita da loja offline; taxa estimada pela taxa MÉDIA da loja da máquina
+  const agg = new Map<string, { debS: number; debN: number; cr1S: number; cr1N: number; pixS: number; pixN: number; parc: Map<string, { s: number; n: number }> }>();
+  for (const doc of (await db.collection("card_rates").get()).docs) {
+    const x = doc.data(); const cid = String(x.empresaId ?? "");
+    if (!cid) continue;
+    let a = agg.get(cid);
+    if (!a) { a = { debS: 0, debN: 0, cr1S: 0, cr1N: 0, pixS: 0, pixN: 0, parc: new Map() }; agg.set(cid, a); }
+    if (Number(x.taxaDebito) > 0) { a.debS += Number(x.taxaDebito); a.debN++; }
+    if (Number(x.taxaCredito) > 0) { a.cr1S += Number(x.taxaCredito); a.cr1N++; }
+    if (Number(x.taxaPix) > 0) { a.pixS += Number(x.taxaPix); a.pixN++; }
+    for (const [k, v] of Object.entries((x.parcelas ?? {}) as Record<string, number>)) {
+      if (Number(v) > 0) { const p = a.parc.get(k) ?? { s: 0, n: 0 }; p.s += Number(v); p.n++; a.parc.set(k, p); }
+    }
+  }
+  const taxaMedia = (cid: string, forma: string, parcelas: number): number => {
+    const a = agg.get(cid); if (!a) return 0;
+    if (forma === "cartaoDebito") return a.debN ? a.debS / a.debN : 0;
+    if (forma === "cartaoCredito") return a.cr1N ? a.cr1S / a.cr1N : 0;
+    if (forma === "pix") return a.pixN ? a.pixS / a.pixN : 0;
+    if (forma === "cartaoParcelado") { const p = a.parc.get(String(parcelas)); return p ? p.s / p.n : 0; }
+    return 0;
+  };
+  let receitaManual = 0, taxaManual = 0;
+  const manSnap = await db.collection("manual_sales").where("dia", ">=", de).where("dia", "<=", ate).get();
+  for (const doc of manSnap.docs) {
+    const m = doc.data();
+    if (!daEmpresa(m.empresaId)) continue;
+    const valor = Number(m.valor ?? 0);
+    if (!(valor > 0)) continue;
+    receitaManual += valor;
+    const forma = String(m.forma ?? "");
+    if (forma !== "dinheiro") {
+      const parcelas = Math.max(2, Math.min(10, Math.round(Number(m.parcelas) || 2)));
+      taxaManual += valor * (taxaMedia(String(m.maquinaEmpresaId ?? ""), forma, parcelas) / 100);
+    }
+  }
+  receitaVendas += receitaManual;
+  taxasCartao += taxaManual;
+
+  // COMPRAS (proxy de CMV) — NF-e de fornecedor terceiro (competência = dhEmi)
+  let compras = 0;
+  const nfSnap = await db.collection("nfe_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get();
+  for (const doc of nfSnap.docs) {
+    const r = doc.data(); const cid = String(r.companyId ?? "");
+    if (!daEmpresa(cid)) continue;
+    const emit = somenteDigitos(String(r.cnpjEmit ?? ""));
+    if (!emit || emit === (cnpjPorId.get(cid) ?? "")) continue; // exclui emissões próprias
+    compras += Number(r.vNF ?? 0);
+  }
+
+  // DESPESAS FIXAS (competência mensal)
+  let despesasFixas = 0;
+  const meses = mesesEntre(de, ate);
+  for (const doc of (await db.collection("nfe_fixed_expenses").get()).docs) {
+    const x = doc.data();
+    if (!daEmpresa(x.companyId) || x.ativo === false) continue;
+    for (const ym of meses) if (incideNoMes(x, ym)) despesasFixas += Number(x.valor ?? 0);
+  }
+  // FRETES (CT-e) e SERVIÇOS (NFS-e) — competência = dhEmi
+  let fretes = 0;
+  for (const doc of (await db.collection("cte_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get()).docs) {
+    const r = doc.data(); if (daEmpresa(r.companyId)) fretes += Number(r.vTPrest ?? 0);
+  }
+  let servicos = 0;
+  for (const doc of (await db.collection("nfse_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get()).docs) {
+    const r = doc.data(); if (daEmpresa(r.companyId)) servicos += Number(r.vServ ?? 0);
+  }
+
+  const cmv = cmvPct > 0 ? receitaVendas * (cmvPct / 100) : compras;
+  const cmvOrigem = cmvPct > 0 ? "percentual" : "compras";
+  const lucroBruto = receitaVendas - cmv;
+  const resultado = lucroBruto - taxasCartao - despesasFixas - fretes - servicos;
+  const pct = (v: number) => (receitaVendas > 0 ? (v / receitaVendas) * 100 : 0);
+
+  return {
+    de, ate, empresaId: empresaId || null, cmvPct, cmvOrigem,
+    receitaVendas, receitaManual, cmv, compras,
+    lucroBruto, margemBruta: pct(lucroBruto),
+    taxasCartao, despesasFixas, fretes, servicos,
+    resultado, margemLiquida: pct(resultado),
+  };
+}
+
 export const dreGerencial = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
   async (req) => {
@@ -1589,112 +1703,81 @@ export const dreGerencial = onCall(
     }
     const empresaId = d.empresaId ? String(d.empresaId) : "";
     const cmvPct = Math.max(0, Math.min(100, Number(d.cmvPct) || 0));
-    const daEmpresa = (cid: unknown) => !empresaId || String(cid ?? "") === empresaId;
+    return { ok: true, ...(await calcularDRE(de, ate, empresaId, cmvPct)) };
+  },
+);
 
-    // mapa empresaId → cnpj (para excluir emissões próprias das compras)
-    const emps = await db.collection("nfe_companies").get();
-    const cnpjPorId = new Map<string, string>();
-    for (const e of emps.docs) cnpjPorId.set(e.id, somenteDigitos(String((e.data() as { cnpj?: string }).cnpj ?? "")));
+/** Primeiro e último dia (YYYY-MM-DD) de um mês YYYY-MM. */
+function limitesMes(ym: string): { de: string; ate: string } {
+  const y = Number(ym.slice(0, 4)); const m = Number(ym.slice(5, 7));
+  const ult = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { de: `${ym}-01`, ate: `${ym}-${String(ult).padStart(2, "0")}` };
+}
 
-    // RECEITA — vendas PDV (competência = dia da venda)
-    let receitaVendas = 0;
-    const salesSnap = await db.collection("sales").where("dia", ">=", de).where("dia", "<=", ate).get();
-    for (const doc of salesSnap.docs) {
-      const s = doc.data();
-      if (s.cancelada || !daEmpresa(s.empresaId)) continue;
-      receitaVendas += Number(s.valorTotal ?? 0);
+/**
+ * DRE comparativo: mesma estrutura do DRE, mas em várias colunas.
+ * eixo="mes": um DRE por mês do intervalo (mesma loja/consolidado) → tendência.
+ * eixo="loja": um DRE por empresa no período → ranking de rentabilidade.
+ * Reusa calcularDRE (bate 1:1 com o DRE individual). Só leitura (financeiro).
+ */
+export const dreComparativo = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 300 },
+  async (req) => {
+    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+    const d = req.data ?? {};
+    const eixo = d.eixo === "loja" ? "loja" : "mes";
+    const de = String(d.de ?? "").slice(0, 10);
+    const ate = String(d.ate ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
+      throw new HttpsError("invalid-argument", "Período inválido.");
     }
-    // TAXAS DE CARTÃO — recebíveis PDV (bruto − líquido), competência = dia da venda
-    let taxasCartao = 0;
-    const recSnap = await db.collection("card_receivables").where("dia", ">=", de).where("dia", "<=", ate).get();
-    for (const doc of recSnap.docs) {
-      const r = doc.data();
-      if (!daEmpresa(r.empresaId)) continue;
-      taxasCartao += Number(r.valor ?? 0) - Number(r.liquido ?? r.valor ?? 0);
-    }
+    const cmvPct = Math.max(0, Math.min(100, Number(d.cmvPct) || 0));
 
-    // MANUAL — receita da loja offline; taxa estimada pela taxa MÉDIA da loja da máquina
-    const agg = new Map<string, { debS: number; debN: number; cr1S: number; cr1N: number; pixS: number; pixN: number; parc: Map<string, { s: number; n: number }> }>();
-    for (const doc of (await db.collection("card_rates").get()).docs) {
-      const x = doc.data(); const cid = String(x.empresaId ?? "");
-      if (!cid) continue;
-      let a = agg.get(cid);
-      if (!a) { a = { debS: 0, debN: 0, cr1S: 0, cr1N: 0, pixS: 0, pixN: 0, parc: new Map() }; agg.set(cid, a); }
-      if (Number(x.taxaDebito) > 0) { a.debS += Number(x.taxaDebito); a.debN++; }
-      if (Number(x.taxaCredito) > 0) { a.cr1S += Number(x.taxaCredito); a.cr1N++; }
-      if (Number(x.taxaPix) > 0) { a.pixS += Number(x.taxaPix); a.pixN++; }
-      for (const [k, v] of Object.entries((x.parcelas ?? {}) as Record<string, number>)) {
-        if (Number(v) > 0) { const p = a.parc.get(k) ?? { s: 0, n: 0 }; p.s += Number(v); p.n++; a.parc.set(k, p); }
+    interface Coluna extends DREResultado { chave: string; rotulo: string; incompleto: boolean }
+    const colunas: Coluna[] = [];
+    // coluna "incompleta" = tem custo relevante mas receita implausivelmente baixa
+    // (mês fora da janela do sync de vendas → distorce a margem). Sinaliza, não esconde.
+    const ehIncompleto = (r: DREResultado): boolean => {
+      const custo = r.compras + r.despesasFixas + r.fretes + r.servicos;
+      return custo > 0 && r.receitaVendas < custo * 0.5;
+    };
+
+    if (eixo === "mes") {
+      const empresaId = d.empresaId ? String(d.empresaId) : "";
+      const meses = mesesEntre(de, ate).slice(0, 24); // teto de segurança
+      for (const ym of meses) {
+        const { de: md, ate: ma } = limitesMes(ym);
+        const dre = await calcularDRE(md, ma, empresaId, cmvPct);
+        colunas.push({ ...dre, chave: ym, rotulo: ym, incompleto: ehIncompleto(dre) });
+      }
+    } else {
+      // uma coluna por empresa (todas as cadastradas)
+      const emps = (await db.collection("nfe_companies").get()).docs
+        .map((e) => ({ id: e.id, nome: String((e.data() as { nomeFantasia?: string; razaoSocial?: string }).nomeFantasia || (e.data() as { razaoSocial?: string }).razaoSocial || e.id) }))
+        .sort((a, b) => a.nome.localeCompare(b.nome));
+      for (const emp of emps.slice(0, 30)) {
+        const dre = await calcularDRE(de, ate, emp.id, cmvPct);
+        // pula lojas totalmente vazias no período (sem receita nem custo nem despesa)
+        if (dre.receitaVendas === 0 && dre.compras === 0 && dre.despesasFixas === 0 && dre.fretes === 0 && dre.servicos === 0) continue;
+        colunas.push({ ...dre, chave: emp.id, rotulo: emp.nome, incompleto: ehIncompleto(dre) });
       }
     }
-    const taxaMedia = (cid: string, forma: string, parcelas: number): number => {
-      const a = agg.get(cid); if (!a) return 0;
-      if (forma === "cartaoDebito") return a.debN ? a.debS / a.debN : 0;
-      if (forma === "cartaoCredito") return a.cr1N ? a.cr1S / a.cr1N : 0;
-      if (forma === "pix") return a.pixN ? a.pixS / a.pixN : 0;
-      if (forma === "cartaoParcelado") { const p = a.parc.get(String(parcelas)); return p ? p.s / p.n : 0; }
-      return 0;
+
+    // TOTAL (soma das colunas) — só faz sentido somar valores, margem recalculada
+    const soma = (k: keyof DREResultado) => colunas.reduce((s, c) => s + (Number(c[k]) || 0), 0);
+    const recT = soma("receitaVendas");
+    const lbT = soma("lucroBruto");
+    const resT = soma("resultado");
+    const total = {
+      receitaVendas: recT, receitaManual: soma("receitaManual"),
+      cmv: soma("cmv"), compras: soma("compras"),
+      lucroBruto: lbT, margemBruta: recT > 0 ? (lbT / recT) * 100 : 0,
+      taxasCartao: soma("taxasCartao"), despesasFixas: soma("despesasFixas"),
+      fretes: soma("fretes"), servicos: soma("servicos"),
+      resultado: resT, margemLiquida: recT > 0 ? (resT / recT) * 100 : 0,
     };
-    let receitaManual = 0, taxaManual = 0;
-    const manSnap = await db.collection("manual_sales").where("dia", ">=", de).where("dia", "<=", ate).get();
-    for (const doc of manSnap.docs) {
-      const m = doc.data();
-      if (!daEmpresa(m.empresaId)) continue;
-      const valor = Number(m.valor ?? 0);
-      if (!(valor > 0)) continue;
-      receitaManual += valor;
-      const forma = String(m.forma ?? "");
-      if (forma !== "dinheiro") {
-        const parcelas = Math.max(2, Math.min(10, Math.round(Number(m.parcelas) || 2)));
-        taxaManual += valor * (taxaMedia(String(m.maquinaEmpresaId ?? ""), forma, parcelas) / 100);
-      }
-    }
-    receitaVendas += receitaManual;
-    taxasCartao += taxaManual;
 
-    // COMPRAS (proxy de CMV) — NF-e de fornecedor terceiro (competência = dhEmi)
-    let compras = 0;
-    const nfSnap = await db.collection("nfe_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get();
-    for (const doc of nfSnap.docs) {
-      const r = doc.data(); const cid = String(r.companyId ?? "");
-      if (!daEmpresa(cid)) continue;
-      const emit = somenteDigitos(String(r.cnpjEmit ?? ""));
-      if (!emit || emit === (cnpjPorId.get(cid) ?? "")) continue; // exclui emissões próprias
-      compras += Number(r.vNF ?? 0);
-    }
-
-    // DESPESAS FIXAS (competência mensal)
-    let despesasFixas = 0;
-    const meses = mesesEntre(de, ate);
-    for (const doc of (await db.collection("nfe_fixed_expenses").get()).docs) {
-      const x = doc.data();
-      if (!daEmpresa(x.companyId) || x.ativo === false) continue;
-      for (const ym of meses) if (incideNoMes(x, ym)) despesasFixas += Number(x.valor ?? 0);
-    }
-    // FRETES (CT-e) e SERVIÇOS (NFS-e) — competência = dhEmi
-    let fretes = 0;
-    for (const doc of (await db.collection("cte_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get()).docs) {
-      const r = doc.data(); if (daEmpresa(r.companyId)) fretes += Number(r.vTPrest ?? 0);
-    }
-    let servicos = 0;
-    for (const doc of (await db.collection("nfse_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get()).docs) {
-      const r = doc.data(); if (daEmpresa(r.companyId)) servicos += Number(r.vServ ?? 0);
-    }
-
-    const cmv = cmvPct > 0 ? receitaVendas * (cmvPct / 100) : compras;
-    const cmvOrigem = cmvPct > 0 ? "percentual" : "compras";
-    const lucroBruto = receitaVendas - cmv;
-    const resultado = lucroBruto - taxasCartao - despesasFixas - fretes - servicos;
-    const pct = (v: number) => (receitaVendas > 0 ? (v / receitaVendas) * 100 : 0);
-
-    return {
-      ok: true, de, ate, empresaId: empresaId || null, cmvPct, cmvOrigem,
-      receitaVendas, receitaManual,
-      cmv, compras,
-      lucroBruto, margemBruta: pct(lucroBruto),
-      taxasCartao, despesasFixas, fretes, servicos,
-      resultado, margemLiquida: pct(resultado),
-    };
+    return { ok: true, eixo, de, ate, cmvPct, empresaId: eixo === "mes" ? (d.empresaId ? String(d.empresaId) : null) : null, colunas, total };
   },
 );
 
