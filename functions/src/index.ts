@@ -1673,13 +1673,18 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     compras += Number(r.vNF ?? 0);
   }
 
-  // DESPESAS FIXAS (competência mensal)
+  // DESPESAS FIXAS (competência mensal). No mês pago, usa o VALOR REAL pago; senão, o previsto.
   let despesasFixas = 0;
   const meses = mesesEntre(de, ate);
   for (const doc of (await db.collection("nfe_fixed_expenses").get()).docs) {
     const x = doc.data();
     if (!daEmpresa(x.companyId) || x.ativo === false) continue;
-    for (const ym of meses) if (incideNoMes(x, ym)) despesasFixas += Number(x.valor ?? 0);
+    const pagamentos = (x.pagamentos ?? {}) as Record<string, { pago?: boolean; valor?: number }>;
+    for (const ym of meses) {
+      if (!incideNoMes(x, ym)) continue;
+      const pg = pagamentos[ym];
+      despesasFixas += pg?.pago ? Number(pg.valor ?? x.valor ?? 0) : Number(x.valor ?? 0);
+    }
   }
   // FRETES (CT-e) e SERVIÇOS (NFS-e) — competência = dhEmi
   let fretes = 0;

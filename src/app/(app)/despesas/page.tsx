@@ -517,6 +517,16 @@ export default function DespesasPage() {
               const p = pagamentoDe(d, ym);
               return s + (p?.pago ? p.valor ?? d.valor ?? 0 : 0);
             }, 0);
+            // Valor efetivo exibido: previsto enquanto pendente; valor REAL no mês pago.
+            const efetivo = !incideNoPeriodo
+              ? (d.valor ?? 0)
+              : inativa
+                ? 0
+                : incid.reduce((s, ym) => {
+                  const p = pagamentoDe(d, ym);
+                  return s + (p?.pago ? (p.valor ?? d.valor ?? 0) : (d.valor ?? 0));
+                }, 0);
+            const mostraPrevisto = !multiMes && incideNoPeriodo && pagosN > 0 && Math.abs(efetivo - (d.valor ?? 0)) > 0.005;
             const bz = `pg:${d.id}`;
             const pagando = pagandoId === d.id;
             const mesPago = !!pagamentoDe(d, pMes)?.pago;
@@ -543,7 +553,8 @@ export default function DespesasPage() {
                       </p>
                     </div>
                     <div className="flex flex-col items-end gap-1">
-                      <p className="font-bold tnum">{formatBRL(d.valor)}</p>
+                      <p className="font-bold tnum">{formatBRL(efetivo)}</p>
+                      {mostraPrevisto ? <p className="-mt-1 text-[10px] text-muted-foreground">previsto {formatBRL(d.valor)}</p> : null}
                       {!incideNoPeriodo ? (
                         <Badge variant="neutral">Não incide</Badge>
                       ) : tudoPago ? (
