@@ -8,8 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
 import { obterConciliacao, listarEmpresas, type Conciliacao } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
-import { formatBRL, formatarData } from "@/lib/utils";
-import { Scale, CheckCircle2, AlertTriangle } from "lucide-react";
+import { cn, formatBRL, formatarData } from "@/lib/utils";
+import { CheckCircle2, AlertTriangle } from "lucide-react";
 
 function periodoEsteMes(): Periodo {
   const d = new Date();
@@ -144,9 +144,9 @@ export default function ConciliacaoPage() {
           ) : null}
 
           {/* Contexto do banco */}
-          <Card className="mt-4">
+          <h2 className="mb-3 mt-7 text-[0.95rem] font-semibold tracking-tight">Também no extrato</h2>
+          <Card>
             <CardContent className="py-4">
-              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Também no extrato (período)</h2>
               <div className="divide-y divide-border text-sm">
                 <div className="flex items-center justify-between py-1.5">
                   <span className="text-muted-foreground">Outras entradas</span>
@@ -177,33 +177,34 @@ function LinhaConc({ titulo, banco, previsto, dif, nota }: { titulo: string; ban
   const tolerancia = Math.max(50, Math.abs(previsto) * 0.02);
   const confere = Math.abs(dif) <= tolerancia;
   return (
-    <Card className={confere ? undefined : "border-warning/50"}>
-      <CardContent className="py-4">
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="font-semibold">{titulo}</h2>
+    <Card className={cn("relative overflow-hidden shadow-card", !confere && "border-warning/50")}>
+      <div className={cn("pointer-events-none absolute inset-0 bg-gradient-to-br to-transparent", confere ? "from-success/[0.07]" : "from-warning/[0.09]")} />
+      <CardContent className="relative py-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[0.95rem] font-semibold tracking-tight">{titulo}</h2>
           {confere ? (
             <Badge variant="success"><CheckCircle2 className="mr-1 size-3.5" /> Confere</Badge>
           ) : (
             <Badge variant="warning"><AlertTriangle className="mr-1 size-3.5" /> Diverge</Badge>
           )}
         </div>
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Banco</p>
-            <p className="font-bold tnum">{formatBRL(banco)}</p>
+        <div className="grid grid-cols-3 gap-1 divide-x divide-border/50 text-center">
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Banco recebeu</p>
+            <p className="mt-1 text-[0.95rem] font-bold leading-none tracking-[-0.01em] tnum sm:text-base">{formatBRL(banco)}</p>
           </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">PDV previa</p>
-            <p className="font-bold tnum">{formatBRL(previsto)}</p>
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">PDV previa</p>
+            <p className="mt-1 text-[0.95rem] font-bold leading-none tracking-[-0.01em] tnum sm:text-base">{formatBRL(previsto)}</p>
           </div>
-          <div>
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Diferença</p>
-            <p className={`font-bold tnum ${confere ? "text-muted-foreground" : "text-warning"}`}>
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Diferença</p>
+            <p className={cn("mt-1 text-[0.95rem] font-bold leading-none tracking-[-0.01em] tnum sm:text-base", confere ? "text-muted-foreground" : "text-warning")}>
               {dif >= 0 ? "+" : "−"}{formatBRL(Math.abs(dif))}
             </p>
           </div>
         </div>
-        <p className="mt-2 text-[11px] text-muted-foreground">{nota}</p>
+        <p className="mt-3 text-[11px] leading-snug text-muted-foreground">{nota}</p>
       </CardContent>
     </Card>
   );
