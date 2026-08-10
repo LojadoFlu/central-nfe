@@ -4,7 +4,7 @@
   "private": true,
   "description": "Cloud Functions da Central NF-e — integração SEFAZ, certificado e sincronização.",
   "main": "lib/index.js",
-  "engines": { "node": "20" },
+  "engines": { "node": "22" },
   "scripts": {
     "build": "tsc",
     "serve": "npm run build && firebase emulators:start --only functions",
