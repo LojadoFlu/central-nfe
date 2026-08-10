@@ -5,6 +5,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Hero } from "@/components/ui/hero";
 import { obterPendencias, listarEmpresas, type Pendencias } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { formatBRL } from "@/lib/utils";
@@ -81,10 +82,18 @@ export default function PendenciasPage() {
       ) : (
         <>
           {/* Resumo por severidade */}
-          <div className="mb-4 grid grid-cols-3 gap-3">
-            <ResumoChip n={dados?.resumo.criticas ?? 0} label="Críticas" tone="text-destructive" />
-            <ResumoChip n={dados?.resumo.atencao ?? 0} label="Atenção" tone="text-warning" />
-            <ResumoChip n={dados?.resumo.info ?? 0} label="Info" tone="text-primary" />
+          <div className="mb-4">
+            <Hero
+              eyebrow="Pendências críticas"
+              value={String(dados?.resumo.criticas ?? 0)}
+              valueTone={(dados?.resumo.criticas ?? 0) > 0 ? "destructive" : "default"}
+              tone={(dados?.resumo.criticas ?? 0) > 0 ? "destructive" : (dados?.resumo.atencao ?? 0) > 0 ? "warning" : "success"}
+              subtitle="Exceções que precisam da sua atenção agora"
+              metrics={[
+                { label: "Atenção", value: String(dados?.resumo.atencao ?? 0), tone: "warning" },
+                { label: "Info", value: String(dados?.resumo.info ?? 0) },
+              ]}
+            />
           </div>
 
           <div className="space-y-3">
@@ -122,13 +131,3 @@ export default function PendenciasPage() {
   );
 }
 
-function ResumoChip({ n, label, tone }: { n: number; label: string; tone: string }) {
-  return (
-    <Card>
-      <CardContent className="py-3 text-center">
-        <p className={`text-2xl font-bold tnum ${n > 0 ? tone : "text-muted-foreground"}`}>{n}</p>
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      </CardContent>
-    </Card>
-  );
-}

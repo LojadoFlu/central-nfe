@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
+import { Hero } from "@/components/ui/hero";
 import { conferirRecebiveis, listarEmpresas, type Conferencia } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { formatBRL, formatarData } from "@/lib/utils";
@@ -78,26 +79,18 @@ export default function ConferirPage() {
         <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-40" /></div>
       ) : dados ? (
         <>
-          <div className="grid grid-cols-3 gap-3">
-            <Mini n={r?.taxaOk ?? 0} label="Taxa OK" tone="text-success" />
-            <Mini n={r?.divergentes ?? 0} label="Divergentes" tone="text-warning" />
-            <Mini n={r?.semCadastro ?? 0} label="Sem cadastro" tone="text-muted-foreground" />
-          </div>
-
-          {/* Impacto */}
-          <Card className={`mt-3 ${(r?.impactoTotal ?? 0) > 0 ? "border-destructive/40" : ""}`}>
-            <CardContent className="flex flex-wrap items-center justify-between gap-2 py-4">
-              <div>
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                  {(r?.impactoTotal ?? 0) >= 0 ? "Cobrado a mais no período" : "Cobrado a menos no período"}
-                </p>
-                <p className={`text-2xl font-bold tnum ${(r?.impactoTotal ?? 0) > 0 ? "text-destructive" : "text-success"}`}>
-                  {formatBRL(Math.abs(r?.impactoTotal ?? 0))}
-                </p>
-              </div>
-              <p className="text-xs text-muted-foreground">{r?.conferidos ?? 0} venda(s) de cartão conferida(s)</p>
-            </CardContent>
-          </Card>
+          <Hero
+            eyebrow={(r?.impactoTotal ?? 0) >= 0 ? "Cobrado a mais no período" : "Cobrado a menos no período"}
+            value={formatBRL(Math.abs(r?.impactoTotal ?? 0))}
+            valueTone={(r?.impactoTotal ?? 0) > 0 ? "destructive" : "success"}
+            tone={(r?.impactoTotal ?? 0) > 0 ? "destructive" : "success"}
+            subtitle={`${r?.conferidos ?? 0} venda(s) de cartão conferida(s) — taxa cobrada × cadastrada`}
+            metrics={[
+              { label: "Taxa OK", value: String(r?.taxaOk ?? 0), tone: "success" },
+              { label: "Divergentes", value: String(r?.divergentes ?? 0), tone: "warning" },
+              { label: "Sem cadastro", value: String(r?.semCadastro ?? 0) },
+            ]}
+          />
 
           {(dados.divergencias?.length ?? 0) === 0 ? (
             <div className="mt-4">
@@ -149,13 +142,3 @@ export default function ConferirPage() {
   );
 }
 
-function Mini({ n, label, tone }: { n: number; label: string; tone: string }) {
-  return (
-    <Card>
-      <CardContent className="py-3 text-center">
-        <p className={`text-2xl font-bold tnum ${n > 0 ? tone : "text-muted-foreground"}`}>{n}</p>
-        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      </CardContent>
-    </Card>
-  );
-}
