@@ -69,7 +69,7 @@ export default function FornecedorDetalhePage() {
       {porMes.length > 0 ? (
         <Card className="mt-4">
           <CardContent className="py-4">
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">
               Evolução mensal
             </h2>
             <div className="divide-y divide-border">
@@ -86,7 +86,7 @@ export default function FornecedorDetalhePage() {
         </Card>
       ) : null}
 
-      <h2 className="mb-3 mt-6 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+      <h2 className="mb-3 mt-6 text-[0.95rem] font-semibold tracking-tight">
         Notas ({docs.length})
       </h2>
       <div className="space-y-3">

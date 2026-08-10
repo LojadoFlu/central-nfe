@@ -185,7 +185,7 @@ export default function ManualPage() {
           ) : (
             <>
               <div className="mb-2 flex items-center justify-between">
-                <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Lançamentos de {formatarData(dia)}</p>
+                <p className="text-[0.95rem] font-semibold tracking-tight">Lançamentos de {formatarData(dia)}</p>
                 <p className="text-sm font-bold tnum">{formatBRL(totalDia)}</p>
               </div>
               <div className="space-y-2">

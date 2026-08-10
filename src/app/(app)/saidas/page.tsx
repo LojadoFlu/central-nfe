@@ -141,7 +141,7 @@ export default function SaidasPage() {
           {/* Composição das saídas do banco */}
           <Card className="mt-4">
             <CardContent className="py-4">
-              <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Saídas do banco por natureza</h2>
+              <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">Saídas do banco por natureza</h2>
               {cats.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Sem saídas no período (importe o extrato em Banco).</p>
               ) : (

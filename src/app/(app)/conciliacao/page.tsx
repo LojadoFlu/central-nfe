@@ -99,7 +99,7 @@ export default function ConciliacaoPage() {
             <Card className="mt-4">
               <CardContent className="py-4">
                 <button type="button" onClick={() => setVerDia((v) => !v)} className="flex w-full items-center justify-between">
-                  <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Detalhe por dia</h2>
+                  <h2 className="text-[0.95rem] font-semibold tracking-tight">Detalhe por dia</h2>
                   <span className="text-xs font-medium text-primary">{verDia ? "ocultar" : "ver onde diverge"}</span>
                 </button>
                 {verDia ? (

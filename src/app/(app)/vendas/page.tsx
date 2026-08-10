@@ -214,7 +214,7 @@ export default function VendasPage() {
           {formas.length > 0 ? (
             <Card className="mt-4">
               <CardContent className="py-4">
-                <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Por forma de pagamento</h2>
+                <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">Por forma de pagamento</h2>
                 <div className="divide-y divide-border">
                   {formas.map(([k, v]) => (
                     <div key={k} className="flex items-center justify-between py-1.5 text-sm">

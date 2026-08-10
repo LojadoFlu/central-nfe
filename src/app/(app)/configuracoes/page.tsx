@@ -84,7 +84,7 @@ export default function ConfiguracoesPage() {
       <Card className="mb-4">
         <CardContent className="py-5">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <h2 className="flex items-center gap-2 text-[0.95rem] font-semibold tracking-tight">
               <Plug className="size-4" /> PDVnet
             </h2>
             <Badge variant={status?.temCredenciais ? "success" : "neutral"}>

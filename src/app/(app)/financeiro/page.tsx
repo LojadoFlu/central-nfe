@@ -290,7 +290,7 @@ export default function FinanceiroPage() {
         <Card className="mt-3">
           <CardContent className="py-4">
             <div className="mb-2 flex items-baseline justify-between">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              <h2 className="text-[0.95rem] font-semibold tracking-tight">
                 Pagamentos por mês
               </h2>
               <span className="text-sm text-muted-foreground">

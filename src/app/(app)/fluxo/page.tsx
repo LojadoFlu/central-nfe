@@ -279,7 +279,7 @@ export default function FluxoPage() {
               {dados?.porOrigem ? (
                 <Card className="mt-3">
                   <CardContent className="py-4">
-                    <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Composição</h2>
+                    <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">Composição</h2>
                     <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
                       {Object.entries(dados.porOrigem)
                         .filter(([, v]) => v > 0)
@@ -304,7 +304,7 @@ export default function FluxoPage() {
               {dados?.proximosCartao?.length ? (
                 <Card className="mt-3">
                   <CardContent className="py-4">
-                    <h2 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Próximos créditos de cartão</h2>
+                    <h2 className="mb-1 text-[0.95rem] font-semibold tracking-tight">Próximos créditos de cartão</h2>
                     <p className="mb-2 text-[11px] text-muted-foreground">Quando o cartão já vendido vai cair na conta. Fins de semana caem na segunda.</p>
                     <div className="flex gap-2 overflow-x-auto pb-1">
                       {dados.proximosCartao.slice(0, 14).map((c) => {

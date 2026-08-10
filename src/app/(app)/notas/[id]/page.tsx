@@ -202,7 +202,7 @@ export default function NotaDetalhePage() {
       {/* Resumo */}
       <Card className="mb-4">
         <CardContent className="py-4">
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">
             Resumo
           </h2>
           <Linha rotulo="Número / Série" valor={doc.nNF ? `${doc.nNF}${doc.serie ? "/" + doc.serie : ""}` : "—"} />
@@ -219,7 +219,7 @@ export default function NotaDetalhePage() {
       {podeAcao("nfe.manifestar") ? (
         <Card className="mb-4">
           <CardContent className="py-4">
-            <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <h2 className="mb-2 flex items-center gap-2 text-[0.95rem] font-semibold tracking-tight">
               <ShieldCheck className="size-4" /> Manifestação
             </h2>
             {doc.manifestStatus ? (
@@ -316,7 +316,7 @@ export default function NotaDetalhePage() {
       {parcelas.length > 0 ? (
         <Card className="mb-4">
           <CardContent className="py-4">
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">
               Financeiro · {parcelas.length} parcela{parcelas.length > 1 ? "s" : ""}
             </h2>
             <div className="divide-y divide-border">
@@ -365,7 +365,7 @@ export default function NotaDetalhePage() {
       {itens.length > 0 ? (
         <Card className="mb-4">
           <CardContent className="py-4">
-            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+            <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">
               Produtos · {itens.length} {itens.length > 1 ? "itens" : "item"}
             </h2>
             <div className="space-y-2">
@@ -390,7 +390,7 @@ export default function NotaDetalhePage() {
       {/* Documento (XML / DANFE) */}
       <Card>
         <CardContent className="py-4">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          <h2 className="mb-3 text-[0.95rem] font-semibold tracking-tight">
             Documento
           </h2>
           <div className="flex flex-wrap gap-2">

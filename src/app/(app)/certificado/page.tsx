@@ -149,7 +149,7 @@ export default function CertificadoPage() {
         </p>
       )}
 
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+      <h2 className="mb-3 text-[0.95rem] font-semibold tracking-tight">
         Certificados instalados
       </h2>
       {certs === null ? (
