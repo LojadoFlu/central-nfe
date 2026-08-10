@@ -1192,15 +1192,24 @@ export const pdvnetSincronizarVendas = onCall(
     }
     const cli = new PdvnetClient(cred);
     const hoje = new Date();
-    const dias = Math.floor(Number(req.data?.dias ?? 0));
-    const ini = dias > 0
-      ? new Date(hoje.getTime() - dias * 86_400_000)
-      : new Date(hoje.getFullYear(), hoje.getMonth(), 1); // 1º dia do mês corrente
     const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    // Janela explícita (de/ate) tem prioridade — permite backfill fatiado; senão usa dias/mês.
+    const de0 = String(req.data?.de ?? "");
+    const ate0 = String(req.data?.ate ?? "");
+    let inicio: string, fim: string;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(de0) && /^\d{4}-\d{2}-\d{2}$/.test(ate0) && de0 <= ate0) {
+      inicio = de0; fim = ate0;
+    } else {
+      const dias = Math.floor(Number(req.data?.dias ?? 0));
+      const ini = dias > 0
+        ? new Date(hoje.getTime() - dias * 86_400_000)
+        : new Date(hoje.getFullYear(), hoje.getMonth(), 1); // 1º dia do mês corrente
+      inicio = fmt(ini); fim = fmt(hoje);
+    }
     try {
-      const r = await sincronizarVendas(cli, fmt(ini), fmt(hoje));
-      await auditar(uid, "pdvnet.sincronizarVendas", { periodo: `${fmt(ini)}..${fmt(hoje)}`, vendas: r.vendas });
-      return { ok: true, periodo: { inicio: fmt(ini), fim: fmt(hoje) }, ...r };
+      const r = await sincronizarVendas(cli, inicio, fim);
+      await auditar(uid, "pdvnet.sincronizarVendas", { periodo: `${inicio}..${fim}`, vendas: r.vendas });
+      return { ok: true, periodo: { inicio, fim }, ...r };
     } catch (e) {
       const msg = (e as Error).message || String(e);
       logger.error("pdvnetSincronizarVendas falhou", { erro: msg });
