@@ -912,6 +912,56 @@ export async function obterConciliacaoSaidas(de: string, ate: string, empresaId 
   return res.data as ConciliacaoSaidas;
 }
 
+// ——— Contas a pagar (importadas do PDV) ———
+export interface ContasPagarResumo {
+  qtd: number;
+  total: number;
+  semEmpresa?: number;
+  periodo?: { de: string | null; ate: string | null };
+  porCategoria: { categoria: string; qtd: number; valor: number }[];
+  porLoja?: { loja: string; qtd: number; valor: number }[];
+}
+export interface ImportContasResp {
+  ok: boolean;
+  dryRun: boolean;
+  importados?: number;
+  removidos?: number;
+  resumo: ContasPagarResumo;
+}
+export interface ContaPagarItem {
+  id: string;
+  empresaId: string | null;
+  loja: string;
+  categoria: string;
+  fornecedor: string;
+  parcela: string;
+  observacao: string;
+  vencimento: string;
+  valor: number;
+}
+export interface ContasPagarResp {
+  ok: boolean;
+  de: string | null;
+  ate: string | null;
+  qtd: number;
+  total: number;
+  ultimoImport: string | null;
+  porCategoria: { categoria: string; qtd: number; valor: number }[];
+  itens: ContaPagarItem[];
+}
+export async function importarContasPagar(texto: string, dryRun: boolean): Promise<ImportContasResp> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "importarContasPagar");
+  const res = await fn({ texto, dryRun });
+  return res.data as ImportContasResp;
+}
+export async function obterContasPagar(de: string, ate: string, empresaId = ""): Promise<ContasPagarResp> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "contasPagar");
+  const res = await fn({ de, ate, empresaId });
+  return res.data as ContasPagarResp;
+}
+
 // ——— DRE comparativo (mês a mês / lojas lado a lado) ———
 export interface DREColuna {
   chave: string;

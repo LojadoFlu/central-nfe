@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -15,13 +15,17 @@ import {
   pagarDespesaFixa,
   excluirDespesaFixa,
   listarEmpresas,
+  importarContasPagar,
+  obterContasPagar,
   type DespesaFixa,
+  type ContasPagarResp,
+  type ImportContasResp,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
-import { formatBRL, formatarData } from "@/lib/utils";
-import { Receipt, Plus, Trash2, Check, RotateCcw, X, Pencil } from "lucide-react";
+import { FiltroPeriodo, noPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
+import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
+import { Receipt, Plus, Trash2, Check, RotateCcw, X, Pencil, Upload } from "lucide-react";
 
 const CATEGORIAS: { key: string; label: string }[] = [
   { key: "aluguel", label: "Aluguel" },
@@ -124,6 +128,13 @@ export default function DespesasPage() {
   const [fObs, setFObs] = useState("");
   const [fAtivo, setFAtivo] = useState(true);
   const [salvando, setSalvando] = useState(false);
+  // Import de contas a pagar do PDV (prévia → confirmar)
+  const [contas, setContas] = useState<ContasPagarResp | null>(null);
+  const [pendingText, setPendingText] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ImportContasResp | null>(null);
+  const [impOcupado, setImpOcupado] = useState(false);
+  const [impMsg, setImpMsg] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const meses = useMemo(() => mesesNoIntervalo(periodo), [periodo]);
   const multiMes = meses.length > 1;
@@ -140,9 +151,49 @@ export default function DespesasPage() {
     }
   }, []);
 
+  const carregarContas = useCallback(async () => {
+    try {
+      setContas(await obterContasPagar("", "", filtroEmp));
+    } catch { /* silencioso */ }
+  }, [filtroEmp]);
+
   useEffect(() => {
     void carregar();
   }, [carregar]);
+  useEffect(() => { void carregarContas(); }, [carregarContas]);
+
+  async function aoEscolherArquivo(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (fileRef.current) fileRef.current.value = "";
+    if (!file) return;
+    setErro(null); setImpMsg(null); setImpOcupado(true);
+    try {
+      const buf = await file.arrayBuffer();
+      let texto: string;
+      try { texto = new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+      catch { texto = new TextDecoder("windows-1252").decode(buf); }
+      const prev = await importarContasPagar(texto, true);
+      setPendingText(texto); setPreview(prev);
+    } catch (err) {
+      setErro((err as Error).message);
+    } finally {
+      setImpOcupado(false);
+    }
+  }
+  async function confirmarImport() {
+    if (!pendingText) return;
+    setImpOcupado(true); setErro(null);
+    try {
+      const r = await importarContasPagar(pendingText, false);
+      setImpMsg(`${r.importados} título(s) importado(s) · ${formatBRL(r.resumo.total)}${r.removidos ? ` (substituiu ${r.removidos})` : ""}.`);
+      setPreview(null); setPendingText(null);
+      await carregarContas();
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setImpOcupado(false);
+    }
+  }
 
   function resetForm() {
     setEditId(null);
@@ -291,12 +342,49 @@ export default function DespesasPage() {
         description="Recorrentes — previsto (fluxo de caixa) e valor real ao pagar."
         action={
           podeEditar && !formAberto ? (
-            <Button size="sm" onClick={abrirNovo}>
-              <Plus className="size-4" /> Nova despesa
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" disabled={impOcupado} onClick={() => fileRef.current?.click()}>
+                <Upload className="size-4" /> {impOcupado ? "Lendo…" : "Importar PDV"}
+              </Button>
+              <Button size="sm" onClick={abrirNovo}>
+                <Plus className="size-4" /> Nova
+              </Button>
+            </div>
           ) : undefined
         }
       />
+      <input ref={fileRef} type="file" accept=".csv,.txt" className="hidden" onChange={aoEscolherArquivo} />
+      {impMsg ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{impMsg}</p> : null}
+      {preview ? (
+        <Card className="mb-4 border-primary/40">
+          <CardContent className="py-4">
+            <h2 className="text-[0.95rem] font-semibold tracking-tight">Prévia da importação do PDV</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {preview.resumo.qtd} títulos · {formatBRL(preview.resumo.total)} · venc. {preview.resumo.periodo?.de} → {preview.resumo.periodo?.ate}
+              {preview.resumo.semEmpresa ? ` · ${preview.resumo.semEmpresa} sem loja` : ""}
+            </p>
+            <div className="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2">
+              {preview.resumo.porCategoria.map((c) => (
+                <div key={c.categoria} className="flex items-center justify-between border-b border-border/40 py-1.5 text-sm last:border-0">
+                  <span className="text-muted-foreground">{c.categoria} <span className="text-[11px]">· {c.qtd}</span></span>
+                  <span className="font-medium tnum">{formatBRL(c.valor)}</span>
+                </div>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] text-muted-foreground">
+              Confirmar <strong>substitui</strong> os títulos importados antes (o relatório do PDV é a fonte da verdade). Nada é gravado até confirmar.
+            </p>
+            <div className="mt-3 flex gap-2">
+              <Button size="sm" disabled={impOcupado} onClick={confirmarImport}>
+                <Check className="size-4" /> {impOcupado ? "Importando…" : "Confirmar"}
+              </Button>
+              <Button size="sm" variant="ghost" disabled={impOcupado} onClick={() => { setPreview(null); setPendingText(null); }}>
+                <X className="size-4" /> Cancelar
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
 
@@ -558,6 +646,48 @@ export default function DespesasPage() {
         O <strong>previsto</strong> alimenta a simulação do fluxo de caixa; ao pagar, informe o <strong>valor real</strong> (pode variar).
         A recorrência define em quais meses a despesa incide. Tudo é registrado com autor e data.
       </p>
+
+      {/* Contas a pagar importadas do PDV */}
+      {contas && contas.qtd > 0 ? (
+        <section className="mt-8">
+          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-[0.95rem] font-semibold tracking-tight">Contas a pagar importadas do PDV</h2>
+            {contas.ultimoImport ? <span className="text-xs text-muted-foreground">importado {formatarDataHora(contas.ultimoImport)}</span> : null}
+          </div>
+          <p className="mb-3 text-xs text-muted-foreground">
+            {contas.qtd} títulos · total {formatBRL(contas.total)}. Alimentam o Fluxo de caixa e a Conciliação de saídas. Re-importar substitui todos.
+          </p>
+          <Card className="mb-3">
+            <CardContent className="py-3">
+              <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
+                {contas.porCategoria.map((c) => (
+                  <div key={c.categoria} className="flex items-center justify-between border-b border-border/40 py-1 text-sm last:border-0">
+                    <span className="text-muted-foreground">{c.categoria} <span className="text-[11px]">· {c.qtd}</span></span>
+                    <span className="font-medium tnum">{formatBRL(c.valor)}</span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+          <div className="space-y-2">
+            {contas.itens.filter((t) => noPeriodo(t.vencimento, periodo)).slice(0, 200).map((t) => (
+              <Card key={t.id}>
+                <CardContent className="flex items-center justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{t.observacao || t.fornecedor || t.categoria}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatarData(t.vencimento)} · <Badge variant="neutral">{t.categoria}</Badge>
+                      {t.loja ? ` · ${t.loja}` : ""}{t.parcela ? ` · parc ${t.parcela}` : ""}
+                    </p>
+                  </div>
+                  <p className="shrink-0 font-bold tnum text-destructive">{formatBRL(t.valor)}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+          <p className="mt-2 px-1 text-[11px] text-muted-foreground">Lista filtrada pelo período selecionado acima.</p>
+        </section>
+      ) : null}
     </div>
   );
 }

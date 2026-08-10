@@ -23,6 +23,7 @@ import {
 import { PdvnetClient } from "./pdvnet/client";
 import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-vendas";
 import { parseOFX } from "./banco/ofx";
+import { parseContasPagar } from "./financeiro/contas-pagar";
 import { getStorage } from "firebase-admin/storage";
 import { getAuth } from "firebase-admin/auth";
 import { consultarDistribuicaoNSU } from "./sefaz/distribuicao";
@@ -1948,7 +1949,7 @@ export const fluxoCaixa = onCall(
       return b;
     };
     const tot = { entrada: 0, saida: 0, entradaReal: 0, saidaReal: 0 };
-    const porOrigem: Record<string, number> = { cartao: 0, avista: 0, nfe: 0, despesas: 0, acordos: 0 };
+    const porOrigem: Record<string, number> = { cartao: 0, avista: 0, nfe: 0, despesas: 0, acordos: 0, contasPagar: 0 };
     const entrada = (dia: string, valor: number, real: boolean, origem: string) => {
       if (!noRange(dia) || !(valor > 0)) return;
       const b = buck(dia); b.entrada += valor; if (real) b.entradaReal += valor;
@@ -2018,6 +2019,13 @@ export const fluxoCaixa = onCall(
         const dia = d10(pago ? p.dataPagamento : p.vencimento);
         saida(dia, Number(p.valor ?? 0), pago, "acordos");
       }
+    }
+    // SAÍDAS — contas a pagar importadas do PDV (previstas, pela data de vencimento)
+    const capSnap = await db.collection("nfe_payables").where("vencimento", ">=", de).where("vencimento", "<=", ate).get();
+    for (const doc of capSnap.docs) {
+      const p = doc.data();
+      if (!daEmpresa(p.empresaId)) continue;
+      saida(d10(p.vencimento), Number(p.valor ?? 0), false, "contasPagar");
     }
 
     const linhas = [...dias.entries()]
@@ -2101,6 +2109,107 @@ export const centralPendencias = onCall(
       info: pend.filter((p) => p.severidade === "info").length,
     };
     return { ok: true, hoje, empresaId: empresaId || null, pendencias: pend, resumo };
+  },
+);
+
+/**
+ * Importa o relatório "Contas a Pagar" do PDV (CSV) → coleção nfe_payables.
+ * dryRun (padrão): só devolve a PRÉVIA (resumo) sem gravar — o usuário decide importar.
+ * Import real: FULL-REPLACE dos títulos origem="pdv-import" (o relatório é a fonte da verdade).
+ * Alimenta Fluxo de caixa e Conciliação de saídas. Admin/financeiro.
+ */
+export const importarContasPagar = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 300 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+    const texto = String(req.data?.texto ?? "");
+    const dryRun = req.data?.dryRun !== false; // padrão = só prévia
+    if (texto.length < 20) throw new HttpsError("invalid-argument", "Arquivo vazio ou inválido.");
+    const titulos = parseContasPagar(texto);
+    if (!titulos.length) {
+      throw new HttpsError("failed-precondition", "Nenhum título reconhecido. Confira se é o relatório 'Contas a Pagar' do PDV (CSV).");
+    }
+
+    const porCategoria: Record<string, { qtd: number; valor: number }> = {};
+    const porLoja: Record<string, { qtd: number; valor: number }> = {};
+    let total = 0, semEmpresa = 0;
+    const vencs: string[] = [];
+    for (const t of titulos) {
+      total += t.valor;
+      (porCategoria[t.categoria] ??= { qtd: 0, valor: 0 });
+      porCategoria[t.categoria].qtd++; porCategoria[t.categoria].valor += t.valor;
+      const lk = t.loja || "(sem loja)";
+      (porLoja[lk] ??= { qtd: 0, valor: 0 });
+      porLoja[lk].qtd++; porLoja[lk].valor += t.valor;
+      if (!t.empresaId) semEmpresa++;
+      vencs.push(t.vencimento);
+    }
+    vencs.sort();
+    const resumo = {
+      qtd: titulos.length, total, semEmpresa,
+      periodo: { de: vencs[0] ?? null, ate: vencs[vencs.length - 1] ?? null },
+      porCategoria: Object.entries(porCategoria).map(([k, v]) => ({ categoria: k, ...v })).sort((a, b) => b.valor - a.valor),
+      porLoja: Object.entries(porLoja).map(([k, v]) => ({ loja: k, ...v })).sort((a, b) => b.valor - a.valor),
+    };
+
+    if (dryRun) return { ok: true, dryRun: true, resumo };
+
+    // IMPORT REAL — full-replace dos títulos importados do PDV.
+    const now = agoraISO();
+    const antigos = await db.collection("nfe_payables").where("origem", "==", "pdv-import").get();
+    let batch = db.batch(); let ops = 0;
+    const flush = async () => { if (ops) { await batch.commit(); batch = db.batch(); ops = 0; } };
+    for (const doc of antigos.docs) { batch.delete(doc.ref); if (++ops >= 400) await flush(); }
+    await flush();
+    for (const t of titulos) {
+      batch.set(db.collection("nfe_payables").doc(), { ...t, origem: "pdv-import", importadoEm: now, importadoPor: uid });
+      if (++ops >= 400) await flush();
+    }
+    await flush();
+    await auditar(uid, "financeiro.importarContasPagar", { qtd: titulos.length, total, removidos: antigos.size });
+    return { ok: true, dryRun: false, importados: titulos.length, removidos: antigos.size, resumo };
+  },
+);
+
+/** Lista as contas a pagar importadas (por empresa/período de vencimento) + resumo. */
+export const contasPagar = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+    const d = req.data ?? {};
+    const de = String(d.de ?? "").slice(0, 10);
+    const ate = String(d.ate ?? "").slice(0, 10);
+    const empresaId = d.empresaId ? String(d.empresaId) : "";
+    const temPeriodo = /^\d{4}-\d{2}-\d{2}$/.test(de) && /^\d{4}-\d{2}-\d{2}$/.test(ate);
+    const snap = temPeriodo
+      ? await db.collection("nfe_payables").where("vencimento", ">=", de).where("vencimento", "<=", ate).get()
+      : await db.collection("nfe_payables").get();
+
+    interface Item { id: string; empresaId: string | null; loja: string; categoria: string; fornecedor: string; parcela: string; observacao: string; vencimento: string; valor: number }
+    const itens: Item[] = [];
+    const porCategoria: Record<string, { qtd: number; valor: number }> = {};
+    let total = 0; let ultimoImport = "";
+    for (const doc of snap.docs) {
+      const x = doc.data();
+      if (empresaId && String(x.empresaId ?? "") !== empresaId) continue;
+      const valor = Number(x.valor ?? 0);
+      total += valor;
+      (porCategoria[String(x.categoria ?? "—")] ??= { qtd: 0, valor: 0 });
+      porCategoria[String(x.categoria ?? "—")].qtd++; porCategoria[String(x.categoria ?? "—")].valor += valor;
+      if (String(x.importadoEm ?? "") > ultimoImport) ultimoImport = String(x.importadoEm ?? "");
+      itens.push({
+        id: doc.id, empresaId: x.empresaId ?? null, loja: String(x.loja ?? ""), categoria: String(x.categoria ?? ""),
+        fornecedor: String(x.fornecedor ?? ""), parcela: String(x.parcela ?? ""), observacao: String(x.observacao ?? ""),
+        vencimento: String(x.vencimento ?? ""), valor,
+      });
+    }
+    itens.sort((a, b) => a.vencimento.localeCompare(b.vencimento));
+    return {
+      ok: true, de: temPeriodo ? de : null, ate: temPeriodo ? ate : null,
+      qtd: itens.length, total, ultimoImport: ultimoImport || null,
+      porCategoria: Object.entries(porCategoria).map(([k, v]) => ({ categoria: k, ...v })).sort((a, b) => b.valor - a.valor),
+      itens: itens.slice(0, 500),
+    };
   },
 );
 
@@ -2400,6 +2509,30 @@ export const conciliacaoSaidas = onCall(
       if (m) { m.usado = true; pg.conciliado = true; conciliadoValor += pg.valor; conciliadoQtd++; }
     }
 
+    // EXPLICAR débitos com as CONTAS A PAGAR importadas do PDV: não marca o título como pago,
+    // só identifica que aquele débito provavelmente É este título (valor ±1%, data ±7d do vencimento).
+    // Reduz o "saiu sem conta registrada". Salários/aluguel/impostos etc. passam a ser reconhecidos.
+    let explicadoContasValor = 0, explicadoContasQtd = 0;
+    const capSnap = await db.collection("nfe_payables")
+      .where("vencimento", ">=", menosDiasISO(de, 10)).where("vencimento", "<=", maisDiasISO(ate, 10)).get();
+    for (const doc of capSnap.docs) {
+      const c = doc.data();
+      if (!daEmpresa(c.empresaId)) continue;
+      const alvo = Number(c.valor ?? 0);
+      if (!(alvo > 0)) continue;
+      const venc = d10(c.vencimento);
+      const tol = Math.max(1, alvo * 0.01);
+      let melhor: Debito | null = null; let melhorDist = 999;
+      for (const dbt of debitos) {
+        if (dbt.usado || dbt.categoria !== "pagamento") continue;
+        if (Math.abs(Math.abs(dbt.valor) - alvo) > tol) continue;
+        const dist = Math.abs(diasEntreISO(dbt.dia, venc));
+        if (dist > 7 || dist >= melhorDist) continue;
+        melhor = dbt; melhorDist = dist;
+      }
+      if (melhor) { melhor.usado = true; explicadoContasValor += Math.abs(melhor.valor); explicadoContasQtd++; }
+    }
+
     // EXCEÇÕES
     const pagasSemBanco = pagas.filter((p) => !p.conciliado)
       .sort((a, b) => b.valor - a.valor);
@@ -2420,6 +2553,7 @@ export const conciliacaoSaidas = onCall(
       banco: { totalSaidas: Math.abs(totalSaidas), porCategoria, qtd: debitos.length },
       pagas: { total: totalPago, qtd: pagas.length, porTipo },
       conciliado: { valor: conciliadoValor, qtd: conciliadoQtd },
+      explicadoPorContas: { valor: explicadoContasValor, qtd: explicadoContasQtd },
       pagasSemBanco: pagasSemBanco.slice(0, 100),
       debitosSemConta: debitosSemConta.slice(0, 100),
       pagasSemBancoTotal: pagasSemBanco.reduce((s, p) => s + p.valor, 0),
