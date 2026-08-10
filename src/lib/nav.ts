@@ -43,19 +43,19 @@ export interface NavItem {
 /** Itens principais — viram a BOTTOM NAV no mobile. */
 export const PRIMARY_NAV: NavItem[] = [
   { label: "Início", href: "/inicio", icon: LayoutDashboard },
+  { label: "DRE gerencial", href: "/dre", icon: TrendingUp, modulo: "financeiro" },
   { label: "Notas", href: "/notas", icon: FileText, modulo: "notas" },
-  { label: "Financeiro", href: "/financeiro", icon: Wallet, modulo: "financeiro" },
-  { label: "Fornecedores", href: "/fornecedores", icon: Truck, modulo: "fornecedores" },
+  { label: "Banco", href: "/banco", icon: Landmark, modulo: "financeiro" },
 ];
 
 /** Itens secundários — ficam em "Mais" (mobile) e na sidebar (desktop). */
 export const SECONDARY_NAV: NavItem[] = [
+  { label: "Financeiro", href: "/financeiro", icon: Wallet, modulo: "financeiro" },
+  { label: "Fornecedores", href: "/fornecedores", icon: Truck, modulo: "fornecedores" },
   { label: "Recebimento de compras", href: "/recebimento", icon: PackageCheck, modulo: "notas" },
   { label: "Pendências", href: "/pendencias", icon: ClipboardCheck, modulo: "financeiro" },
   { label: "Fluxo de caixa", href: "/fluxo", icon: LineChart, modulo: "financeiro" },
-  { label: "DRE gerencial", href: "/dre", icon: TrendingUp, modulo: "financeiro" },
   { label: "DRE comparativo", href: "/dre-comparativo", icon: BarChart3, modulo: "financeiro" },
-  { label: "Banco", href: "/banco", icon: Landmark, modulo: "financeiro" },
   { label: "Conciliação", href: "/conciliacao", icon: Scale, modulo: "financeiro" },
   { label: "Conciliação de saídas", href: "/saidas", icon: ArrowDownLeft, modulo: "financeiro" },
   { label: "Taxas de cartão", href: "/taxas", icon: CreditCard, modulo: "financeiro" },

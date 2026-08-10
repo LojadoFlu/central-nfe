@@ -37,7 +37,7 @@ export function BottomNav() {
                 >
                   <Icon className={cn("size-[1.35rem] transition-transform duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]", ativo ? "scale-110 stroke-[2.4]" : "scale-100")} />
                 </span>
-                {item.label}
+                <span className="text-center leading-[1.05]">{item.label}</span>
               </Link>
             </li>
           );
