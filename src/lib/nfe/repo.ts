@@ -961,6 +961,16 @@ export async function obterContasPagar(de: string, ate: string, empresaId = ""):
   const res = await fn({ de, ate, empresaId });
   return res.data as ContasPagarResp;
 }
+export async function salvarContaPagar(patch: {
+  id: string; valor?: number; vencimento?: string; categoria?: string; fornecedor?: string; observacao?: string; parcela?: string; empresaId?: string | null;
+}): Promise<void> {
+  const { functions } = fb();
+  await httpsCallable(functions, "salvarContaPagar")(patch);
+}
+export async function excluirContaPagar(id: string): Promise<void> {
+  const { functions } = fb();
+  await httpsCallable(functions, "excluirContaPagar")({ id });
+}
 
 // ——— DRE comparativo (mês a mês / lojas lado a lado) ———
 export interface DREColuna {

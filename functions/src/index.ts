@@ -2213,6 +2213,45 @@ export const contasPagar = onCall(
   },
 );
 
+/** Edita um título de conta a pagar importado (valor, vencimento, categoria…). Admin/financeiro. */
+export const salvarContaPagar = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const id = String(d.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  const ref = db.collection("nfe_payables").doc(id);
+  if (!(await ref.get()).exists) throw new HttpsError("not-found", "Título não encontrado.");
+  const patch: Record<string, unknown> = { editadoEm: agoraISO(), editadoPor: uid };
+  if (d.categoria !== undefined) patch.categoria = String(d.categoria).trim();
+  if (d.fornecedor !== undefined) patch.fornecedor = String(d.fornecedor).trim();
+  if (d.observacao !== undefined) patch.observacao = String(d.observacao).trim();
+  if (d.parcela !== undefined) patch.parcela = String(d.parcela).trim();
+  if (d.empresaId !== undefined) patch.empresaId = d.empresaId ? String(d.empresaId) : null;
+  if (d.vencimento !== undefined) {
+    const v = String(d.vencimento).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new HttpsError("invalid-argument", "Vencimento inválido (AAAA-MM-DD).");
+    patch.vencimento = v;
+  }
+  if (d.valor !== undefined) {
+    const val = Number(d.valor);
+    if (!Number.isFinite(val) || val < 0) throw new HttpsError("invalid-argument", "Valor inválido.");
+    patch.valor = Math.round(val * 100) / 100;
+  }
+  await ref.set(patch, { merge: true });
+  await auditar(uid, "financeiro.salvarContaPagar", { id });
+  return { ok: true };
+});
+
+/** Exclui um título de conta a pagar importado. Admin/financeiro. */
+export const excluirContaPagar = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const id = String(req.data?.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  await db.collection("nfe_payables").doc(id).delete();
+  await auditar(uid, "financeiro.excluirContaPagar", { id });
+  return { ok: true };
+});
+
 /**
  * Importa um extrato bancário OFX (parse server-side) e persiste os lançamentos
  * em bank_transactions (dedup por FITID) + o saldo/período em bank_accounts.

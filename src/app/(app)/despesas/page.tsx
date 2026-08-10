@@ -17,6 +17,8 @@ import {
   listarEmpresas,
   importarContasPagar,
   obterContasPagar,
+  salvarContaPagar,
+  excluirContaPagar,
   type DespesaFixa,
   type ContasPagarResp,
   type ImportContasResp,
@@ -193,6 +195,36 @@ export default function DespesasPage() {
     } finally {
       setImpOcupado(false);
     }
+  }
+  // Edição/exclusão dos títulos importados
+  const [cpEditId, setCpEditId] = useState<string | null>(null);
+  const [cpForm, setCpForm] = useState({ observacao: "", fornecedor: "", categoria: "", vencimento: "", valor: "" });
+  const [cpBusy, setCpBusy] = useState<string | null>(null);
+  const [cpDel, setCpDel] = useState<string | null>(null);
+  function abrirEdicaoConta(t: ContasPagarResp["itens"][number]) {
+    setCpDel(null);
+    setCpEditId(t.id);
+    setCpForm({ observacao: t.observacao, fornecedor: t.fornecedor, categoria: t.categoria, vencimento: t.vencimento, valor: String(t.valor) });
+  }
+  async function salvarEdicao() {
+    if (!cpEditId) return;
+    setCpBusy(cpEditId); setErro(null);
+    try {
+      await salvarContaPagar({
+        id: cpEditId,
+        observacao: cpForm.observacao, fornecedor: cpForm.fornecedor, categoria: cpForm.categoria,
+        vencimento: cpForm.vencimento, valor: Number(cpForm.valor) || 0,
+      });
+      setCpEditId(null);
+      await carregarContas();
+    } catch (e) { setErro((e as Error).message); }
+    finally { setCpBusy(null); }
+  }
+  async function removerConta(id: string) {
+    setCpBusy(id); setErro(null);
+    try { await excluirContaPagar(id); setCpDel(null); await carregarContas(); }
+    catch (e) { setErro((e as Error).message); }
+    finally { setCpBusy(null); }
   }
 
   function resetForm() {
@@ -672,20 +704,55 @@ export default function DespesasPage() {
           <div className="space-y-2">
             {contas.itens.filter((t) => noPeriodo(t.vencimento, periodo)).slice(0, 200).map((t) => (
               <Card key={t.id}>
-                <CardContent className="flex items-center justify-between gap-3 py-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium">{t.observacao || t.fornecedor || t.categoria}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatarData(t.vencimento)} · <Badge variant="neutral">{t.categoria}</Badge>
-                      {t.loja ? ` · ${t.loja}` : ""}{t.parcela ? ` · parc ${t.parcela}` : ""}
-                    </p>
-                  </div>
-                  <p className="shrink-0 font-bold tnum text-destructive">{formatBRL(t.valor)}</p>
-                </CardContent>
+                {cpEditId === t.id ? (
+                  <CardContent className="space-y-2 py-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Input value={cpForm.observacao} onChange={(e) => setCpForm((f) => ({ ...f, observacao: e.target.value }))} placeholder="Descrição" className="h-9 min-w-[10rem] flex-1" />
+                      <Input value={cpForm.fornecedor} onChange={(e) => setCpForm((f) => ({ ...f, fornecedor: e.target.value }))} placeholder="Fornecedor" className="h-9 min-w-[8rem] flex-1" />
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Input value={cpForm.categoria} onChange={(e) => setCpForm((f) => ({ ...f, categoria: e.target.value }))} placeholder="Categoria" className="h-9 w-40" />
+                      <Input type="date" value={cpForm.vencimento} onChange={(e) => setCpForm((f) => ({ ...f, vencimento: e.target.value }))} className="h-9 w-40" />
+                      <Input type="number" step="0.01" inputMode="decimal" value={cpForm.valor} onChange={(e) => setCpForm((f) => ({ ...f, valor: e.target.value }))} placeholder="Valor" className="h-9 w-32" />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={cpBusy === t.id} onClick={salvarEdicao}><Check className="size-4" /> {cpBusy === t.id ? "Salvando…" : "Salvar"}</Button>
+                      <Button size="sm" variant="ghost" disabled={cpBusy === t.id} onClick={() => setCpEditId(null)}><X className="size-4" /> Cancelar</Button>
+                    </div>
+                  </CardContent>
+                ) : (
+                  <CardContent className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium">{t.observacao || t.fornecedor || t.categoria}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatarData(t.vencimento)} · <Badge variant="neutral">{t.categoria}</Badge>
+                        {t.loja ? ` · ${t.loja}` : ""}{t.parcela ? ` · parc ${t.parcela}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <p className="font-bold tnum text-destructive">{formatBRL(t.valor)}</p>
+                      {podeEditar ? (
+                        cpDel === t.id ? (
+                          <>
+                            <Button size="sm" variant="destructive" disabled={cpBusy === t.id} onClick={() => removerConta(t.id)}>{cpBusy === t.id ? "…" : "Excluir"}</Button>
+                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setCpDel(null)}><X className="size-4" /></Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => abrirEdicaoConta(t)}><Pencil className="size-4" /></Button>
+                            <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => setCpDel(t.id)}><Trash2 className="size-4" /></Button>
+                          </>
+                        )
+                      ) : null}
+                    </div>
+                  </CardContent>
+                )}
               </Card>
             ))}
           </div>
-          <p className="mt-2 px-1 text-[11px] text-muted-foreground">Lista filtrada pelo período selecionado acima.</p>
+          <p className="mt-2 px-1 text-[11px] text-muted-foreground">
+            Lista filtrada pelo período acima. Você pode <strong>editar ou excluir</strong> títulos — mas <strong>re-importar substitui tudo</strong> (inclusive suas edições).
+          </p>
         </section>
       ) : null}
     </div>
