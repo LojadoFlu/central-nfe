@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { PageHeader } from "@/components/layout/page-header";
 import { StatCard } from "@/components/ui/stat-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,12 +24,27 @@ import {
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { FileText } from "lucide-react";
+import { FileText, ChevronRight } from "lucide-react";
+
+const MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
 
 function mesmoMes(iso: string | null | undefined, ref: Date): boolean {
   if (!iso) return false;
   const d = new Date(iso);
   return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth();
+}
+
+/** Métrica de apoio dentro do hero — toque com feedback, linka pra tela de origem. */
+function HeroMetric({ href, label, value, tone = "default" }: {
+  href: string; label: string; value: string; tone?: "default" | "success" | "warning" | "destructive";
+}) {
+  const cor = tone === "success" ? "text-success" : tone === "warning" ? "text-warning" : tone === "destructive" ? "text-destructive" : "text-foreground";
+  return (
+    <Link href={href} className="press flex flex-col gap-1 p-4 transition-colors hover:bg-accent/40">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">{label}</span>
+      <span className={cn("text-base font-bold leading-none tracking-[-0.01em] tnum sm:text-lg", cor)}>{value}</span>
+    </Link>
+  );
 }
 function primeiroDiaMes(): string {
   const d = new Date();
@@ -126,31 +140,48 @@ export default function InicioPage() {
   const pendCount = (pend?.resumo.criticas ?? 0) + (pend?.resumo.atencao ?? 0);
 
   const carregando = docs === null;
+  const agora = new Date();
+  const saudacao = agora.getHours() < 12 ? "Bom dia" : agora.getHours() < 18 ? "Boa tarde" : "Boa noite";
+  const mesAno = `${MESES[agora.getMonth()]} de ${agora.getFullYear()}`;
 
   return (
     <div>
-      <PageHeader title="Início" description="Visão geral das compras e contas do mês." />
+      {/* Cabeçalho editorial */}
+      <div className="mb-6">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+          {saudacao} · {mesAno}
+        </p>
+        <h1 className="mt-1 text-[1.75rem] font-bold leading-[1.05] tracking-[-0.022em] text-balance sm:text-[2.25rem]">
+          {podeFin ? "Seu mês na Loja do Flu" : "Início"}
+        </h1>
+      </div>
 
-      {/* Painel do dono (grupo) — só p/ módulo financeiro */}
+      {/* Painel do dono (grupo) — hero, só p/ módulo financeiro */}
       {podeFin ? (
-        <section className="mb-6">
-          <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Seu mês</h2>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Link href="/vendas" className="rounded-lg">
-              <StatCard label="Vendas do mês" value={vendasMes ? formatBRL(vendasMes.totalVendido) : "…"} />
+        <section className="mb-8">
+          <div className="relative overflow-hidden rounded-[var(--radius)] border border-border/60 bg-card shadow-float">
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/[0.08] via-transparent to-transparent" />
+            <Link href="/vendas" className="press relative block p-5 transition-colors hover:bg-accent/30 sm:p-6">
+              <div className="flex items-center justify-between">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Vendas do mês</p>
+                <ChevronRight className="size-4 text-muted-foreground" />
+              </div>
+              <p className="mt-2 text-[2.3rem] font-bold leading-none tracking-[-0.03em] tnum sm:text-[2.9rem]">
+                {vendasMes ? formatBRL(vendasMes.totalVendido) : "…"}
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">Todas as lojas do grupo · {mesAno}</p>
             </Link>
-            <Link href="/vendas" className="rounded-lg">
-              <StatCard label="Cartões a receber (líq.)" value={vendasMes ? formatBRL(vendasMes.totalLiquido) : "…"} tone="success" />
-            </Link>
-            <Link href="/financeiro" className="rounded-lg">
-              <StatCard label="Contas a pagar" value={carregando ? "…" : formatBRL(aPagarGrupo)} tone="warning" />
-            </Link>
-            <Link href="/pendencias" className="rounded-lg">
-              <StatCard label="Pendências" value={pend ? String(pendCount) : "…"} tone={pendCount > 0 ? "destructive" : "default"} />
-            </Link>
+            <div className="relative grid grid-cols-3 divide-x divide-border/60 border-t border-border/60">
+              <HeroMetric href="/vendas" label="Cartões a receber" value={vendasMes ? formatBRL(vendasMes.totalLiquido) : "…"} tone="success" />
+              <HeroMetric href="/financeiro" label="A pagar" value={carregando ? "…" : formatBRL(aPagarGrupo)} tone="warning" />
+              <HeroMetric href="/pendencias" label="Pendências" value={pend ? String(pendCount) : "…"} tone={pendCount > 0 ? "destructive" : "default"} />
+            </div>
           </div>
         </section>
       ) : null}
+
+      {/* Fiscal & compras */}
+      <h2 className="mb-3 text-[0.95rem] font-semibold tracking-tight">Fiscal & compras</h2>
 
       {/* Filtros */}
       <div className="mb-4 grid gap-2 sm:grid-cols-2">
@@ -177,7 +208,7 @@ export default function InicioPage() {
       {/* Cards */}
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
         <StatCard label="Compras do mês" value={carregando ? "…" : formatBRL(resumo.comprasMes)} />
-        <Link href="/nfses" className="rounded-lg">
+        <Link href="/nfses" className="press block rounded-[var(--radius)]">
           <StatCard label="Serviços do mês" value={carregando ? "…" : formatBRL(resumo.servicosMes)} tone="success" />
         </Link>
         <StatCard label="Notas do mês" value={carregando ? "…" : String(resumo.notasMes)} />
@@ -186,12 +217,12 @@ export default function InicioPage() {
       </div>
 
       {/* Últimas notas (filtradas) */}
-      <section className="mt-6">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Últimas notas {filtrados.length ? `(${filtrados.length})` : ""}
+      <section className="mt-8">
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-[0.95rem] font-semibold tracking-tight">
+            Últimas notas {filtrados.length ? <span className="text-muted-foreground">· {filtrados.length}</span> : null}
           </h2>
-          <Link href="/notas" className="text-sm font-medium text-primary hover:underline">
+          <Link href="/notas" className="press text-sm font-medium text-primary hover:underline">
             Ver todas
           </Link>
         </div>
@@ -230,7 +261,7 @@ export default function InicioPage() {
         ) : (
           <div className="space-y-3">
             {filtrados.slice(0, 8).map((d) => (
-              <Card key={d.id} className="transition-colors hover:bg-accent/50">
+              <Card key={d.id} className="press overflow-hidden transition-colors hover:bg-accent/40">
                 <Link href={`/notas/${encodeURIComponent(d.id)}`} className="block">
                   <CardContent className="py-4">
                     <div className="flex items-start justify-between gap-3">
