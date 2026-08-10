@@ -844,6 +844,34 @@ export async function marcarNotaRecebida(chNFe: string, recebida: boolean): Prom
   await fn({ chNFe, recebida });
 }
 
+// ——— DRE gerencial (competência) ———
+export interface DRE {
+  ok: boolean;
+  de: string;
+  ate: string;
+  empresaId: string | null;
+  cmvPct: number;
+  cmvOrigem: "percentual" | "compras";
+  receitaVendas: number;
+  receitaManual: number;
+  cmv: number;
+  compras: number;
+  lucroBruto: number;
+  margemBruta: number;
+  taxasCartao: number;
+  despesasFixas: number;
+  fretes: number;
+  servicos: number;
+  resultado: number;
+  margemLiquida: number;
+}
+export async function obterDRE(de: string, ate: string, empresaId = "", cmvPct = 0): Promise<DRE> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "dreGerencial");
+  const res = await fn({ de, ate, empresaId, cmvPct });
+  return res.data as DRE;
+}
+
 // ——— Taxas de cartão (configuração por loja) ———
 export interface TaxaCartao {
   id: string;

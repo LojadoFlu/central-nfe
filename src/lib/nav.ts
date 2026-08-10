@@ -25,6 +25,7 @@ import {
   Wrench,
   Users,
   PackageCheck,
+  TrendingUp,
   type LucideIcon,
 } from "lucide-react";
 
@@ -51,6 +52,7 @@ export const SECONDARY_NAV: NavItem[] = [
   { label: "Recebimento de compras", href: "/recebimento", icon: PackageCheck, modulo: "notas" },
   { label: "Pendências", href: "/pendencias", icon: ClipboardCheck, modulo: "financeiro" },
   { label: "Fluxo de caixa", href: "/fluxo", icon: LineChart, modulo: "financeiro" },
+  { label: "DRE gerencial", href: "/dre", icon: TrendingUp, modulo: "financeiro" },
   { label: "Banco", href: "/banco", icon: Landmark, modulo: "financeiro" },
   { label: "Conciliação", href: "/conciliacao", icon: Scale, modulo: "financeiro" },
   { label: "Taxas de cartão", href: "/taxas", icon: CreditCard, modulo: "financeiro" },
