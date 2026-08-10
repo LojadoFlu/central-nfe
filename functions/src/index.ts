@@ -1744,11 +1744,16 @@ export const dreComparativo = onCall(
 
     interface Coluna extends DREResultado { chave: string; rotulo: string; incompleto: boolean }
     const colunas: Coluna[] = [];
-    // coluna "incompleta" = tem custo relevante mas receita implausivelmente baixa
-    // (mês fora da janela do sync de vendas → distorce a margem). Sinaliza, não esconde.
+    // coluna "incompleta" = dado de um lado faltando, distorcendo a margem. Sinaliza, não esconde:
+    //  (a) receita implausivelmente baixa vs custo (mês fora da janela do sync de vendas), ou
+    //  (b) usando compras como CMV, compras ~0 vs receita (NF-e de compra fora da janela SEFAZ ~90d).
+    // Com CMV% informado, (b) deixa de valer (custo vem da receita).
     const ehIncompleto = (r: DREResultado): boolean => {
+      if (r.receitaVendas <= 0) return true;
       const custo = r.compras + r.despesasFixas + r.fretes + r.servicos;
-      return custo > 0 && r.receitaVendas < custo * 0.5;
+      if (custo > 0 && r.receitaVendas < custo * 0.5) return true;
+      if (cmvPct === 0 && r.compras < r.receitaVendas * 0.15) return true;
+      return false;
     };
 
     if (eixo === "mes") {

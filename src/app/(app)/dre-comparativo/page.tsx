@@ -174,9 +174,10 @@ export default function DreComparativoPage() {
         Cada coluna é uma DRE completa (mesmos números da tela DRE gerencial, por competência). Valores arredondados ao real.
         No eixo por loja, lojas sem movimento no período são omitidas. Sem CMV%, o custo usa as compras (NF-e) do período.
         <br />
-        <strong>⚠ = período com receita incompleta:</strong> o histórico de vendas do PDV cobre ~35 dias, então meses mais antigos
-        aparecem com custo mas quase sem receita (margem distorcida). O mês corrente também é parcial. Para tendência real de vários
-        meses, é preciso trazer mais histórico de vendas do PDV.
+        <strong>⚠ = período com dado incompleto</strong> (margem distorcida): ou receita faltando, ou — usando compras como custo —
+        as NF-e de compra fora da janela da SEFAZ (~90 dias), o que infla a margem de meses antigos (aparecem ~100%). O mês corrente
+        também é parcial. <strong>Para comparar vários meses na mesma base, informe o CMV %</strong> — aí o custo vem da receita e todo
+        mês fica comparável (o ⚠ de compras some).
       </p>
     </div>
   );
