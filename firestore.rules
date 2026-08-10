@@ -183,11 +183,6 @@ service cloud.firestore {
       allow read: if ativo();
       allow write: if false;
     }
-    // Contas a pagar importadas do PDV — leitura p/ ativos; escrita só backend.
-    match /nfe_payables/{id} {
-      allow read: if ativo();
-      allow write: if false;
-    }
     // Taxas de cartão (configuração) — leitura p/ ativos; escrita só backend.
     match /card_rates/{id} {
       allow read: if ativo();

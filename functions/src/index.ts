@@ -1949,7 +1949,7 @@ export const fluxoCaixa = onCall(
       return b;
     };
     const tot = { entrada: 0, saida: 0, entradaReal: 0, saidaReal: 0 };
-    const porOrigem: Record<string, number> = { cartao: 0, avista: 0, nfe: 0, despesas: 0, acordos: 0, contasPagar: 0 };
+    const porOrigem: Record<string, number> = { cartao: 0, avista: 0, nfe: 0, despesas: 0, acordos: 0 };
     const entrada = (dia: string, valor: number, real: boolean, origem: string) => {
       if (!noRange(dia) || !(valor > 0)) return;
       const b = buck(dia); b.entrada += valor; if (real) b.entradaReal += valor;
@@ -2019,13 +2019,6 @@ export const fluxoCaixa = onCall(
         const dia = d10(pago ? p.dataPagamento : p.vencimento);
         saida(dia, Number(p.valor ?? 0), pago, "acordos");
       }
-    }
-    // SAÍDAS — contas a pagar importadas do PDV (previstas, pela data de vencimento)
-    const capSnap = await db.collection("nfe_payables").where("vencimento", ">=", de).where("vencimento", "<=", ate).get();
-    for (const doc of capSnap.docs) {
-      const p = doc.data();
-      if (!daEmpresa(p.empresaId)) continue;
-      saida(d10(p.vencimento), Number(p.valor ?? 0), false, "contasPagar");
     }
 
     const linhas = [...dias.entries()]
@@ -2112,11 +2105,29 @@ export const centralPendencias = onCall(
   },
 );
 
+/** Categoria do PDV → chave de despesa fixa (só as confiáveis; resto fica em branco). */
+function categoriaDespesaFixa(c: string): string {
+  const s = (c || "").toLowerCase();
+  if (/alug/.test(s)) return "aluguel";
+  if (/sal[aá]ri|folha/.test(s)) return "salarios";
+  if (/simples|imposto|tribut|inss|fgts|\bdas\b|icms|iss/.test(s)) return "impostos";
+  if (/telefone|internet|telecom/.test(s)) return "telefone";
+  if (/condom/.test(s)) return "condominio";
+  if (/energia|\bluz\b|el[eé]tr/.test(s)) return "energia";
+  if (/[aá]gua|esgoto/.test(s)) return "agua";
+  if (/cont[aá]bil/.test(s)) return "contabilidade";
+  if (/software|sistema|licen/.test(s)) return "software";
+  return ""; // não casou → em branco (usuário escolhe ao editar)
+}
+
 /**
- * Importa o relatório "Contas a Pagar" do PDV (CSV) → coleção nfe_payables.
- * dryRun (padrão): só devolve a PRÉVIA (resumo) sem gravar — o usuário decide importar.
- * Import real: FULL-REPLACE dos títulos origem="pdv-import" (o relatório é a fonte da verdade).
- * Alimenta Fluxo de caixa e Conciliação de saídas. Admin/financeiro.
+ * Importa o relatório "Contas a Pagar" do PDV (CSV) e cria DESPESAS FIXAS
+ * (nfe_fixed_expenses), agrupando parcelas mensais iguais num registro só.
+ * Os campos que casam são preenchidos (nome, valor, loja, dia, categoria quando
+ * reconhecida); o que NÃO casa fica em branco para o usuário completar ao editar
+ * (mesma máscara de um lançamento manual). dryRun (padrão) só devolve a prévia;
+ * o import real faz FULL-REPLACE das despesas fixas origem="pdv-import" (as manuais
+ * são preservadas). Admin/financeiro.
  */
 export const importarContasPagar = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 300 },
@@ -2130,127 +2141,79 @@ export const importarContasPagar = onCall(
       throw new HttpsError("failed-precondition", "Nenhum título reconhecido. Confira se é o relatório 'Contas a Pagar' do PDV (CSV).");
     }
 
+    // AGRUPA por (empresa, nome, valor, dia) — colapsa parcelas mensais iguais numa despesa fixa.
+    interface Grupo { empresaId: string | null; loja: string; nome: string; categoria: string; beneficiario: string; valor: number; dia: number | null; qtd: number }
+    const grupos = new Map<string, Grupo>();
+    for (const t of titulos) {
+      const nome = (t.observacao || t.fornecedor || t.categoria).slice(0, 120);
+      const diaN = Number(t.vencimento.slice(8, 10));
+      const dia = diaN >= 1 && diaN <= 31 ? diaN : null;
+      const key = `${t.empresaId ?? "?"}|${nome.toLowerCase()}|${t.valor.toFixed(2)}|${dia ?? "?"}`;
+      let g = grupos.get(key);
+      if (!g) { g = { empresaId: t.empresaId, loja: t.loja, nome, categoria: categoriaDespesaFixa(t.categoria), beneficiario: t.fornecedor, valor: t.valor, dia, qtd: 0 }; grupos.set(key, g); }
+      g.qtd++;
+    }
+    const lista = [...grupos.values()];
+
+    // Prévia
     const porCategoria: Record<string, { qtd: number; valor: number }> = {};
     const porLoja: Record<string, { qtd: number; valor: number }> = {};
-    let total = 0, semEmpresa = 0;
-    const vencs: string[] = [];
-    for (const t of titulos) {
-      total += t.valor;
-      (porCategoria[t.categoria] ??= { qtd: 0, valor: 0 });
-      porCategoria[t.categoria].qtd++; porCategoria[t.categoria].valor += t.valor;
-      const lk = t.loja || "(sem loja)";
-      (porLoja[lk] ??= { qtd: 0, valor: 0 });
-      porLoja[lk].qtd++; porLoja[lk].valor += t.valor;
-      if (!t.empresaId) semEmpresa++;
-      vencs.push(t.vencimento);
+    let totalMensal = 0, semEmpresa = 0, semCategoria = 0;
+    for (const g of lista) {
+      totalMensal += g.valor;
+      const ck = g.categoria || "(a classificar)";
+      (porCategoria[ck] ??= { qtd: 0, valor: 0 }); porCategoria[ck].qtd++; porCategoria[ck].valor += g.valor;
+      const lk = g.loja || "(sem loja)";
+      (porLoja[lk] ??= { qtd: 0, valor: 0 }); porLoja[lk].qtd++; porLoja[lk].valor += g.valor;
+      if (!g.empresaId) semEmpresa++;
+      if (!g.categoria) semCategoria++;
     }
-    vencs.sort();
     const resumo = {
-      qtd: titulos.length, total, semEmpresa,
-      periodo: { de: vencs[0] ?? null, ate: vencs[vencs.length - 1] ?? null },
+      qtd: lista.length, titulos: titulos.length, total: totalMensal, semEmpresa, semCategoria,
       porCategoria: Object.entries(porCategoria).map(([k, v]) => ({ categoria: k, ...v })).sort((a, b) => b.valor - a.valor),
       porLoja: Object.entries(porLoja).map(([k, v]) => ({ loja: k, ...v })).sort((a, b) => b.valor - a.valor),
     };
 
     if (dryRun) return { ok: true, dryRun: true, resumo };
 
-    // IMPORT REAL — full-replace dos títulos importados do PDV.
+    // IMPORT REAL — cria as despesas fixas (full-replace das origem="pdv-import").
+    const emps = await db.collection("nfe_companies").get();
+    const nomeEmp = new Map<string, string>();
+    for (const e of emps.docs) { const x = e.data(); nomeEmp.set(e.id, String(x.nomeFantasia || x.razaoSocial || e.id)); }
+
     const now = agoraISO();
-    const antigos = await db.collection("nfe_payables").where("origem", "==", "pdv-import").get();
+    const antigos = await db.collection("nfe_fixed_expenses").where("origem", "==", "pdv-import").get();
     let batch = db.batch(); let ops = 0;
     const flush = async () => { if (ops) { await batch.commit(); batch = db.batch(); ops = 0; } };
     for (const doc of antigos.docs) { batch.delete(doc.ref); if (++ops >= 400) await flush(); }
     await flush();
-    for (const t of titulos) {
-      batch.set(db.collection("nfe_payables").doc(), { ...t, origem: "pdv-import", importadoEm: now, importadoPor: uid });
+    for (const g of lista) {
+      const ref = db.collection("nfe_fixed_expenses").doc();
+      batch.set(ref, {
+        id: ref.id,
+        companyId: g.empresaId,
+        empresaNome: g.empresaId ? (nomeEmp.get(g.empresaId) ?? null) : null,
+        nome: g.nome,
+        categoria: g.categoria,        // "" quando não casou → editável em branco
+        valor: g.valor,
+        recorrencia: "mensal",         // parcelas mensais → mensal (editável)
+        mesBase: null,                 // em branco
+        diaVencimento: g.dia,
+        beneficiario: g.beneficiario || null,
+        observacao: null,              // em branco p/ completar ao editar
+        ativo: true,
+        pagamentos: {},
+        origem: "pdv-import",
+        importadoEm: now, importadoPor: uid,
+        createdAt: now, createdBy: uid, updatedAt: now,
+      });
       if (++ops >= 400) await flush();
     }
     await flush();
-    await auditar(uid, "financeiro.importarContasPagar", { qtd: titulos.length, total, removidos: antigos.size });
-    return { ok: true, dryRun: false, importados: titulos.length, removidos: antigos.size, resumo };
+    await auditar(uid, "financeiro.importarContasPagar", { despesas: lista.length, titulos: titulos.length, removidos: antigos.size });
+    return { ok: true, dryRun: false, importados: lista.length, titulos: titulos.length, removidos: antigos.size, resumo };
   },
 );
-
-/** Lista as contas a pagar importadas (por empresa/período de vencimento) + resumo. */
-export const contasPagar = onCall(
-  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
-  async (req) => {
-    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
-    const d = req.data ?? {};
-    const de = String(d.de ?? "").slice(0, 10);
-    const ate = String(d.ate ?? "").slice(0, 10);
-    const empresaId = d.empresaId ? String(d.empresaId) : "";
-    const temPeriodo = /^\d{4}-\d{2}-\d{2}$/.test(de) && /^\d{4}-\d{2}-\d{2}$/.test(ate);
-    const snap = temPeriodo
-      ? await db.collection("nfe_payables").where("vencimento", ">=", de).where("vencimento", "<=", ate).get()
-      : await db.collection("nfe_payables").get();
-
-    interface Item { id: string; empresaId: string | null; loja: string; categoria: string; fornecedor: string; parcela: string; observacao: string; vencimento: string; valor: number }
-    const itens: Item[] = [];
-    const porCategoria: Record<string, { qtd: number; valor: number }> = {};
-    let total = 0; let ultimoImport = "";
-    for (const doc of snap.docs) {
-      const x = doc.data();
-      if (empresaId && String(x.empresaId ?? "") !== empresaId) continue;
-      const valor = Number(x.valor ?? 0);
-      total += valor;
-      (porCategoria[String(x.categoria ?? "—")] ??= { qtd: 0, valor: 0 });
-      porCategoria[String(x.categoria ?? "—")].qtd++; porCategoria[String(x.categoria ?? "—")].valor += valor;
-      if (String(x.importadoEm ?? "") > ultimoImport) ultimoImport = String(x.importadoEm ?? "");
-      itens.push({
-        id: doc.id, empresaId: x.empresaId ?? null, loja: String(x.loja ?? ""), categoria: String(x.categoria ?? ""),
-        fornecedor: String(x.fornecedor ?? ""), parcela: String(x.parcela ?? ""), observacao: String(x.observacao ?? ""),
-        vencimento: String(x.vencimento ?? ""), valor,
-      });
-    }
-    itens.sort((a, b) => a.vencimento.localeCompare(b.vencimento));
-    return {
-      ok: true, de: temPeriodo ? de : null, ate: temPeriodo ? ate : null,
-      qtd: itens.length, total, ultimoImport: ultimoImport || null,
-      porCategoria: Object.entries(porCategoria).map(([k, v]) => ({ categoria: k, ...v })).sort((a, b) => b.valor - a.valor),
-      itens: itens.slice(0, 500),
-    };
-  },
-);
-
-/** Edita um título de conta a pagar importado (valor, vencimento, categoria…). Admin/financeiro. */
-export const salvarContaPagar = onCall(opcoes, async (req) => {
-  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
-  const d = req.data ?? {};
-  const id = String(d.id ?? "").trim();
-  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
-  const ref = db.collection("nfe_payables").doc(id);
-  if (!(await ref.get()).exists) throw new HttpsError("not-found", "Título não encontrado.");
-  const patch: Record<string, unknown> = { editadoEm: agoraISO(), editadoPor: uid };
-  if (d.categoria !== undefined) patch.categoria = String(d.categoria).trim();
-  if (d.fornecedor !== undefined) patch.fornecedor = String(d.fornecedor).trim();
-  if (d.observacao !== undefined) patch.observacao = String(d.observacao).trim();
-  if (d.parcela !== undefined) patch.parcela = String(d.parcela).trim();
-  if (d.empresaId !== undefined) patch.empresaId = d.empresaId ? String(d.empresaId) : null;
-  if (d.vencimento !== undefined) {
-    const v = String(d.vencimento).slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new HttpsError("invalid-argument", "Vencimento inválido (AAAA-MM-DD).");
-    patch.vencimento = v;
-  }
-  if (d.valor !== undefined) {
-    const val = Number(d.valor);
-    if (!Number.isFinite(val) || val < 0) throw new HttpsError("invalid-argument", "Valor inválido.");
-    patch.valor = Math.round(val * 100) / 100;
-  }
-  await ref.set(patch, { merge: true });
-  await auditar(uid, "financeiro.salvarContaPagar", { id });
-  return { ok: true };
-});
-
-/** Exclui um título de conta a pagar importado. Admin/financeiro. */
-export const excluirContaPagar = onCall(opcoes, async (req) => {
-  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
-  const id = String(req.data?.id ?? "").trim();
-  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
-  await db.collection("nfe_payables").doc(id).delete();
-  await auditar(uid, "financeiro.excluirContaPagar", { id });
-  return { ok: true };
-});
 
 /**
  * Importa um extrato bancário OFX (parse server-side) e persiste os lançamentos
@@ -2548,31 +2511,6 @@ export const conciliacaoSaidas = onCall(
       if (m) { m.usado = true; pg.conciliado = true; conciliadoValor += pg.valor; conciliadoQtd++; }
     }
 
-    // EXPLICAR débitos com as CONTAS A PAGAR importadas do PDV: não marca o título como pago,
-    // só identifica que aquele débito provavelmente É este título (valor ±1%, data ±7d do vencimento).
-    // Reduz o "saiu sem conta registrada". Salários/aluguel/impostos etc. passam a ser reconhecidos.
-    let explicadoContasValor = 0, explicadoContasQtd = 0;
-    const capSnap = await db.collection("nfe_payables")
-      .where("vencimento", ">=", menosDiasISO(de, 10)).where("vencimento", "<=", maisDiasISO(ate, 10)).get();
-    for (const doc of capSnap.docs) {
-      const c = doc.data();
-      if (!daEmpresa(c.empresaId)) continue;
-      const alvo = Number(c.valor ?? 0);
-      if (!(alvo > 0)) continue;
-      const venc = d10(c.vencimento);
-      const tol = Math.max(1, alvo * 0.01);
-      let melhor: Debito | null = null; let melhorDist = 999;
-      for (const dbt of debitos) {
-        // fixas saem por pagamento OU transferência (salário/aluguel/imposto). Não casa tarifa/pix/cartão.
-        if (dbt.usado || (dbt.categoria !== "pagamento" && dbt.categoria !== "transferencia")) continue;
-        if (Math.abs(Math.abs(dbt.valor) - alvo) > tol) continue;
-        const dist = Math.abs(diasEntreISO(dbt.dia, venc));
-        if (dist > 7 || dist >= melhorDist) continue;
-        melhor = dbt; melhorDist = dist;
-      }
-      if (melhor) { melhor.usado = true; explicadoContasValor += Math.abs(melhor.valor); explicadoContasQtd++; }
-    }
-
     // EXCEÇÕES
     const pagasSemBanco = pagas.filter((p) => !p.conciliado)
       .sort((a, b) => b.valor - a.valor);
@@ -2593,7 +2531,6 @@ export const conciliacaoSaidas = onCall(
       banco: { totalSaidas: Math.abs(totalSaidas), porCategoria, qtd: debitos.length },
       pagas: { total: totalPago, qtd: pagas.length, porTipo },
       conciliado: { valor: conciliadoValor, qtd: conciliadoQtd },
-      explicadoPorContas: { valor: explicadoContasValor, qtd: explicadoContasQtd },
       pagasSemBanco: pagasSemBanco.slice(0, 100),
       debitosSemConta: debitosSemConta.slice(0, 100),
       pagasSemBancoTotal: pagasSemBanco.reduce((s, p) => s + p.valor, 0),

@@ -409,6 +409,7 @@ export interface DespesaFixa {
   observacao?: string | null;
   ativo?: boolean;
   pagamentos?: Record<string, PagamentoDespesa>;
+  origem?: string; // "pdv-import" quando veio do relatório do PDV
   createdAt?: string;
   updatedAt?: string;
 }
@@ -912,64 +913,29 @@ export async function obterConciliacaoSaidas(de: string, ate: string, empresaId 
   return res.data as ConciliacaoSaidas;
 }
 
-// ——— Contas a pagar (importadas do PDV) ———
-export interface ContasPagarResumo {
-  qtd: number;
-  total: number;
-  semEmpresa?: number;
-  periodo?: { de: string | null; ate: string | null };
+// ——— Import de contas a pagar do PDV → despesas fixas ———
+export interface ImportContasResumo {
+  qtd: number; // despesas fixas que seriam criadas
+  titulos: number; // títulos lidos no CSV
+  total: number; // total mensal
+  semEmpresa: number;
+  semCategoria: number;
   porCategoria: { categoria: string; qtd: number; valor: number }[];
-  porLoja?: { loja: string; qtd: number; valor: number }[];
+  porLoja: { loja: string; qtd: number; valor: number }[];
 }
 export interface ImportContasResp {
   ok: boolean;
   dryRun: boolean;
   importados?: number;
+  titulos?: number;
   removidos?: number;
-  resumo: ContasPagarResumo;
-}
-export interface ContaPagarItem {
-  id: string;
-  empresaId: string | null;
-  loja: string;
-  categoria: string;
-  fornecedor: string;
-  parcela: string;
-  observacao: string;
-  vencimento: string;
-  valor: number;
-}
-export interface ContasPagarResp {
-  ok: boolean;
-  de: string | null;
-  ate: string | null;
-  qtd: number;
-  total: number;
-  ultimoImport: string | null;
-  porCategoria: { categoria: string; qtd: number; valor: number }[];
-  itens: ContaPagarItem[];
+  resumo: ImportContasResumo;
 }
 export async function importarContasPagar(texto: string, dryRun: boolean): Promise<ImportContasResp> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "importarContasPagar");
   const res = await fn({ texto, dryRun });
   return res.data as ImportContasResp;
-}
-export async function obterContasPagar(de: string, ate: string, empresaId = ""): Promise<ContasPagarResp> {
-  const { functions } = fb();
-  const fn = httpsCallable(functions, "contasPagar");
-  const res = await fn({ de, ate, empresaId });
-  return res.data as ContasPagarResp;
-}
-export async function salvarContaPagar(patch: {
-  id: string; valor?: number; vencimento?: string; categoria?: string; fornecedor?: string; observacao?: string; parcela?: string; empresaId?: string | null;
-}): Promise<void> {
-  const { functions } = fb();
-  await httpsCallable(functions, "salvarContaPagar")(patch);
-}
-export async function excluirContaPagar(id: string): Promise<void> {
-  const { functions } = fb();
-  await httpsCallable(functions, "excluirContaPagar")({ id });
 }
 
 // ——— DRE comparativo (mês a mês / lojas lado a lado) ———

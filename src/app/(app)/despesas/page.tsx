@@ -16,17 +16,13 @@ import {
   excluirDespesaFixa,
   listarEmpresas,
   importarContasPagar,
-  obterContasPagar,
-  salvarContaPagar,
-  excluirContaPagar,
   type DespesaFixa,
-  type ContasPagarResp,
   type ImportContasResp,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { FiltroPeriodo, noPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
-import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
+import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
+import { formatBRL, formatarData } from "@/lib/utils";
 import { Receipt, Plus, Trash2, Check, RotateCcw, X, Pencil, Upload } from "lucide-react";
 
 const CATEGORIAS: { key: string; label: string }[] = [
@@ -130,8 +126,7 @@ export default function DespesasPage() {
   const [fObs, setFObs] = useState("");
   const [fAtivo, setFAtivo] = useState(true);
   const [salvando, setSalvando] = useState(false);
-  // Import de contas a pagar do PDV (prévia → confirmar)
-  const [contas, setContas] = useState<ContasPagarResp | null>(null);
+  // Import de contas a pagar do PDV → despesas fixas (prévia → confirmar)
   const [pendingText, setPendingText] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportContasResp | null>(null);
   const [impOcupado, setImpOcupado] = useState(false);
@@ -153,16 +148,9 @@ export default function DespesasPage() {
     }
   }, []);
 
-  const carregarContas = useCallback(async () => {
-    try {
-      setContas(await obterContasPagar("", "", filtroEmp));
-    } catch { /* silencioso */ }
-  }, [filtroEmp]);
-
   useEffect(() => {
     void carregar();
   }, [carregar]);
-  useEffect(() => { void carregarContas(); }, [carregarContas]);
 
   async function aoEscolherArquivo(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -187,44 +175,14 @@ export default function DespesasPage() {
     setImpOcupado(true); setErro(null);
     try {
       const r = await importarContasPagar(pendingText, false);
-      setImpMsg(`${r.importados} título(s) importado(s) · ${formatBRL(r.resumo.total)}${r.removidos ? ` (substituiu ${r.removidos})` : ""}.`);
+      setImpMsg(`${r.importados} despesa(s) fixa(s) criada(s) de ${r.titulos} título(s)${r.removidos ? ` (substituiu ${r.removidos} importadas antes)` : ""}. Complete o que faltar editando abaixo.`);
       setPreview(null); setPendingText(null);
-      await carregarContas();
+      await carregar(); // recarrega a lista de despesas fixas (os importados já aparecem)
     } catch (e) {
       setErro((e as Error).message);
     } finally {
       setImpOcupado(false);
     }
-  }
-  // Edição/exclusão dos títulos importados
-  const [cpEditId, setCpEditId] = useState<string | null>(null);
-  const [cpForm, setCpForm] = useState({ observacao: "", fornecedor: "", categoria: "", vencimento: "", valor: "" });
-  const [cpBusy, setCpBusy] = useState<string | null>(null);
-  const [cpDel, setCpDel] = useState<string | null>(null);
-  function abrirEdicaoConta(t: ContasPagarResp["itens"][number]) {
-    setCpDel(null);
-    setCpEditId(t.id);
-    setCpForm({ observacao: t.observacao, fornecedor: t.fornecedor, categoria: t.categoria, vencimento: t.vencimento, valor: String(t.valor) });
-  }
-  async function salvarEdicao() {
-    if (!cpEditId) return;
-    setCpBusy(cpEditId); setErro(null);
-    try {
-      await salvarContaPagar({
-        id: cpEditId,
-        observacao: cpForm.observacao, fornecedor: cpForm.fornecedor, categoria: cpForm.categoria,
-        vencimento: cpForm.vencimento, valor: Number(cpForm.valor) || 0,
-      });
-      setCpEditId(null);
-      await carregarContas();
-    } catch (e) { setErro((e as Error).message); }
-    finally { setCpBusy(null); }
-  }
-  async function removerConta(id: string) {
-    setCpBusy(id); setErro(null);
-    try { await excluirContaPagar(id); setCpDel(null); await carregarContas(); }
-    catch (e) { setErro((e as Error).message); }
-    finally { setCpBusy(null); }
   }
 
   function resetForm() {
@@ -392,7 +350,8 @@ export default function DespesasPage() {
           <CardContent className="py-4">
             <h2 className="text-[0.95rem] font-semibold tracking-tight">Prévia da importação do PDV</h2>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              {preview.resumo.qtd} títulos · {formatBRL(preview.resumo.total)} · venc. {preview.resumo.periodo?.de} → {preview.resumo.periodo?.ate}
+              Vai criar <strong>{preview.resumo.qtd} despesa(s) fixa(s)</strong> (agrupando {preview.resumo.titulos} títulos) · {formatBRL(preview.resumo.total)}/mês
+              {preview.resumo.semCategoria ? ` · ${preview.resumo.semCategoria} sem categoria` : ""}
               {preview.resumo.semEmpresa ? ` · ${preview.resumo.semEmpresa} sem loja` : ""}
             </p>
             <div className="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2">
@@ -404,7 +363,8 @@ export default function DespesasPage() {
               ))}
             </div>
             <p className="mt-3 text-[11px] text-muted-foreground">
-              Confirmar <strong>substitui</strong> os títulos importados antes (o relatório do PDV é a fonte da verdade). Nada é gravado até confirmar.
+              Entram como <strong>despesas fixas</strong> — campos que não casaram (categoria, mês-base…) ficam <strong>em branco</strong> pra você completar editando.
+              Confirmar <strong>substitui</strong> as despesas fixas importadas antes (o relatório do PDV é a fonte da verdade). Nada é gravado até confirmar.
             </p>
             <div className="mt-3 flex gap-2">
               <Button size="sm" disabled={impOcupado} onClick={confirmarImport}>
@@ -567,10 +527,11 @@ export default function DespesasPage() {
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5">
                         <p className="truncate font-medium">{d.nome}</p>
-                        <Badge variant="neutral">{CAT_LABEL[d.categoria ?? "outros"] ?? d.categoria}</Badge>
+                        <Badge variant={d.categoria ? "neutral" : "warning"}>{d.categoria ? (CAT_LABEL[d.categoria] ?? d.categoria) : "a classificar"}</Badge>
                         {d.recorrencia && d.recorrencia !== "mensal" ? (
                           <Badge variant="neutral">{REC_LABEL[d.recorrencia]}</Badge>
                         ) : null}
+                        {d.origem === "pdv-import" ? <Badge variant="neutral">PDV</Badge> : null}
                         {inativa ? <Badge variant="neutral">Inativa</Badge> : null}
                       </div>
                       {d.empresaNome ? <p className="mt-0.5 text-[11px] font-medium text-primary">{d.empresaNome}</p> : null}
@@ -679,82 +640,6 @@ export default function DespesasPage() {
         A recorrência define em quais meses a despesa incide. Tudo é registrado com autor e data.
       </p>
 
-      {/* Contas a pagar importadas do PDV */}
-      {contas && contas.qtd > 0 ? (
-        <section className="mt-8">
-          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-[0.95rem] font-semibold tracking-tight">Contas a pagar importadas do PDV</h2>
-            {contas.ultimoImport ? <span className="text-xs text-muted-foreground">importado {formatarDataHora(contas.ultimoImport)}</span> : null}
-          </div>
-          <p className="mb-3 text-xs text-muted-foreground">
-            {contas.qtd} títulos · total {formatBRL(contas.total)}. Alimentam o Fluxo de caixa e a Conciliação de saídas. Re-importar substitui todos.
-          </p>
-          <Card className="mb-3">
-            <CardContent className="py-3">
-              <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
-                {contas.porCategoria.map((c) => (
-                  <div key={c.categoria} className="flex items-center justify-between border-b border-border/40 py-1 text-sm last:border-0">
-                    <span className="text-muted-foreground">{c.categoria} <span className="text-[11px]">· {c.qtd}</span></span>
-                    <span className="font-medium tnum">{formatBRL(c.valor)}</span>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-          <div className="space-y-2">
-            {contas.itens.filter((t) => noPeriodo(t.vencimento, periodo)).slice(0, 200).map((t) => (
-              <Card key={t.id}>
-                {cpEditId === t.id ? (
-                  <CardContent className="space-y-2 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      <Input value={cpForm.observacao} onChange={(e) => setCpForm((f) => ({ ...f, observacao: e.target.value }))} placeholder="Descrição" className="h-9 min-w-[10rem] flex-1" />
-                      <Input value={cpForm.fornecedor} onChange={(e) => setCpForm((f) => ({ ...f, fornecedor: e.target.value }))} placeholder="Fornecedor" className="h-9 min-w-[8rem] flex-1" />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Input value={cpForm.categoria} onChange={(e) => setCpForm((f) => ({ ...f, categoria: e.target.value }))} placeholder="Categoria" className="h-9 w-40" />
-                      <Input type="date" value={cpForm.vencimento} onChange={(e) => setCpForm((f) => ({ ...f, vencimento: e.target.value }))} className="h-9 w-40" />
-                      <Input type="number" step="0.01" inputMode="decimal" value={cpForm.valor} onChange={(e) => setCpForm((f) => ({ ...f, valor: e.target.value }))} placeholder="Valor" className="h-9 w-32" />
-                    </div>
-                    <div className="flex gap-2">
-                      <Button size="sm" disabled={cpBusy === t.id} onClick={salvarEdicao}><Check className="size-4" /> {cpBusy === t.id ? "Salvando…" : "Salvar"}</Button>
-                      <Button size="sm" variant="ghost" disabled={cpBusy === t.id} onClick={() => setCpEditId(null)}><X className="size-4" /> Cancelar</Button>
-                    </div>
-                  </CardContent>
-                ) : (
-                  <CardContent className="flex items-center justify-between gap-3 py-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{t.observacao || t.fornecedor || t.categoria}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {formatarData(t.vencimento)} · <Badge variant="neutral">{t.categoria}</Badge>
-                        {t.loja ? ` · ${t.loja}` : ""}{t.parcela ? ` · parc ${t.parcela}` : ""}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1.5">
-                      <p className="font-bold tnum text-destructive">{formatBRL(t.valor)}</p>
-                      {podeEditar ? (
-                        cpDel === t.id ? (
-                          <>
-                            <Button size="sm" variant="destructive" disabled={cpBusy === t.id} onClick={() => removerConta(t.id)}>{cpBusy === t.id ? "…" : "Excluir"}</Button>
-                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setCpDel(null)}><X className="size-4" /></Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => abrirEdicaoConta(t)}><Pencil className="size-4" /></Button>
-                            <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => setCpDel(t.id)}><Trash2 className="size-4" /></Button>
-                          </>
-                        )
-                      ) : null}
-                    </div>
-                  </CardContent>
-                )}
-              </Card>
-            ))}
-          </div>
-          <p className="mt-2 px-1 text-[11px] text-muted-foreground">
-            Lista filtrada pelo período acima. Você pode <strong>editar ou excluir</strong> títulos — mas <strong>re-importar substitui tudo</strong> (inclusive suas edições).
-          </p>
-        </section>
-      ) : null}
     </div>
   );
 }
