@@ -845,17 +845,23 @@ export async function marcarNotaRecebida(chNFe: string, recebida: boolean): Prom
 }
 
 // ——— DRE gerencial (competência) ———
+export type CmvOrigem = "percentual" | "real_gerencial" | "real_aquisicao" | "compras";
 export interface DRE {
   ok: boolean;
   de: string;
   ate: string;
   empresaId: string | null;
   cmvPct: number;
-  cmvOrigem: "percentual" | "compras";
+  cmvBase: "gerencial" | "aquisicao";
+  cmvOrigem: CmvOrigem;
   receitaVendas: number;
   receitaManual: number;
   cmv: number;
   compras: number;
+  cmvReal: number;
+  cmvRealAquisicao: number;
+  cmvRealGerencial: number;
+  custoCobertura: number;
   lucroBruto: number;
   margemBruta: number;
   taxasCartao: number;
@@ -865,10 +871,10 @@ export interface DRE {
   resultado: number;
   margemLiquida: number;
 }
-export async function obterDRE(de: string, ate: string, empresaId = "", cmvPct = 0): Promise<DRE> {
+export async function obterDRE(de: string, ate: string, empresaId = "", cmvPct = 0, cmvBase: "gerencial" | "aquisicao" = "gerencial"): Promise<DRE> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "dreGerencial");
-  const res = await fn({ de, ate, empresaId, cmvPct });
+  const res = await fn({ de, ate, empresaId, cmvPct, cmvBase });
   return res.data as DRE;
 }
 
@@ -911,6 +917,9 @@ export interface DREColuna {
   chave: string;
   rotulo: string;
   incompleto?: boolean;
+  cmvOrigem?: CmvOrigem;
+  cmvReal?: number;
+  custoCobertura?: number;
   receitaVendas: number;
   receitaManual: number;
   cmv: number;
@@ -940,10 +949,11 @@ export async function obterDREComparativo(
   ate: string,
   empresaId = "",
   cmvPct = 0,
+  cmvBase: "gerencial" | "aquisicao" = "gerencial",
 ): Promise<DREComparativo> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "dreComparativo");
-  const res = await fn({ eixo, de, ate, empresaId, cmvPct });
+  const res = await fn({ eixo, de, ate, empresaId, cmvPct, cmvBase });
   return res.data as DREComparativo;
 }
 

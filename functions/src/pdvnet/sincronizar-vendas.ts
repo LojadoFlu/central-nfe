@@ -94,6 +94,20 @@ export async function sincronizarVendas(
       const cancelada = !!v.Inativa;
       const docFiscal = v.DocumentosFiscais?.[0];
 
+      // CUSTO DOS PRODUTOS VENDIDOS (CMV real): custo × qtd de cada item.
+      // NaturezaOperacao 1 = venda (soma), 0 = troca/devolução (subtrai). Item Inativo é ignorado.
+      let custoAquisicao = 0, custoGerencial = 0, itensComCusto = 0;
+      for (const it of v.Itens ?? []) {
+        if (it.Inativo) continue;
+        const sinal = it.NaturezaOperacao === 0 ? -1 : 1;
+        const qtd = Number(it.Quantidade ?? 0) || 0;
+        const ca = Number(it.PrecoCustoAquisicao ?? 0) || 0;
+        const cg = Number(it.PrecoCustoGerencial ?? 0) || 0;
+        custoAquisicao += sinal * ca * qtd;
+        custoGerencial += sinal * cg * qtd;
+        if (ca > 0 || cg > 0) itensComCusto++;
+      }
+
       batch.set(
         db.collection("sales").doc(v.Id),
         {
@@ -112,6 +126,9 @@ export async function sincronizarVendas(
           docChave: docFiscal?.Chave ?? null,
           docTipo: docFiscal?.TipoDocumento ?? null,
           qtdItens: v.Itens?.length ?? 0,
+          custoAquisicao: Math.round(custoAquisicao * 100) / 100,
+          custoGerencial: Math.round(custoGerencial * 100) / 100,
+          itensComCusto,
           origem: "pdvnet",
           atualizadoEm: now,
         },

@@ -1587,26 +1587,31 @@ export const pdvnetResumoVendas = onCall(
  * Acordos ficam de fora (quitação de dívida, não despesa nova). Só leitura.
  */
 interface DREResultado {
-  de: string; ate: string; empresaId: string | null; cmvPct: number; cmvOrigem: string;
+  de: string; ate: string; empresaId: string | null; cmvPct: number; cmvBase: string; cmvOrigem: string;
   receitaVendas: number; receitaManual: number; cmv: number; compras: number;
+  cmvReal: number; cmvRealAquisicao: number; cmvRealGerencial: number; custoCobertura: number;
   lucroBruto: number; margemBruta: number; taxasCartao: number; despesasFixas: number;
   fretes: number; servicos: number; resultado: number; margemLiquida: number;
 }
 /** Núcleo do DRE gerencial (competência). Reutilizado pelo comparativo. */
-async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: number): Promise<DREResultado> {
+async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: number, cmvBase = "gerencial"): Promise<DREResultado> {
   const daEmpresa = (cid: unknown) => !empresaId || String(cid ?? "") === empresaId;
 
   const emps = await db.collection("nfe_companies").get();
   const cnpjPorId = new Map<string, string>();
   for (const e of emps.docs) cnpjPorId.set(e.id, somenteDigitos(String((e.data() as { cnpj?: string }).cnpj ?? "")));
 
-  // RECEITA — vendas PDV (competência = dia da venda)
-  let receitaVendas = 0;
+  // RECEITA — vendas PDV (competência = dia da venda) + CMV REAL (custo dos itens vendidos)
+  let receitaVendas = 0, cmvRealAquisicao = 0, cmvRealGerencial = 0, itensTot = 0, itensComCusto = 0;
   const salesSnap = await db.collection("sales").where("dia", ">=", de).where("dia", "<=", ate).get();
   for (const doc of salesSnap.docs) {
     const s = doc.data();
     if (s.cancelada || !daEmpresa(s.empresaId)) continue;
     receitaVendas += Number(s.valorTotal ?? 0);
+    cmvRealAquisicao += Number(s.custoAquisicao ?? 0);
+    cmvRealGerencial += Number(s.custoGerencial ?? 0);
+    itensTot += Number(s.qtdItens ?? 0);
+    itensComCusto += Number(s.itensComCusto ?? 0);
   }
   // TAXAS DE CARTÃO — recebíveis PDV (bruto − líquido), competência = dia da venda
   let taxasCartao = 0;
@@ -1685,15 +1690,21 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     const r = doc.data(); if (daEmpresa(r.companyId)) servicos += Number(r.vServ ?? 0);
   }
 
-  const cmv = cmvPct > 0 ? receitaVendas * (cmvPct / 100) : compras;
-  const cmvOrigem = cmvPct > 0 ? "percentual" : "compras";
+  // CMV: prioridade (1) % informado; (2) CUSTO REAL dos itens vendidos (padrão); (3) compras (fallback).
+  const cmvReal = cmvBase === "aquisicao" ? cmvRealAquisicao : cmvRealGerencial;
+  let cmv: number, cmvOrigem: string;
+  if (cmvPct > 0) { cmv = receitaVendas * (cmvPct / 100); cmvOrigem = "percentual"; }
+  else if (cmvReal > 0) { cmv = cmvReal; cmvOrigem = cmvBase === "aquisicao" ? "real_aquisicao" : "real_gerencial"; }
+  else { cmv = compras; cmvOrigem = "compras"; }
+  const custoCobertura = itensTot > 0 ? itensComCusto / itensTot : 0;
   const lucroBruto = receitaVendas - cmv;
   const resultado = lucroBruto - taxasCartao - despesasFixas - fretes - servicos;
   const pct = (v: number) => (receitaVendas > 0 ? (v / receitaVendas) * 100 : 0);
 
   return {
-    de, ate, empresaId: empresaId || null, cmvPct, cmvOrigem,
+    de, ate, empresaId: empresaId || null, cmvPct, cmvBase, cmvOrigem,
     receitaVendas, receitaManual, cmv, compras,
+    cmvReal, cmvRealAquisicao, cmvRealGerencial, custoCobertura,
     lucroBruto, margemBruta: pct(lucroBruto),
     taxasCartao, despesasFixas, fretes, servicos,
     resultado, margemLiquida: pct(resultado),
@@ -1712,7 +1723,8 @@ export const dreGerencial = onCall(
     }
     const empresaId = d.empresaId ? String(d.empresaId) : "";
     const cmvPct = Math.max(0, Math.min(100, Number(d.cmvPct) || 0));
-    return { ok: true, ...(await calcularDRE(de, ate, empresaId, cmvPct)) };
+    const cmvBase = d.cmvBase === "aquisicao" ? "aquisicao" : "gerencial";
+    return { ok: true, ...(await calcularDRE(de, ate, empresaId, cmvPct, cmvBase)) };
   },
 );
 
@@ -1741,18 +1753,19 @@ export const dreComparativo = onCall(
       throw new HttpsError("invalid-argument", "Período inválido.");
     }
     const cmvPct = Math.max(0, Math.min(100, Number(d.cmvPct) || 0));
+    const cmvBase = d.cmvBase === "aquisicao" ? "aquisicao" : "gerencial";
 
     interface Coluna extends DREResultado { chave: string; rotulo: string; incompleto: boolean }
     const colunas: Coluna[] = [];
     // coluna "incompleta" = dado de um lado faltando, distorcendo a margem. Sinaliza, não esconde:
     //  (a) receita implausivelmente baixa vs custo (mês fora da janela do sync de vendas), ou
-    //  (b) usando compras como CMV, compras ~0 vs receita (NF-e de compra fora da janela SEFAZ ~90d).
-    // Com CMV% informado, (b) deixa de valer (custo vem da receita).
+    //  (b) CMV vindo de "compras" (sem custo real nem %) com compras ~0 vs receita (NF-e fora da janela SEFAZ ~90d).
+    // Com CMV real (itens) ou CMV% informado, (b) deixa de valer.
     const ehIncompleto = (r: DREResultado): boolean => {
       if (r.receitaVendas <= 0) return true;
       const custo = r.compras + r.despesasFixas + r.fretes + r.servicos;
       if (custo > 0 && r.receitaVendas < custo * 0.5) return true;
-      if (cmvPct === 0 && r.compras < r.receitaVendas * 0.15) return true;
+      if (r.cmvOrigem === "compras" && r.compras < r.receitaVendas * 0.15) return true;
       return false;
     };
 
@@ -1761,7 +1774,7 @@ export const dreComparativo = onCall(
       const meses = mesesEntre(de, ate).slice(0, 24); // teto de segurança
       for (const ym of meses) {
         const { de: md, ate: ma } = limitesMes(ym);
-        const dre = await calcularDRE(md, ma, empresaId, cmvPct);
+        const dre = await calcularDRE(md, ma, empresaId, cmvPct, cmvBase);
         colunas.push({ ...dre, chave: ym, rotulo: ym, incompleto: ehIncompleto(dre) });
       }
     } else {
@@ -1770,7 +1783,7 @@ export const dreComparativo = onCall(
         .map((e) => ({ id: e.id, nome: String((e.data() as { nomeFantasia?: string; razaoSocial?: string }).nomeFantasia || (e.data() as { razaoSocial?: string }).razaoSocial || e.id) }))
         .sort((a, b) => a.nome.localeCompare(b.nome));
       for (const emp of emps.slice(0, 30)) {
-        const dre = await calcularDRE(de, ate, emp.id, cmvPct);
+        const dre = await calcularDRE(de, ate, emp.id, cmvPct, cmvBase);
         // pula lojas totalmente vazias no período (sem receita nem custo nem despesa)
         if (dre.receitaVendas === 0 && dre.compras === 0 && dre.despesasFixas === 0 && dre.fretes === 0 && dre.servicos === 0) continue;
         colunas.push({ ...dre, chave: emp.id, rotulo: emp.nome, incompleto: ehIncompleto(dre) });

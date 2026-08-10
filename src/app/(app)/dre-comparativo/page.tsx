@@ -51,6 +51,7 @@ export default function DreComparativoPage() {
   const [eixo, setEixo] = useState<Eixo>("mes");
   const [periodo, setPeriodo] = useState<Periodo>(periodoUltimosMeses(3));
   const [cmvPct, setCmvPct] = useState("");
+  const [cmvBase, setCmvBase] = useState<"gerencial" | "aquisicao">("gerencial");
   const [dados, setDados] = useState<DREComparativo | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -64,13 +65,13 @@ export default function DreComparativoPage() {
     setCarregando(true);
     setErro(null);
     try {
-      setDados(await obterDREComparativo(eixo, periodo.de, periodo.ate, eixo === "mes" ? empresaId : "", Number(cmvPct) || 0));
+      setDados(await obterDREComparativo(eixo, periodo.de, periodo.ate, eixo === "mes" ? empresaId : "", Number(cmvPct) || 0, cmvBase));
     } catch (e) {
       setErro((e as Error).message);
     } finally {
       setCarregando(false);
     }
-  }, [eixo, empresaId, periodo, cmvPct]);
+  }, [eixo, empresaId, periodo, cmvPct, cmvBase]);
 
   useEffect(() => { void carregar(); }, [carregar]);
 
@@ -111,10 +112,17 @@ export default function DreComparativoPage() {
           </select>
         ) : null}
         <FiltroPeriodo value={periodo} onChange={setPeriodo} allowClear={false} />
-        <div className="flex items-center gap-2 rounded-md border border-border p-2">
-          <label className="text-xs text-muted-foreground">CMV (% da receita)</label>
-          <Input type="number" step="0.1" inputMode="decimal" placeholder="usar compras" value={cmvPct} onChange={(e) => setCmvPct(e.target.value)} className="h-8 w-28" />
-          <span className="text-[11px] text-muted-foreground">{Number(cmvPct) > 0 ? "custo = receita × %" : "vazio = compras do período"}</span>
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border p-2">
+          <label className="text-xs text-muted-foreground">Base do custo</label>
+          <select value={cmvBase} onChange={(e) => setCmvBase(e.target.value as "gerencial" | "aquisicao")} disabled={Number(cmvPct) > 0}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs disabled:opacity-50">
+            <option value="gerencial">Custo gerencial</option>
+            <option value="aquisicao">Custo de aquisição</option>
+          </select>
+          <span className="mx-1 text-border">|</span>
+          <label className="text-xs text-muted-foreground">CMV %</label>
+          <Input type="number" step="0.1" inputMode="decimal" placeholder="auto" value={cmvPct} onChange={(e) => setCmvPct(e.target.value)} className="h-8 w-20" />
+          <span className="text-[11px] text-muted-foreground">{Number(cmvPct) > 0 ? "receita × %" : "custo real dos itens (fallback: compras)"}</span>
         </div>
       </div>
 

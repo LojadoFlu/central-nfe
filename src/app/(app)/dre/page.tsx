@@ -20,11 +20,26 @@ function periodoEsteMes(): Periodo {
 
 const fmtPct = (v: number) => `${v.toFixed(1).replace(".", ",")}%`;
 
+function cmvTitulo(d: DRE): string {
+  if (d.cmvOrigem === "percentual") return `(−) CMV (${fmtPct(d.cmvPct)} da receita)`;
+  if (d.cmvOrigem === "real_gerencial") return "(−) CMV real (custo gerencial)";
+  if (d.cmvOrigem === "real_aquisicao") return "(−) CMV real (custo de aquisição)";
+  return "(−) Compras de mercadoria (NF-e)";
+}
+function cmvNota(d: DRE): string | undefined {
+  if (d.cmvOrigem === "real_gerencial" || d.cmvOrigem === "real_aquisicao") {
+    return `custo real dos itens vendidos · ${fmtPct(d.custoCobertura * 100)} dos itens com custo`;
+  }
+  if (d.cmvOrigem === "compras") return "custo real indisponível no período → usando NF-e de compra (proxy)";
+  return undefined;
+}
+
 export default function DrePage() {
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   const [periodo, setPeriodo] = useState<Periodo>(periodoEsteMes());
   const [cmvPct, setCmvPct] = useState("");
+  const [cmvBase, setCmvBase] = useState<"gerencial" | "aquisicao">("gerencial");
   const [dados, setDados] = useState<DRE | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -38,13 +53,13 @@ export default function DrePage() {
     setCarregando(true);
     setErro(null);
     try {
-      setDados(await obterDRE(periodo.de, periodo.ate, empresaId, Number(cmvPct) || 0));
+      setDados(await obterDRE(periodo.de, periodo.ate, empresaId, Number(cmvPct) || 0, cmvBase));
     } catch (e) {
       setErro((e as Error).message);
     } finally {
       setCarregando(false);
     }
-  }, [empresaId, periodo, cmvPct]);
+  }, [empresaId, periodo, cmvPct, cmvBase]);
 
   useEffect(() => { void carregar(); }, [carregar]);
 
@@ -67,14 +82,19 @@ export default function DrePage() {
           ))}
         </select>
         <FiltroPeriodo value={periodo} onChange={setPeriodo} allowClear={false} />
-        <div className="flex items-center gap-2 rounded-md border border-border p-2">
-          <label className="text-xs text-muted-foreground">CMV (% da receita)</label>
-          <Input
-            type="number" step="0.1" inputMode="decimal" placeholder="usar compras"
-            value={cmvPct} onChange={(e) => setCmvPct(e.target.value)} className="h-8 w-28"
-          />
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border p-2">
+          <label className="text-xs text-muted-foreground">Base do custo</label>
+          <select value={cmvBase} onChange={(e) => setCmvBase(e.target.value as "gerencial" | "aquisicao")} disabled={Number(cmvPct) > 0}
+            className="h-8 rounded-md border border-input bg-background px-2 text-xs disabled:opacity-50">
+            <option value="gerencial">Custo gerencial (médio)</option>
+            <option value="aquisicao">Custo de aquisição</option>
+          </select>
+          <span className="mx-1 text-border">|</span>
+          <label className="text-xs text-muted-foreground">CMV %</label>
+          <Input type="number" step="0.1" inputMode="decimal" placeholder="auto"
+            value={cmvPct} onChange={(e) => setCmvPct(e.target.value)} className="h-8 w-20" />
           <span className="text-[11px] text-muted-foreground">
-            {Number(cmvPct) > 0 ? "custo = receita × %" : "vazio = compras do período (NF-e) como custo"}
+            {Number(cmvPct) > 0 ? "custo = receita × %" : "custo real dos itens vendidos (fallback: compras)"}
           </span>
         </div>
       </div>
@@ -102,10 +122,7 @@ export default function DrePage() {
                 <tbody className="tnum">
                   <Linha titulo="Receita de vendas" valor={dados.receitaVendas} tom="pos" forte
                     nota={dados.receitaManual > 0 ? `inclui ${formatBRL(dados.receitaManual)} de vendas manuais` : undefined} />
-                  <Linha
-                    titulo={dados.cmvOrigem === "percentual" ? `(−) CMV (${fmtPct(dados.cmvPct)} da receita)` : "(−) Compras de mercadoria (NF-e)"}
-                    valor={-dados.cmv} tom="neg"
-                    nota={dados.cmvOrigem === "compras" ? "proxy de CMV: NF-e de fornecedores no período" : undefined} />
+                  <Linha titulo={cmvTitulo(dados)} valor={-dados.cmv} tom="neg" nota={cmvNota(dados)} />
                   <Linha titulo="= Lucro bruto" valor={dados.lucroBruto} forte destaque
                     nota={`margem bruta ${fmtPct(dados.margemBruta)}`} />
                   <Linha titulo="(−) Taxas de cartão" valor={-dados.taxasCartao} tom="neg" />
@@ -114,7 +131,7 @@ export default function DrePage() {
                   <Linha titulo="(−) Serviços (NFS-e)" valor={-dados.servicos} tom="neg" />
                   <Linha titulo="= Resultado do período" valor={dados.resultado} forte destaque
                     nota={`margem líquida ${fmtPct(dados.margemLiquida)}`} />
-                  {dados.cmvOrigem === "percentual" ? (
+                  {dados.cmvOrigem !== "compras" ? (
                     <Linha titulo="Memo: compras de mercadoria no período" valor={dados.compras} tom="memo" />
                   ) : null}
                 </tbody>
@@ -125,8 +142,9 @@ export default function DrePage() {
           <p className="mt-4 text-xs text-muted-foreground">
             Competência (data do fato, não do pagamento). Fontes reais: vendas (PDV + manual), recebíveis de cartão, NF-e de
             compra, despesas fixas, CT-e e NFS-e. <strong>Acordos ficam de fora</strong> (são quitação de dívida, não despesa nova).
-            Sem um % de CMV, o custo usa as <strong>compras do período</strong> — que é reposição de estoque, não o custo exato do que foi vendido;
-            informe o CMV % para a margem bruta real.
+            O <strong>CMV real</strong> vem do custo de cada item vendido no PDV (gerencial = custo médio; aquisição = última compra);
+            onde não houver custo, cai para as compras (NF-e). Informe um CMV % para forçar uma base fixa. Vendas manuais entram na
+            receita mas não têm custo no PDV.
           </p>
         </>
       ) : null}
