@@ -2524,7 +2524,8 @@ export const conciliacaoSaidas = onCall(
       const tol = Math.max(1, alvo * 0.01);
       let melhor: Debito | null = null; let melhorDist = 999;
       for (const dbt of debitos) {
-        if (dbt.usado || dbt.categoria !== "pagamento") continue;
+        // fixas saem por pagamento OU transferência (salário/aluguel/imposto). Não casa tarifa/pix/cartão.
+        if (dbt.usado || (dbt.categoria !== "pagamento" && dbt.categoria !== "transferencia")) continue;
         if (Math.abs(Math.abs(dbt.valor) - alvo) > tol) continue;
         const dist = Math.abs(diasEntreISO(dbt.dia, venc));
         if (dist > 7 || dist >= melhorDist) continue;
