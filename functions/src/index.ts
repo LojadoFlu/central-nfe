@@ -2117,7 +2117,13 @@ function categoriaDespesaFixa(c: string): string {
   if (/[aá]gua|esgoto/.test(s)) return "agua";
   if (/cont[aá]bil/.test(s)) return "contabilidade";
   if (/software|sistema|licen/.test(s)) return "software";
+  if (/royal|franqui/.test(s)) return "royalties";
   return ""; // não casou → em branco (usuário escolhe ao editar)
+}
+
+/** True para títulos de COMPRA DE MERCADORIA — não são despesa fixa (fornecedor de mercadoria). */
+function ehMercadoria(categoria: string): boolean {
+  return /mercadoria/i.test(categoria || "");
 }
 
 /**
@@ -2136,10 +2142,13 @@ export const importarContasPagar = onCall(
     const texto = String(req.data?.texto ?? "");
     const dryRun = req.data?.dryRun !== false; // padrão = só prévia
     if (texto.length < 20) throw new HttpsError("invalid-argument", "Arquivo vazio ou inválido.");
-    const titulos = parseContasPagar(texto);
-    if (!titulos.length) {
+    const todos = parseContasPagar(texto);
+    if (!todos.length) {
       throw new HttpsError("failed-precondition", "Nenhum título reconhecido. Confira se é o relatório 'Contas a Pagar' do PDV (CSV).");
     }
+    // Fornecedores de MERCADORIA não são despesa fixa — ficam de fora (serviços entram).
+    const titulos = todos.filter((t) => !ehMercadoria(t.categoria));
+    const ignoradosMercadoria = todos.length - titulos.length;
 
     // AGRUPA por (empresa, nome, valor, dia) — colapsa parcelas mensais iguais numa despesa fixa.
     interface Grupo { empresaId: string | null; loja: string; nome: string; categoria: string; beneficiario: string; valor: number; dia: number | null; qtd: number }
@@ -2169,7 +2178,7 @@ export const importarContasPagar = onCall(
       if (!g.categoria) semCategoria++;
     }
     const resumo = {
-      qtd: lista.length, titulos: titulos.length, total: totalMensal, semEmpresa, semCategoria,
+      qtd: lista.length, titulos: titulos.length, total: totalMensal, semEmpresa, semCategoria, ignoradosMercadoria,
       porCategoria: Object.entries(porCategoria).map(([k, v]) => ({ categoria: k, ...v })).sort((a, b) => b.valor - a.valor),
       porLoja: Object.entries(porLoja).map(([k, v]) => ({ loja: k, ...v })).sort((a, b) => b.valor - a.valor),
     };

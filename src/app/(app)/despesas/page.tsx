@@ -36,6 +36,7 @@ const CATEGORIAS: { key: string; label: string }[] = [
   { key: "software", label: "Software/Sistema" },
   { key: "salarios", label: "Salários" },
   { key: "impostos", label: "Impostos/Taxas" },
+  { key: "royalties", label: "Royalties" },
   { key: "outros", label: "Outros" },
 ];
 const CAT_LABEL = Object.fromEntries(CATEGORIAS.map((c) => [c.key, c.label]));
@@ -353,6 +354,7 @@ export default function DespesasPage() {
               Vai criar <strong>{preview.resumo.qtd} despesa(s) fixa(s)</strong> (agrupando {preview.resumo.titulos} títulos) · {formatBRL(preview.resumo.total)}/mês
               {preview.resumo.semCategoria ? ` · ${preview.resumo.semCategoria} sem categoria` : ""}
               {preview.resumo.semEmpresa ? ` · ${preview.resumo.semEmpresa} sem loja` : ""}
+              {preview.resumo.ignoradosMercadoria ? ` · ${preview.resumo.ignoradosMercadoria} de mercadoria ignorados` : ""}
             </p>
             <div className="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2">
               {preview.resumo.porCategoria.map((c) => (

@@ -916,10 +916,11 @@ export async function obterConciliacaoSaidas(de: string, ate: string, empresaId 
 // ——— Import de contas a pagar do PDV → despesas fixas ———
 export interface ImportContasResumo {
   qtd: number; // despesas fixas que seriam criadas
-  titulos: number; // títulos lidos no CSV
+  titulos: number; // títulos considerados (já sem mercadoria)
   total: number; // total mensal
   semEmpresa: number;
   semCategoria: number;
+  ignoradosMercadoria: number; // títulos de mercadoria deixados de fora
   porCategoria: { categoria: string; qtd: number; valor: number }[];
   porLoja: { loja: string; qtd: number; valor: number }[];
 }
