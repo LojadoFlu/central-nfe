@@ -1736,6 +1736,15 @@ function maisDiasISO(iso: string, n: number): string {
   const dt = new Date(Date.UTC(y, (m || 1) - 1, (d || 1) + n));
   return dt.toISOString().slice(0, 10);
 }
+/** Diferença em dias (a − b) entre duas datas YYYY-MM-DD (UTC). */
+function diasEntreISO(a: string, b: string): number {
+  const [ya, ma, da] = a.slice(0, 10).split("-").map(Number);
+  const [yb, mb, db] = b.slice(0, 10).split("-").map(Number);
+  if (!ya || !yb) return 999;
+  const ta = Date.UTC(ya, (ma || 1) - 1, da || 1);
+  const tb = Date.UTC(yb, (mb || 1) - 1, db || 1);
+  return Math.round((ta - tb) / 86_400_000);
+}
 /**
  * Data em que o cartão cai na conta (antecipação ON): D+1; se cair no fim de
  * semana, empurra para segunda (sex→seg, sáb→seg, dom→seg). A venda inteira do
@@ -2176,6 +2185,135 @@ export const conciliacao = onCall(
       manual: { cartao: manualCartao, pix: manualPix },
       dif: { cartao: bancoCartao - previstoCartao, pix: bancoPix - previstoPix },
       porDia,
+    };
+  },
+);
+
+/**
+ * Conciliação de SAÍDAS: o que SAIU do banco (débitos) × o que registramos como PAGO
+ * (contas de fornecedor, despesas fixas e parcelas de acordo). Casa por valor (±1% / ±R$1)
+ * e data (±3 dias). Exceções são o ouro: "pago no sistema mas sem débito no banco" e
+ * "débito de pagamento no banco sem conta registrada". Só leitura (financeiro).
+ */
+export const conciliacaoSaidas = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+    const dd = req.data ?? {};
+    const de = String(dd.de ?? "").slice(0, 10);
+    const ate = String(dd.ate ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
+      throw new HttpsError("invalid-argument", "Período inválido.");
+    }
+    const empresaId = dd.empresaId ? String(dd.empresaId) : "";
+    const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
+    const daEmpresa = (cid: unknown) => !empresaId || String(cid ?? "") === empresaId;
+    const noRange = (dia: string) => !!dia && dia >= de && dia <= ate;
+
+    // BANCO — todos os débitos (saídas) no período
+    interface Debito { fitid: string; dia: string; valor: number; memo: string; categoria: string; usado: boolean }
+    const debitos: Debito[] = [];
+    const porCategoria: Record<string, number> = {};
+    let totalSaidas = 0;
+    const bt = empresaId
+      ? await db.collection("bank_transactions").where("empresaId", "==", empresaId).get()
+      : await db.collection("bank_transactions").get();
+    for (const doc of bt.docs) {
+      const t = doc.data();
+      const dia = d10(t.dia);
+      if (!noRange(dia)) continue;
+      const valor = Number(t.valor ?? 0);
+      if (valor >= 0) continue; // só saídas
+      totalSaidas += valor;
+      porCategoria[String(t.categoria ?? "outros")] = (porCategoria[String(t.categoria ?? "outros")] ?? 0) - valor;
+      debitos.push({ fitid: String(t.fitid ?? doc.id), dia, valor, memo: String(t.memo ?? ""), categoria: String(t.categoria ?? "outros"), usado: false });
+    }
+
+    // OBRIGAÇÕES pagas no período (dataPagamento em [de,ate])
+    interface Paga { tipo: string; descricao: string; valor: number; data: string; ref: string; conciliado: boolean }
+    const pagas: Paga[] = [];
+    // fornecedores (nfe_installments)
+    for (const doc of (await db.collection("nfe_installments").get()).docs) {
+      const p = doc.data();
+      if (p.statusPagamento !== "pago" || !daEmpresa(p.companyId)) continue;
+      const data = d10(p.dataPagamento);
+      if (!noRange(data)) continue;
+      const valor = Number(p.valorPago ?? p.valor ?? 0);
+      if (!(valor > 0)) continue;
+      pagas.push({ tipo: "fornecedor", descricao: String(p.xNomeEmit || p.cnpjEmit || "Fornecedor"), valor, data, ref: doc.id, conciliado: false });
+    }
+    // despesas fixas (pagamentos.{ym})
+    for (const doc of (await db.collection("nfe_fixed_expenses").get()).docs) {
+      const x = doc.data();
+      if (!daEmpresa(x.companyId)) continue;
+      const pgs = (x.pagamentos ?? {}) as Record<string, { pago?: boolean; data?: string; valor?: number }>;
+      for (const [ym, pg] of Object.entries(pgs)) {
+        if (!pg?.pago) continue;
+        const data = d10(pg.data) || `${ym}-01`;
+        if (!noRange(data)) continue;
+        const valor = Number(pg.valor ?? x.valor ?? 0);
+        if (!(valor > 0)) continue;
+        pagas.push({ tipo: "despesa", descricao: String(x.nome || x.categoria || "Despesa fixa"), valor, data, ref: `${doc.id}_${ym}`, conciliado: false });
+      }
+    }
+    // acordos (parcelas pagas)
+    for (const doc of (await db.collection("nfe_agreements").get()).docs) {
+      const a = doc.data();
+      if (!daEmpresa(a.companyId)) continue;
+      const parcelas = (a.parcelas ?? []) as Array<Record<string, unknown>>;
+      parcelas.forEach((p, i) => {
+        if (p.statusPagamento !== "pago") return;
+        const data = d10(p.dataPagamento);
+        if (!noRange(data)) return;
+        const valor = Number(p.valorPago ?? p.valor ?? 0);
+        if (!(valor > 0)) return;
+        pagas.push({ tipo: "acordo", descricao: String(a.fornecedorNome || a.credor || "Acordo"), valor, data, ref: `${doc.id}_${i}`, conciliado: false });
+      });
+    }
+
+    // MATCHING — para cada conta paga, acha um débito compatível ainda não usado
+    const proximo = (alvo: number, dataPg: string): Debito | null => {
+      const tol = Math.max(1, alvo * 0.01);
+      let melhor: Debito | null = null; let melhorDist = 999;
+      for (const dbt of debitos) {
+        if (dbt.usado) continue;
+        if (Math.abs(Math.abs(dbt.valor) - alvo) > tol) continue;
+        const dist = Math.abs(diasEntreISO(dbt.dia, dataPg));
+        if (dist > 3) continue;
+        if (dist < melhorDist) { melhor = dbt; melhorDist = dist; }
+      }
+      return melhor;
+    };
+    let conciliadoValor = 0, conciliadoQtd = 0;
+    for (const pg of pagas) {
+      const m = proximo(pg.valor, pg.data);
+      if (m) { m.usado = true; pg.conciliado = true; conciliadoValor += pg.valor; conciliadoQtd++; }
+    }
+
+    // EXCEÇÕES
+    const pagasSemBanco = pagas.filter((p) => !p.conciliado)
+      .sort((a, b) => b.valor - a.valor);
+    // débitos de PAGAMENTO no banco sem conta casada (transferências/tarifas são saídas legítimas sem conta)
+    const debitosSemConta = debitos.filter((dbt) => !dbt.usado && dbt.categoria === "pagamento")
+      .map((dbt) => ({ fitid: dbt.fitid, dia: dbt.dia, valor: dbt.valor, memo: dbt.memo }))
+      .sort((a, b) => a.valor - b.valor);
+
+    const totalPago = pagas.reduce((s, p) => s + p.valor, 0);
+    const porTipo = {
+      fornecedor: pagas.filter((p) => p.tipo === "fornecedor").reduce((s, p) => s + p.valor, 0),
+      despesa: pagas.filter((p) => p.tipo === "despesa").reduce((s, p) => s + p.valor, 0),
+      acordo: pagas.filter((p) => p.tipo === "acordo").reduce((s, p) => s + p.valor, 0),
+    };
+
+    return {
+      ok: true, de, ate, empresaId: empresaId || null,
+      banco: { totalSaidas: Math.abs(totalSaidas), porCategoria, qtd: debitos.length },
+      pagas: { total: totalPago, qtd: pagas.length, porTipo },
+      conciliado: { valor: conciliadoValor, qtd: conciliadoQtd },
+      pagasSemBanco: pagasSemBanco.slice(0, 100),
+      debitosSemConta: debitosSemConta.slice(0, 100),
+      pagasSemBancoTotal: pagasSemBanco.reduce((s, p) => s + p.valor, 0),
+      debitosSemContaTotal: debitosSemConta.reduce((s, p) => s + Math.abs(p.valor), 0),
     };
   },
 );

@@ -26,6 +26,7 @@ import {
   Users,
   PackageCheck,
   TrendingUp,
+  ArrowDownLeft,
   type LucideIcon,
 } from "lucide-react";
 
@@ -55,6 +56,7 @@ export const SECONDARY_NAV: NavItem[] = [
   { label: "DRE gerencial", href: "/dre", icon: TrendingUp, modulo: "financeiro" },
   { label: "Banco", href: "/banco", icon: Landmark, modulo: "financeiro" },
   { label: "Conciliação", href: "/conciliacao", icon: Scale, modulo: "financeiro" },
+  { label: "Conciliação de saídas", href: "/saidas", icon: ArrowDownLeft, modulo: "financeiro" },
   { label: "Taxas de cartão", href: "/taxas", icon: CreditCard, modulo: "financeiro" },
   { label: "Conferir taxas", href: "/conferir", icon: BadgeCheck, modulo: "financeiro" },
   { label: "Vendas (PDV)", href: "/vendas", icon: ShoppingCart, modulo: "vendas" },

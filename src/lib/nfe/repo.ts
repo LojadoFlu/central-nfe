@@ -872,6 +872,40 @@ export async function obterDRE(de: string, ate: string, empresaId = "", cmvPct =
   return res.data as DRE;
 }
 
+// ——— Conciliação de saídas (banco × obrigações pagas) ———
+export interface PagaSemBanco {
+  tipo: string;
+  descricao: string;
+  valor: number;
+  data: string;
+  ref: string;
+}
+export interface DebitoSemConta {
+  fitid: string;
+  dia: string;
+  valor: number;
+  memo: string;
+}
+export interface ConciliacaoSaidas {
+  ok: boolean;
+  de: string;
+  ate: string;
+  empresaId: string | null;
+  banco: { totalSaidas: number; porCategoria: Record<string, number>; qtd: number };
+  pagas: { total: number; qtd: number; porTipo: { fornecedor: number; despesa: number; acordo: number } };
+  conciliado: { valor: number; qtd: number };
+  pagasSemBanco: PagaSemBanco[];
+  debitosSemConta: DebitoSemConta[];
+  pagasSemBancoTotal: number;
+  debitosSemContaTotal: number;
+}
+export async function obterConciliacaoSaidas(de: string, ate: string, empresaId = ""): Promise<ConciliacaoSaidas> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "conciliacaoSaidas");
+  const res = await fn({ de, ate, empresaId });
+  return res.data as ConciliacaoSaidas;
+}
+
 // ——— Taxas de cartão (configuração por loja) ———
 export interface TaxaCartao {
   id: string;
