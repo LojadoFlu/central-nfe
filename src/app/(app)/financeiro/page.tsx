@@ -7,7 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { StatCard } from "@/components/ui/stat-card";
+import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, type Parcela } from "@/lib/nfe/repo";
@@ -272,11 +272,18 @@ export default function FinanceiroPage() {
       <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-1" />
       <p className="mb-3 px-1 text-[11px] text-muted-foreground">Período pela data de vencimento das parcelas.</p>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatCard label="A vencer" value={parcelas === null ? "…" : formatBRL(totais.aVencer)} tone="warning" />
-        <StatCard label="Vencidas" value={parcelas === null ? "…" : formatBRL(totais.vencido)} tone="destructive" />
-        <StatCard label="Pagas" value={parcelas === null ? "…" : formatBRL(totais.pago)} tone="success" />
-      </div>
+      <Hero
+        eyebrow="A pagar em aberto"
+        value={parcelas === null ? "…" : formatBRL(totais.aVencer + totais.vencido)}
+        valueTone={totais.vencido > 0 ? "destructive" : "default"}
+        tone={totais.vencido > 0 ? "destructive" : "warning"}
+        subtitle="Parcelas de fornecedores por vencimento no período"
+        metrics={[
+          { label: "A vencer", value: parcelas === null ? "…" : formatBRL(totais.aVencer), tone: "warning" },
+          { label: "Vencidas", value: parcelas === null ? "…" : formatBRL(totais.vencido), tone: "destructive" },
+          { label: "Pagas", value: parcelas === null ? "…" : formatBRL(totais.pago), tone: "success" },
+        ]}
+      />
 
       {/* Resumo de pagamentos por mês */}
       {porMes.length > 0 ? (

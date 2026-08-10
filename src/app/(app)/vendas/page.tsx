@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { StatCard } from "@/components/ui/stat-card";
+import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
@@ -180,11 +180,15 @@ export default function VendasPage() {
         </ModulePlaceholder>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <StatCard label="Vendido no período" value={formatBRL(resumo?.totalVendido)} />
-            <StatCard label="Cartões a receber" value={formatBRL(resumo?.totalRecebiveis)} tone="warning" />
-            <StatCard label="Líquido previsto" value={formatBRL(resumo?.totalLiquido)} tone="success" />
-          </div>
+          <Hero
+            eyebrow="Vendido no período"
+            value={formatBRL(resumo?.totalVendido)}
+            subtitle="Vendas do PDV no período/loja selecionados"
+            metrics={[
+              { label: "Cartões a receber", value: formatBRL(resumo?.totalRecebiveis), tone: "warning" },
+              { label: "Líquido previsto", value: formatBRL(resumo?.totalLiquido), tone: "success" },
+            ]}
+          />
           <p className="mt-2 text-xs text-muted-foreground">
             {resumo?.count ?? 0} venda(s){grupo ? ` · ${grupo}` : " · todas as lojas"} · {formatarData(de)} a {formatarData(ate)}
             {carregandoResumo ? " · atualizando…" : ""}

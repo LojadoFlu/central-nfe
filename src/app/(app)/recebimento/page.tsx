@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatCard } from "@/components/ui/stat-card";
+import { Hero } from "@/components/ui/hero";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
 import {
   listarEmpresas,
@@ -123,11 +123,15 @@ export default function RecebimentoPage() {
         <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-40" /></div>
       ) : dados ? (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <StatCard label="Compras no período" value={formatBRL(dados.total.valor)} hint={`${dados.total.qtd} nota(s)`} />
-            <StatCard label="Recebidas" value={formatBRL(dados.recebidas.valor)} hint={`${dados.recebidas.qtd} nota(s)`} tone="success" />
-            <StatCard label="Pendentes" value={formatBRL(dados.pendentes.valor)} hint={`${dados.pendentes.qtd} nota(s)`} tone="warning" />
-          </div>
+          <Hero
+            eyebrow="Compras no período"
+            value={formatBRL(dados.total.valor)}
+            subtitle={`${dados.total.qtd} nota(s) de compra capturadas na SEFAZ`}
+            metrics={[
+              { label: "Recebidas", value: formatBRL(dados.recebidas.valor), hint: `${dados.recebidas.qtd} nota(s)`, tone: "success" },
+              { label: "Pendentes", value: formatBRL(dados.pendentes.valor), hint: `${dados.pendentes.qtd} nota(s)`, tone: "warning" },
+            ]}
+          />
 
           <div className="mt-4 space-y-2">
             {dados.itens.length === 0 ? (

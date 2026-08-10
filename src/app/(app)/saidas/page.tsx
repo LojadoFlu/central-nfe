@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatCard } from "@/components/ui/stat-card";
+import { Hero } from "@/components/ui/hero";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
 import { obterConciliacaoSaidas, listarEmpresas, type ConciliacaoSaidas } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
@@ -83,13 +83,20 @@ export default function SaidasPage() {
         <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-40" /></div>
       ) : dados ? (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <StatCard label="Saídas do banco" value={formatBRL(dados.banco.totalSaidas)} hint={`${dados.banco.qtd} lançamento(s)`} />
-            <StatCard label="Pago (registrado)" value={formatBRL(dados.pagas.total)} hint={`${dados.pagas.qtd} conta(s)`} />
-            <StatCard label="Conciliado" value={formatBRL(dados.conciliado.valor)}
-              hint={dados.pagas.qtd ? `${dados.conciliado.qtd}/${dados.pagas.qtd} contas casadas` : "—"}
-              tone={dados.conciliado.qtd === dados.pagas.qtd && dados.pagas.qtd > 0 ? "success" : "default"} />
-          </div>
+          <Hero
+            eyebrow="Saídas do banco"
+            value={formatBRL(dados.banco.totalSaidas)}
+            subtitle={`${dados.banco.qtd} lançamento(s) de débito no período`}
+            metrics={[
+              { label: "Pago (registrado)", value: formatBRL(dados.pagas.total), hint: `${dados.pagas.qtd} conta(s)` },
+              {
+                label: "Conciliado",
+                value: formatBRL(dados.conciliado.valor),
+                hint: dados.pagas.qtd ? `${dados.conciliado.qtd}/${dados.pagas.qtd} casadas` : "—",
+                tone: dados.conciliado.qtd === dados.pagas.qtd && dados.pagas.qtd > 0 ? "success" : "default",
+              },
+            ]}
+          />
 
           {/* Exceção 1: pago no sistema, sem débito no banco */}
           <Secao

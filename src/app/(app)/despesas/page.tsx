@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { StatCard } from "@/components/ui/stat-card";
+import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
@@ -318,11 +318,16 @@ export default function DespesasPage() {
         Totais somados no período ({periodoLabel}). A baixa é lançada por mês.
       </p>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <StatCard label="Previsto" value={despesas === null ? "…" : formatBRL(totais.previsto)} />
-        <StatCard label="Pago (real)" value={despesas === null ? "…" : formatBRL(totais.pago)} tone="success" />
-        <StatCard label="Falta pagar" value={despesas === null ? "…" : formatBRL(totais.falta)} tone="warning" />
-      </div>
+      <Hero
+        eyebrow="Falta pagar"
+        value={despesas === null ? "…" : formatBRL(totais.falta)}
+        tone={(totais.falta ?? 0) > 0 ? "warning" : "success"}
+        subtitle="Despesas fixas do período"
+        metrics={[
+          { label: "Previsto", value: despesas === null ? "…" : formatBRL(totais.previsto) },
+          { label: "Pago (real)", value: despesas === null ? "…" : formatBRL(totais.pago), tone: "success" },
+        ]}
+      />
 
       {/* Formulário */}
       {formAberto ? (

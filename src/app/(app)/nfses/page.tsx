@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { StatCard } from "@/components/ui/stat-card";
+import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
@@ -168,10 +168,12 @@ export default function NfsesPage() {
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
       {resultado ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{resultado}</p> : null}
 
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard label="NFS-e recebidas" value={nfses === null ? "…" : String(totais.qtd)} />
-        <StatCard label="Total em serviços" value={nfses === null ? "…" : formatBRL(totais.total)} />
-      </div>
+      <Hero
+        eyebrow="Total em serviços"
+        value={nfses === null ? "…" : formatBRL(totais.total)}
+        tone="success"
+        subtitle={nfses === null ? undefined : `${totais.qtd} NFS-e recebida(s) no período`}
+      />
 
       {estado?.ultimaSync ? (
         <p className="mt-2 text-xs text-muted-foreground">

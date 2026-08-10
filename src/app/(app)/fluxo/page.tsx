@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { StatCard } from "@/components/ui/stat-card";
+import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import { obterFluxoCaixa, listarEmpresas, obterContaBanco, type FluxoCaixa, type FluxoDia } from "@/lib/nfe/repo";
@@ -218,11 +218,17 @@ export default function FluxoPage() {
         <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-40" /></div>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <StatCard label="Entradas no período" value={formatBRL(totais?.entrada)} tone="success" />
-            <StatCard label="Saídas no período" value={formatBRL(totais?.saida)} tone="destructive" />
-            <StatCard label="Saldo do período" value={formatBRL(totais?.saldo)} tone={(totais?.saldo ?? 0) < 0 ? "destructive" : "default"} />
-          </div>
+          <Hero
+            eyebrow="Saldo do período"
+            value={formatBRL(totais?.saldo)}
+            valueTone={(totais?.saldo ?? 0) < 0 ? "destructive" : "default"}
+            tone={(totais?.saldo ?? 0) < 0 ? "destructive" : "primary"}
+            subtitle="Entradas − saídas previstas no período"
+            metrics={[
+              { label: "Entradas", value: formatBRL(totais?.entrada), tone: "success" },
+              { label: "Saídas", value: formatBRL(totais?.saida), tone: "destructive" },
+            ]}
+          />
 
           {/* Saldo inicial + projetado */}
           <Card className="mt-3">

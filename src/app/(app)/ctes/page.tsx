@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { StatCard } from "@/components/ui/stat-card";
+import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
@@ -172,10 +172,11 @@ export default function CtesPage() {
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
       {resultado ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{resultado}</p> : null}
 
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard label="CT-e recebidos" value={ctes === null ? "…" : String(totais.qtd)} />
-        <StatCard label="Total em fretes" value={ctes === null ? "…" : formatBRL(totais.total)} />
-      </div>
+      <Hero
+        eyebrow="Total em fretes"
+        value={ctes === null ? "…" : formatBRL(totais.total)}
+        subtitle={ctes === null ? undefined : `${totais.qtd} CT-e recebido(s) no período`}
+      />
 
       {estado?.ultimaSync ? (
         <p className="mt-2 text-xs text-muted-foreground">
