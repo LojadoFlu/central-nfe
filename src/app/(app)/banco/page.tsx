@@ -147,18 +147,21 @@ export default function BancoPage() {
         </ModulePlaceholder>
       ) : (
         <>
-          {/* Saldo + info da conta */}
-          <Card className="mb-3">
-            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
-              <div>
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Saldo em conta{conta.saldoData ? ` · ${formatarData(conta.saldoData)}` : ""}</p>
-                <p className="text-2xl font-bold tnum">{formatBRL(conta.saldo ?? 0)}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {conta.org ?? "Conta"}{conta.ultimoImport ? ` · importado ${formatarDataHora(conta.ultimoImport)}` : ""}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          {/* Hero — saldo em conta */}
+          <div className="relative mb-4 overflow-hidden rounded-[var(--radius)] border border-border/60 bg-card p-5 shadow-float sm:p-6">
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-primary/[0.08] via-transparent to-transparent" />
+            <div className="relative">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                Saldo em conta{conta.saldoData ? ` · ${formatarData(conta.saldoData)}` : ""}
+              </p>
+              <p className="mt-2 text-[2.2rem] font-bold leading-none tracking-[-0.03em] tnum sm:text-[2.7rem]">
+                {formatBRL(conta.saldo ?? 0)}
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {conta.org ?? "Conta"}{conta.ultimoImport ? ` · importado ${formatarDataHora(conta.ultimoImport)}` : ""}
+              </p>
+            </div>
+          </div>
 
           <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
 
@@ -170,9 +173,10 @@ export default function BancoPage() {
 
           {/* Por categoria */}
           {cats.length ? (
-            <Card className="mt-3">
+            <>
+              <h2 className="mb-3 mt-7 text-[0.95rem] font-semibold tracking-tight">Por natureza</h2>
+              <Card>
               <CardContent className="py-4">
-                <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Por natureza</h2>
                 <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2">
                   {cats.map(([k, v]) => (
                     <div key={k} className="flex items-center justify-between py-1 text-sm">
@@ -185,12 +189,14 @@ export default function BancoPage() {
                   ))}
                 </div>
               </CardContent>
-            </Card>
+              </Card>
+            </>
           ) : null}
 
           {/* Lançamentos */}
-          <div className="mt-4 space-y-2">
-            <p className="text-xs text-muted-foreground">
+          <h2 className="mb-1 mt-7 text-[0.95rem] font-semibold tracking-tight">Lançamentos</h2>
+          <div className="space-y-2">
+            <p className="mb-2 text-xs text-muted-foreground">
               {txs.length} lançamento(s){dados && dados.total > txs.length ? ` · mostrando os do período (de ${dados.total} carregados)` : ""}
             </p>
             {txs.slice(0, 200).map((t) => (
