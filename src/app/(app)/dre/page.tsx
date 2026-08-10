@@ -5,11 +5,10 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { StatCard } from "@/components/ui/stat-card";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
 import { obterDRE, listarEmpresas, type DRE } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
-import { formatBRL } from "@/lib/utils";
+import { cn, formatBRL } from "@/lib/utils";
 
 function periodoEsteMes(): Periodo {
   const d = new Date();
@@ -25,6 +24,12 @@ function cmvTitulo(d: DRE): string {
   if (d.cmvOrigem === "real_gerencial") return "(−) CMV real (custo gerencial)";
   if (d.cmvOrigem === "real_aquisicao") return "(−) CMV real (custo de aquisição)";
   return "(−) Compras de mercadoria (NF-e)";
+}
+function origemCurta(d: DRE): string {
+  if (d.cmvOrigem === "percentual") return `CMV ${fmtPct(d.cmvPct)}`;
+  if (d.cmvOrigem === "real_gerencial") return "CMV real · gerencial";
+  if (d.cmvOrigem === "real_aquisicao") return "CMV real · aquisição";
+  return "custo por compras";
 }
 function cmvNota(d: DRE): string | undefined {
   if (d.cmvOrigem === "real_gerencial" || d.cmvOrigem === "real_aquisicao") {
@@ -105,19 +110,36 @@ export default function DrePage() {
         <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-64" /></div>
       ) : dados ? (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <StatCard label="Receita de vendas" value={formatBRL(dados.receitaVendas)} />
-            <StatCard label="Lucro bruto" value={formatBRL(dados.lucroBruto)} hint={`margem ${fmtPct(dados.margemBruta)}`} tone={dados.lucroBruto >= 0 ? "success" : "destructive"} />
-            <StatCard
-              label="Resultado do período"
-              value={formatBRL(dados.resultado)}
-              hint={`margem ${fmtPct(dados.margemLiquida)}`}
-              tone={dados.resultado >= 0 ? "success" : "destructive"}
-            />
+          {/* Hero — o resultado, colorido pelo sinal */}
+          <div className="relative overflow-hidden rounded-[var(--radius)] border border-border/60 bg-card shadow-float">
+            <div className={cn("pointer-events-none absolute inset-0 bg-gradient-to-br to-transparent", dados.resultado >= 0 ? "from-success/[0.09]" : "from-destructive/[0.09]")} />
+            <div className="relative p-5 sm:p-6">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Resultado do período</p>
+              <p className={cn("mt-2 text-[2.2rem] font-bold leading-none tracking-[-0.03em] tnum sm:text-[2.7rem]", dados.resultado >= 0 ? "text-success" : "text-destructive")}>
+                {formatBRL(dados.resultado)}
+              </p>
+              <p className="mt-2 text-sm text-muted-foreground">
+                margem líquida <span className="font-semibold text-foreground">{fmtPct(dados.margemLiquida)}</span> · {origemCurta(dados)}
+              </p>
+            </div>
+            <div className="relative grid grid-cols-2 divide-x divide-border/60 border-t border-border/60">
+              <div className="p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Receita de vendas</p>
+                <p className="mt-1 text-base font-bold tnum sm:text-lg">{formatBRL(dados.receitaVendas)}</p>
+              </div>
+              <div className="p-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Lucro bruto</p>
+                <p className="mt-1 text-base font-bold tnum sm:text-lg">
+                  {formatBRL(dados.lucroBruto)}
+                  <span className="ml-1 text-xs font-medium text-muted-foreground">· {fmtPct(dados.margemBruta)}</span>
+                </p>
+              </div>
+            </div>
           </div>
 
-          <Card className="mt-4">
-            <CardContent className="py-2">
+          <h2 className="mb-3 mt-7 text-[0.95rem] font-semibold tracking-tight">Demonstração</h2>
+          <Card>
+            <CardContent className="py-1.5">
               <table className="w-full text-sm">
                 <tbody className="tnum">
                   <Linha titulo="Receita de vendas" valor={dados.receitaVendas} tom="pos" forte
@@ -159,12 +181,14 @@ function Linha({
 }) {
   const cor = tom === "neg" ? "text-destructive" : tom === "pos" ? "text-success" : tom === "memo" ? "text-muted-foreground" : "";
   return (
-    <tr className={`border-b border-border/50 ${destaque ? "bg-muted/40" : ""}`}>
-      <td className="py-2 pr-2">
+    <tr className={cn("border-b border-border/40 last:border-0", destaque && "bg-muted/50")}>
+      <td className={cn("py-2.5 pr-2", destaque && "pl-3")}>
         <span className={forte ? "font-semibold" : ""}>{titulo}</span>
-        {nota ? <span className="block text-[11px] font-normal text-muted-foreground">{nota}</span> : null}
+        {nota ? <span className="mt-0.5 block text-[11px] font-normal leading-snug text-muted-foreground">{nota}</span> : null}
       </td>
-      <td className={`py-2 pl-2 text-right ${forte ? "font-bold" : ""} ${cor}`}>{formatBRL(valor)}</td>
+      <td className={cn("py-2.5 pl-2 text-right tabular-nums", destaque ? "pr-3 text-base font-bold" : forte ? "font-bold" : "", cor)}>
+        {formatBRL(valor)}
+      </td>
     </tr>
   );
 }
