@@ -41,19 +41,43 @@ function segundaDaSemana(iso: string): string {
   dt.setDate(dt.getDate() - dow);
   return ymd(dt);
 }
+/** Domingo da semana de uma data YYYY-MM-DD. */
+function domingoDaSemana(iso: string): string {
+  const [y, m, d] = segundaDaSemana(iso).split("-").map(Number);
+  return ymd(new Date(y, m - 1, d + 6));
+}
+/** Quantos dias (inclusivo) entre de e ate. */
+function diasNoIntervalo(de: string, ate: string): number {
+  const a = new Date(`${de}T00:00:00`).getTime();
+  const b = new Date(`${ate}T00:00:00`).getTime();
+  return Math.round((b - a) / 86_400_000) + 1;
+}
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 function mesLabel(ym: string): string {
   const [y, m] = ym.split("-");
   return `${MESES[Number(m) - 1] ?? m}/${y}`;
 }
 
-const HORIZONTES = [
+// Atalhos rápidos de período (segmentado). "dia"=hoje, "semana"=esta semana, "mes"=este mês.
+const PERIODOS_RAPIDOS = [
+  { key: "dia", label: "Hoje" },
+  { key: "semana", label: "Semana" },
+  { key: "mes", label: "Mês" },
+] as const;
+// Projeções mais longas (pulldown).
+const PROJECOES = [
   { key: "30", label: "Próximos 30 dias" },
   { key: "60", label: "Próximos 60 dias" },
   { key: "90", label: "Próximos 90 dias" },
-  { key: "mes", label: "Este mês" },
   { key: "custom", label: "Personalizado…" },
 ];
+/** Agrupamento automático conforme o tamanho do intervalo. */
+function agrupamentoPara(de: string, ate: string): "dia" | "semana" | "mes" {
+  const n = diasNoIntervalo(de, ate);
+  if (n <= 10) return "dia";
+  if (n <= 62) return "semana";
+  return "mes";
+}
 
 const ORIGEM_LABEL: Record<string, string> = {
   cartao: "Cartões (líquido)", avista: "PIX + dinheiro",
@@ -74,14 +98,15 @@ export default function FluxoPage() {
   const [dados, setDados] = useState<FluxoCaixa | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
-  const [horizonte, setHorizonte] = useState("30");
-  const [de, setDe] = useState(hojeISO());
-  const [ate, setAte] = useState(maisDias(30));
-  const [agrup, setAgrup] = useState<"dia" | "semana" | "mes">("semana");
-  const [saldos, setSaldos] = useState<Record<string, number>>({}); // saldo inicial por empresa
-  const [contaBanco, setContaBanco] = useState<{ saldo: number | null; saldoData: string | null } | null>(null);
+  const [periodo, setPeriodo] = useState("mes"); // dia | semana | mes | 30 | 60 | 90 | custom
+  const [de, setDe] = useState(primeiroDiaMes());
+  const [ate, setAte] = useState(ultimoDiaMes());
+  const [saldos, setSaldos] = useState<Record<string, number>>({}); // override manual de saldo inicial por empresa
+  const [bancos, setBancos] = useState<Record<string, { saldo: number | null; saldoData: string | null }>>({}); // saldo real do extrato por empresa
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
+
+  const agrup = useMemo(() => agrupamentoPara(de, ate), [de, ate]);
 
   useEffect(() => {
     try {
@@ -91,12 +116,33 @@ export default function FluxoPage() {
     void listarEmpresas().then(setEmpresas).catch(() => {});
   }, []);
 
-  // Saldo inicial é por loja (empresa). "Todas" soma; edita-se com uma loja selecionada.
+  // Saldo do banco (real, do extrato) de todas as empresas — base da posição de caixa.
+  useEffect(() => {
+    if (!empresas.length) return;
+    void Promise.all(
+      empresas.map((e) => obterContaBanco(e.id).then((c) => [e.id, c] as const).catch(() => [e.id, null] as const)),
+    ).then((pares) => {
+      const map: Record<string, { saldo: number | null; saldoData: string | null }> = {};
+      for (const [id, c] of pares) if (c) map[id] = c;
+      setBancos(map);
+    });
+  }, [empresas]);
+
+  // Saldo do banco atual (empresa selecionada, ou soma de todas).
+  const saldoBanco = empresaId
+    ? bancos[empresaId]?.saldo ?? null
+    : (empresas.some((e) => bancos[e.id]?.saldo != null)
+      ? empresas.reduce((s, e) => s + (bancos[e.id]?.saldo ?? 0), 0)
+      : null);
+  const dataSaldoBanco = empresaId ? bancos[empresaId]?.saldoData ?? null : null;
+
+  // Saldo inicial da projeção: usa o override manual se houver; senão o saldo do banco.
   const editavelSaldo = !!empresaId || empresas.length <= 1;
   const chaveSaldo = empresaId || empresas[0]?.id || "global";
-  const saldoInicial = editavelSaldo
-    ? saldos[chaveSaldo] ?? 0
-    : empresas.reduce((s, e) => s + (saldos[e.id] ?? 0), 0);
+  const overrideManual = editavelSaldo
+    ? saldos[chaveSaldo]
+    : (empresas.some((e) => saldos[e.id] != null) ? empresas.reduce((s, e) => s + (saldos[e.id] ?? 0), 0) : undefined);
+  const saldoInicial = overrideManual ?? saldoBanco ?? 0;
 
   function salvarSaldo(v: number) {
     const next = { ...saldos, [chaveSaldo]: v };
@@ -104,13 +150,15 @@ export default function FluxoPage() {
     try { localStorage.setItem("nfe_fluxo_saldos", JSON.stringify(next)); } catch { /* ignore */ }
   }
 
-  // horizonte → de/ate (exceto custom, que usa os inputs)
+  // período → de/ate (exceto custom, que usa os inputs)
   useEffect(() => {
-    if (horizonte === "custom") return;
-    if (horizonte === "mes") { setDe(primeiroDiaMes()); setAte(ultimoDiaMes()); return; }
+    if (periodo === "custom") return;
+    if (periodo === "dia") { setDe(hojeISO()); setAte(hojeISO()); return; }
+    if (periodo === "semana") { setDe(segundaDaSemana(hojeISO())); setAte(domingoDaSemana(hojeISO())); return; }
+    if (periodo === "mes") { setDe(primeiroDiaMes()); setAte(ultimoDiaMes()); return; }
     setDe(hojeISO());
-    setAte(maisDias(Number(horizonte)));
-  }, [horizonte]);
+    setAte(maisDias(Number(periodo)));
+  }, [periodo]);
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -125,12 +173,6 @@ export default function FluxoPage() {
   }, [de, ate, empresaId]);
 
   useEffect(() => { void carregar(); }, [carregar]);
-
-  // saldo do banco da loja selecionada (para oferecer como saldo inicial)
-  useEffect(() => {
-    if (!empresaId) { setContaBanco(null); return; }
-    void obterContaBanco(empresaId).then(setContaBanco).catch(() => setContaBanco(null));
-  }, [empresaId]);
 
   const grupos = useMemo<Grupo[]>(() => {
     const linhas: FluxoDia[] = dados?.linhas ?? [];
@@ -160,6 +202,20 @@ export default function FluxoPage() {
   const saldoFinal = saldoInicial + (totais?.saldo ?? 0);
   const semMovimento = !carregando && dados && (dados.linhas?.length ?? 0) === 0;
 
+  // Menor saldo projetado no período (resolução diária): revela se o caixa fica
+  // negativo em algum dia, mesmo quando começa positivo.
+  const menorSaldo = useMemo(() => {
+    const linhas = [...(dados?.linhas ?? [])].sort((a, b) => a.dia.localeCompare(b.dia));
+    let acc = saldoInicial;
+    let menor = { valor: saldoInicial, dia: dados?.hoje ?? hojeISO() };
+    for (const l of linhas) {
+      acc += l.entrada - l.saida;
+      if (acc < menor.valor) menor = { valor: acc, dia: l.dia };
+    }
+    return menor;
+  }, [dados, saldoInicial]);
+  const caixaEstoura = menorSaldo.valor < 0;
+
   return (
     <div>
       <PageHeader
@@ -183,27 +239,28 @@ export default function FluxoPage() {
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={horizonte}
-            onChange={(e) => setHorizonte(e.target.value)}
-            className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm sm:flex-none sm:w-56"
-          >
-            {HORIZONTES.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
-          </select>
-          <div className="flex rounded-md border border-border p-0.5 text-xs">
-            {(["dia", "semana", "mes"] as const).map((a) => (
+          <div className="flex flex-1 rounded-md border border-border p-0.5 text-sm sm:flex-none">
+            {PERIODOS_RAPIDOS.map((p) => (
               <button
-                key={a}
-                onClick={() => setAgrup(a)}
-                className={`rounded px-2.5 py-1 font-medium capitalize transition-colors ${agrup === a ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+                key={p.key}
+                onClick={() => setPeriodo(p.key)}
+                className={`flex-1 rounded px-3.5 py-1.5 font-medium transition-colors sm:flex-none ${periodo === p.key ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
               >
-                {a === "mes" ? "mês" : a}
+                {p.label}
               </button>
             ))}
           </div>
+          <select
+            value={PROJECOES.some((h) => h.key === periodo) ? periodo : ""}
+            onChange={(e) => { if (e.target.value) setPeriodo(e.target.value); }}
+            className="h-10 rounded-md border border-input bg-background px-3 text-sm text-muted-foreground"
+          >
+            <option value="">Projeção…</option>
+            {PROJECOES.map((h) => <option key={h.key} value={h.key}>{h.label}</option>)}
+          </select>
         </div>
 
-        {horizonte === "custom" ? (
+        {periodo === "custom" ? (
           <div className="flex items-center gap-2 rounded-md border border-border bg-card p-2">
             <Input type="date" value={de} onChange={(e) => setDe(e.target.value)} className="h-9 min-w-0 flex-1" />
             <span className="shrink-0 text-xs text-muted-foreground">até</span>
@@ -230,47 +287,80 @@ export default function FluxoPage() {
             ]}
           />
 
-          {/* Saldo inicial + projetado */}
+          {/* Posição de caixa: banco hoje → menor saldo previsto → saldo ao fim */}
           <Card className="mt-3">
-            <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3">
-              <div className="space-y-1">
-                <label className="block text-[11px] uppercase tracking-wide text-muted-foreground">
-                  Saldo inicial {editavelSaldo ? "(por loja)" : "(soma das lojas)"}
-                </label>
-                <Input
-                  type="number"
-                  step="0.01"
-                  inputMode="decimal"
-                  value={editavelSaldo ? saldos[chaveSaldo] || "" : saldoInicial}
-                  onChange={editavelSaldo ? (e) => salvarSaldo(Number(e.target.value) || 0) : undefined}
-                  readOnly={!editavelSaldo}
-                  placeholder="0,00"
-                  className={`h-9 w-36 ${!editavelSaldo ? "bg-muted text-muted-foreground" : ""}`}
-                />
-                {!editavelSaldo ? (
-                  <p className="text-[11px] text-muted-foreground">Selecione uma loja para editar o saldo dela.</p>
-                ) : contaBanco?.saldo != null ? (
-                  <button
-                    type="button"
-                    onClick={() => salvarSaldo(contaBanco.saldo as number)}
-                    className="text-left text-[11px] font-medium text-primary hover:underline"
-                  >
-                    Usar saldo do banco: {formatBRL(contaBanco.saldo)}
-                    {contaBanco.saldoData ? ` (${formatarData(contaBanco.saldoData)})` : ""}
-                  </button>
-                ) : null}
+            <CardContent className="py-4">
+              <h2 className="mb-3 text-[0.95rem] font-semibold tracking-tight">Posição de caixa</h2>
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">No banco hoje</p>
+                  <p className="mt-1 text-base font-bold tnum sm:text-lg">{saldoBanco != null ? formatBRL(saldoBanco) : "—"}</p>
+                  <p className="text-[10px] text-muted-foreground">
+                    {saldoBanco == null ? "sem extrato" : dataSaldoBanco ? formatarData(dataSaldoBanco) : "soma das lojas"}
+                  </p>
+                </div>
+                <div className="border-x border-border">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Menor saldo previsto</p>
+                  <p className={`mt-1 text-base font-bold tnum sm:text-lg ${caixaEstoura ? "text-destructive" : "text-success"}`}>{formatBRL(menorSaldo.valor)}</p>
+                  <p className="text-[10px] text-muted-foreground">em {formatarData(menorSaldo.dia)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Saldo ao fim</p>
+                  <p className={`mt-1 text-base font-bold tnum sm:text-lg ${saldoFinal < 0 ? "text-destructive" : "text-foreground"}`}>{formatBRL(saldoFinal)}</p>
+                  <p className="text-[10px] text-muted-foreground">{formatarData(ate)}</p>
+                </div>
               </div>
-              <div className="text-right">
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Saldo projetado ao fim</p>
-                <p className={`text-xl font-bold tnum ${saldoFinal < 0 ? "text-destructive" : "text-success"}`}>{formatBRL(saldoFinal)}</p>
-              </div>
+
+              {/* Veredito de caixa */}
+              {saldoBanco == null && overrideManual == null ? (
+                <p className="mt-3 rounded-md bg-muted/60 p-2.5 text-[12px] text-muted-foreground">
+                  Importe o extrato do banco (em <strong>Banco</strong>) para projetar a partir do saldo real — ou informe um saldo inicial abaixo.
+                </p>
+              ) : caixaEstoura ? (
+                <p className="mt-3 rounded-md bg-destructive/10 p-2.5 text-[12px] font-medium text-destructive">
+                  ⚠️ O caixa fica negativo em {formatarData(menorSaldo.dia)} ({formatBRL(menorSaldo.valor)}). Será preciso aporte ou antecipar recebíveis para cobrir as saídas.
+                </p>
+              ) : (totais?.saldo ?? 0) < 0 ? (
+                <p className="mt-3 rounded-md bg-success/10 p-2.5 text-[12px] font-medium text-success">
+                  ✓ Mesmo com saída líquida de {formatBRL(Math.abs(totais?.saldo ?? 0))} no período, o caixa se mantém positivo (mínimo {formatBRL(menorSaldo.valor)} em {formatarData(menorSaldo.dia)}).
+                </p>
+              ) : null}
+
+              {/* Ajuste do saldo inicial (opcional) */}
+              <details className="mt-3 border-t border-border pt-3">
+                <summary className="cursor-pointer text-[12px] font-medium text-muted-foreground">Ajustar saldo inicial</summary>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Input
+                    type="number"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={editavelSaldo ? saldos[chaveSaldo] ?? "" : ""}
+                    onChange={editavelSaldo ? (e) => salvarSaldo(Number(e.target.value) || 0) : undefined}
+                    readOnly={!editavelSaldo}
+                    placeholder={saldoBanco != null ? formatBRL(saldoBanco) : "0,00"}
+                    className={`h-9 w-36 ${!editavelSaldo ? "bg-muted text-muted-foreground" : ""}`}
+                  />
+                  {editavelSaldo && saldos[chaveSaldo] != null ? (
+                    <button type="button" onClick={() => salvarSaldo(saldoBanco ?? 0)} className="text-[12px] font-medium text-primary hover:underline">
+                      voltar ao saldo do banco
+                    </button>
+                  ) : null}
+                </div>
+                <p className="mt-1.5 text-[11px] text-muted-foreground">
+                  {!editavelSaldo
+                    ? "Selecione uma loja para editar o saldo dela."
+                    : overrideManual != null
+                    ? "Usando um saldo inicial informado por você (sobrescreve o banco)."
+                    : "A projeção começa do saldo do banco. Edite aqui para simular outro ponto de partida."}
+                </p>
+              </details>
             </CardContent>
           </Card>
 
           {semMovimento ? (
             <div className="mt-4">
               <ModulePlaceholder icon={LineChart} title="Sem movimento no período" etapa="Fluxo de caixa">
-                Ajuste o horizonte, ou sincronize as vendas e cadastre contas para ver o fluxo projetado.
+                Troque o período, ou sincronize as vendas e cadastre contas para ver o fluxo projetado.
               </ModulePlaceholder>
             </div>
           ) : (
