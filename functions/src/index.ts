@@ -1178,6 +1178,19 @@ export const pdvnetSondarVendas = onCall(
 );
 
 /**
+ * Piso de data das vendas (virada de produção): vendas anteriores NÃO são importadas.
+ * Config em `configuracoes/producao`.inicioVendas (AAAA-MM-DD). Evita que o sync diário
+ * ressuscite o histórico apagado na virada.
+ */
+async function inicioVendasProducao(): Promise<string | null> {
+  try {
+    const snap = await db.collection("configuracoes").doc("producao").get();
+    const v = String(snap.data()?.inicioVendas ?? "");
+    return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  } catch { return null; }
+}
+
+/**
  * Sincroniza as vendas do PDVnet (mês corrente por padrão) → sales +
  * sale_payments + card_receivables, escopadas às lojas ativas. admin/fiscal.
  */
@@ -1207,6 +1220,10 @@ export const pdvnetSincronizarVendas = onCall(
         : new Date(hoje.getFullYear(), hoje.getMonth(), 1); // 1º dia do mês corrente
       inicio = fmt(ini); fim = fmt(hoje);
     }
+    // Piso de produção: nunca importar vendas antes do início configurado.
+    const floor = await inicioVendasProducao();
+    if (floor && inicio < floor) inicio = floor;
+    if (inicio > fim) return { ok: true, periodo: { inicio, fim }, vendas: 0, recebiveis: 0, lojas: 0 };
     try {
       const r = await sincronizarVendas(cli, inicio, fim);
       await auditar(uid, "pdvnet.sincronizarVendas", { periodo: `${inicio}..${fim}`, vendas: r.vendas });
@@ -1245,10 +1262,16 @@ export const pdvnetSyncVendasAgendado = onSchedule(
     const hoje = new Date();
     const ini = new Date(hoje.getTime() - 35 * 86_400_000);
     const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    // Piso de produção: não ressuscitar vendas anteriores ao início configurado.
+    const floor = await inicioVendasProducao();
+    let inicio = fmt(ini);
+    if (floor && inicio < floor) inicio = floor;
+    const fimA = fmt(hoje);
+    if (inicio > fimA) { logger.info("pdvnetSyncVendasAgendado: nada a sincronizar (antes do início de produção)."); return; }
     try {
-      const r = await sincronizarVendas(cli, fmt(ini), fmt(hoje));
+      const r = await sincronizarVendas(cli, inicio, fimA);
       logger.info("pdvnetSyncVendasAgendado ok", {
-        periodo: `${fmt(ini)}..${fmt(hoje)}`,
+        periodo: `${inicio}..${fimA}`,
         vendas: r.vendas,
         recebiveis: r.recebiveis,
         lojas: r.lojas,
