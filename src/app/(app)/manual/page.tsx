@@ -52,7 +52,6 @@ export default function ManualPage() {
   const [salvando, setSalvando] = useState(false);
   const ehParcelado = forma === "cartaoParcelado";
 
-  const manuais = useMemo(() => empresas.filter((e) => e.manual), [empresas]);
   const maquinas = useMemo(() => empresas.filter((e) => !e.manual), [empresas]);
   const ehCartaoOuPix = FORMAS.find((f) => f.key === forma)?.cartao || forma === "pix";
   const nomeEmp = (id: string | null) => empresas.find((e) => e.id === id)?.nomeFantasia || empresas.find((e) => e.id === id)?.razaoSocial || (id ?? "—");
@@ -60,8 +59,8 @@ export default function ManualPage() {
   useEffect(() => {
     void listarEmpresas().then((es) => {
       setEmpresas(es);
-      const man = es.filter((e) => e.manual);
-      if (man.length && !empresaId) setEmpresaId(man[0].id);
+      // padrão: primeira loja offline se houver; senão a primeira loja
+      if (es.length && !empresaId) setEmpresaId((es.find((e) => e.manual) ?? es[0]).id);
     }).catch((e) => setErro((e as Error).message));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -114,23 +113,25 @@ export default function ManualPage() {
 
   return (
     <div>
-      <PageHeader title="Vendas manuais" description="Lojas offline (ex.: Maracanã) — totais por dia, meio de pagamento e máquina/loja." />
+      <PageHeader title="Vendas manuais" description="Lançamento manual de vendas por loja — totais por dia, meio de pagamento e máquina/loja." />
 
-      {manuais.length === 0 && empresas.length ? (
-        <ModulePlaceholder icon={PencilLine} title="Nenhuma loja manual" etapa="Vendas manuais">
-          Não há loja offline cadastrada. (A Maracanã deve aparecer aqui — se não aparecer, me avise.)
+      {empresas.length === 0 ? (
+        <ModulePlaceholder icon={PencilLine} title="Nenhuma loja cadastrada" etapa="Vendas manuais">
+          Cadastre uma empresa/loja em Empresas para lançar vendas manuais.
         </ModulePlaceholder>
       ) : (
         <>
           <div className="mb-3 flex flex-wrap gap-2">
-            {manuais.length > 1 ? (
-              <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm">
-                {manuais.map((e) => <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>)}
+            <label className="flex flex-1 flex-col gap-1">
+              <span className="text-[11px] font-medium text-muted-foreground">Loja (onde lançar a venda)</span>
+              <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                {empresas.map((e) => <option key={e.id} value={e.id}>{(e.nomeFantasia || e.razaoSocial)}{e.manual ? " · offline" : ""}</option>)}
               </select>
-            ) : manuais.length === 1 ? (
-              <div className="flex h-10 flex-1 items-center rounded-md border border-border bg-muted px-3 text-sm font-medium">{manuais[0].nomeFantasia || manuais[0].razaoSocial}</div>
-            ) : null}
-            <Input type="date" value={dia} onChange={(e) => setDia(e.target.value)} className="h-10 w-44" />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] font-medium text-muted-foreground">Dia</span>
+              <Input type="date" value={dia} onChange={(e) => setDia(e.target.value)} className="h-10 w-44" />
+            </label>
           </div>
 
           {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
