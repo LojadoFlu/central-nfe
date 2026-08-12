@@ -1313,6 +1313,9 @@ export const pdvnetSalvarLoja = onCall(opcoes, async (req) => {
   if (typeof d.ativoSync === "boolean") patch.ativoSync = d.ativoSync;
   if (d.grupoNome !== undefined) patch.grupoNome = String(d.grupoNome ?? "").trim() || null;
   if (d.empresaId !== undefined) patch.empresaId = d.empresaId ? String(d.empresaId) : null;
+  // Loja da máquina de cartão: empresa cujo BANCO recebe o cartão/PIX (para conciliação).
+  // Vazio = a própria loja. Ex.: NAOUSAR passa na máquina da SXCG.
+  if (d.maquinaEmpresaId !== undefined) patch.maquinaEmpresaId = d.maquinaEmpresaId ? String(d.maquinaEmpresaId) : null;
   await db.collection("pdv_stores").doc(lojaId).set(patch, { merge: true });
   await auditar(uid, "pdvnet.salvarLoja", { lojaId, ...patch });
   return { ok: true };
@@ -1926,7 +1929,7 @@ async function recebiveisNoCredito(
     .where("dia", ">=", menosDiasISO(de, 4)).where("dia", "<=", ate).get();
   for (const doc of qOn.docs) {
     const r = doc.data();
-    const cid = String(r.empresaId ?? "");
+    const cid = String(r.conciliaEmpresaId ?? r.empresaId ?? ""); // loja da máquina (onde o dinheiro cai)
     if (!daEmpresa(cid) || ant.get(cid) === false) continue;
     const credito = dataCreditoCartao(d10(r.dia));
     if (!credito || credito < de || credito > ate) continue;
@@ -1937,7 +1940,7 @@ async function recebiveisNoCredito(
     .where("dataVencimento", ">=", de).where("dataVencimento", "<", maisDiasISO(ate, 1)).get();
   for (const doc of qOff.docs) {
     const r = doc.data();
-    const cid = String(r.empresaId ?? "");
+    const cid = String(r.conciliaEmpresaId ?? r.empresaId ?? ""); // loja da máquina (onde o dinheiro cai)
     if (!daEmpresa(cid) || ant.get(cid) !== false) continue;
     const credito = d10(r.dataVencimento);
     if (!credito || credito < de || credito > ate) continue;
@@ -2005,8 +2008,10 @@ export const fluxoCaixa = onCall(
     const spSnap = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of spSnap.docs) {
       const p = doc.data();
-      if (!daEmpresa(p.empresaId)) continue;
       if (p.forma !== "dinheiro" && p.forma !== "pix") continue;
+      // dinheiro fica na loja física (empresaId); pix cai no banco da loja da máquina.
+      const cid = p.forma === "pix" ? (p.conciliaEmpresaId ?? p.empresaId) : p.empresaId;
+      if (!daEmpresa(cid)) continue;
       const dia = d10(p.dia);
       entrada(dia, Number(p.valor ?? 0), dia <= hoje, "avista");
     }
@@ -2380,7 +2385,7 @@ export const conciliacao = onCall(
     const sp = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of sp.docs) {
       const p = doc.data();
-      if (String(p.empresaId ?? "") !== empresaId || p.forma !== "pix") continue;
+      if (String(p.conciliaEmpresaId ?? p.empresaId ?? "") !== empresaId || p.forma !== "pix") continue;
       const v = Number(p.valor ?? 0);
       previstoPix += v;
       bd(d10(p.dia)).previstoPix += v;

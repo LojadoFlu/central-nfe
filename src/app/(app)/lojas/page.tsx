@@ -58,7 +58,7 @@ export default function LojasPage() {
     }
   }
 
-  async function salvar(lojaId: number, patch: { ativoSync?: boolean; grupoNome?: string; empresaId?: string | null }) {
+  async function salvar(lojaId: number, patch: { ativoSync?: boolean; grupoNome?: string; empresaId?: string | null; maquinaEmpresaId?: string | null }) {
     setErro(null);
     // otimista
     setStores((prev) => (prev ?? []).map((s) => (s.id === lojaId ? { ...s, ...patch } : s)));
@@ -161,6 +161,17 @@ export default function LojasPage() {
                           <option key={emp.id} value={emp.id}>{emp.nomeFantasia || emp.razaoSocial}</option>
                         ))}
                       </select>
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <label className="block text-[11px] text-muted-foreground">Loja da máquina de cartão (onde cai cartão/PIX no banco)</label>
+                      <select value={s.maquinaEmpresaId ?? ""} onChange={(e) => salvar(s.id, { maquinaEmpresaId: e.target.value || null })}
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
+                        <option value="">— a própria empresa —</option>
+                        {empresas.map((emp) => (
+                          <option key={emp.id} value={emp.id}>{emp.nomeFantasia || emp.razaoSocial}</option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-muted-foreground">Use quando as maquininhas desta loja são de outra empresa (a conciliação de cartão/PIX vai para ela). O DRE e o total de vendas continuam nesta loja.</p>
                     </div>
                   </div>
                 ) : null}

@@ -625,6 +625,7 @@ export interface StorePdv {
   nome?: string;
   grupoNome?: string | null;
   empresaId?: string | null;
+  maquinaEmpresaId?: string | null;
   ativoSync?: boolean;
   varejo?: boolean;
   inativa?: boolean;
@@ -649,6 +650,7 @@ export async function pdvnetSalvarLoja(input: {
   ativoSync?: boolean;
   grupoNome?: string;
   empresaId?: string | null;
+  maquinaEmpresaId?: string | null;
 }): Promise<{ ok: boolean }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "pdvnetSalvarLoja");

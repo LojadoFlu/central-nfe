@@ -15,28 +15,30 @@ export function ehVarejo(l: PdvLoja): boolean {
 }
 
 /** Puxa /lojas e materializa em pdv_stores (preserva empresaId/ativoSync já definidos). */
-export async function materializarLojas(cli: PdvnetClient): Promise<Map<number, { nome: string; empresaId: string | null }>> {
+export async function materializarLojas(cli: PdvnetClient): Promise<Map<number, { nome: string; empresaId: string | null; conciliaEmpresaId: string | null }>> {
   const lojas = await cli.listarLojas();
   const now = new Date().toISOString();
   const batch = db.batch();
-  const ativos = new Map<number, { nome: string; empresaId: string | null }>();
+  const ativos = new Map<number, { nome: string; empresaId: string | null; conciliaEmpresaId: string | null }>();
   for (const l of lojas) {
     const varejo = ehVarejo(l);
     const nome = l.NomeFantasia || l.RazaoSocial || `Loja ${l.Id}`;
     const ref = db.collection("pdv_stores").doc(String(l.Id));
     const existente = (await ref.get()).data() as
-      | { empresaId?: string | null; ativoSync?: boolean; grupoNome?: string }
+      | { empresaId?: string | null; ativoSync?: boolean; grupoNome?: string; maquinaEmpresaId?: string | null }
       | undefined;
     const empresaId = existente?.empresaId ?? null;
-    // ativoSync/grupo: respeitam escolha manual; senão default (varejo / próprio nome).
+    const maquinaEmpresaId = existente?.maquinaEmpresaId ?? null; // banco que recebe o cartão (se ≠ da própria loja)
+    // ativoSync/grupo/máquina: respeitam escolha manual; senão default (varejo / próprio nome).
     const ativoSync = existente?.ativoSync ?? varejo;
     const grupoNome = existente?.grupoNome ?? nome;
     batch.set(
       ref,
-      { id: l.Id, nome, redeId: l.RedeId ?? null, inativa: !!l.Inativa, varejo, ativoSync, grupoNome, empresaId, atualizadoEm: now },
+      { id: l.Id, nome, redeId: l.RedeId ?? null, inativa: !!l.Inativa, varejo, ativoSync, grupoNome, empresaId, maquinaEmpresaId, atualizadoEm: now },
       { merge: true },
     );
-    if (ativoSync) ativos.set(l.Id, { nome, empresaId });
+    // conciliaEmpresaId = loja da máquina (onde o dinheiro cai) ou a própria empresa.
+    if (ativoSync) ativos.set(l.Id, { nome, empresaId, conciliaEmpresaId: maquinaEmpresaId ?? empresaId });
   }
   await batch.commit();
   return ativos;
@@ -147,7 +149,7 @@ export async function sincronizarVendas(
           batch.set(
             db.collection("sale_payments").doc(`${v.Id}_${f.key}`),
             {
-              vendaId: v.Id, lojaId: v.LojaId ?? null, empresaId: loja.empresaId,
+              vendaId: v.Id, lojaId: v.LojaId ?? null, empresaId: loja.empresaId, conciliaEmpresaId: loja.conciliaEmpresaId,
               dia, dataHora: v.DataHora ?? null, forma: f.key, valor, origem: "pdvnet", atualizadoEm: now,
             },
             { merge: true },
@@ -164,7 +166,7 @@ export async function sincronizarVendas(
           batch.set(
             db.collection("card_receivables").doc(`${v.Id}_${seq}`),
             {
-              vendaId: v.Id, lojaId: v.LojaId ?? p.LojaId ?? null, empresaId: loja.empresaId, dia,
+              vendaId: v.Id, lojaId: v.LojaId ?? p.LojaId ?? null, empresaId: loja.empresaId, conciliaEmpresaId: loja.conciliaEmpresaId, dia,
               cartaoId: p.CartaoId ?? null,
               descricaoCartao: p.DescricaoCartao ?? null,
               valor: p.Valor ?? 0,
