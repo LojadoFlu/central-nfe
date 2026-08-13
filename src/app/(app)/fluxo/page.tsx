@@ -103,15 +103,35 @@ interface Grupo {
   futuro: boolean;
 }
 
-/** Gráfico do saldo acumulado dia a dia — verde acima de zero, vermelho abaixo. */
+/** Valor compacto p/ eixo: 1.250.000 → "1,2M"; 42.000 → "42k". */
+function valorCompacto(v: number): string {
+  const a = Math.abs(v);
+  if (a >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace(".", ",").replace(",0", "")}M`;
+  if (a >= 1_000) return `${Math.round(v / 1_000)}k`;
+  return String(Math.round(v));
+}
+/** Escala "redonda" para o eixo Y: bordas e passo em números limpos. */
+function escalaY(min: number, max: number, alvo = 4): { lo: number; hi: number; ticks: number[] } {
+  const span = (max - min) || 1;
+  const bruto = span / (alvo - 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(bruto)));
+  const norm = bruto / mag;
+  const passo = (norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10) * mag;
+  const lo = Math.floor(min / passo) * passo;
+  const hi = Math.ceil(max / passo) * passo;
+  const ticks: number[] = [];
+  for (let v = lo; v <= hi + passo / 2; v += passo) ticks.push(Math.round(v));
+  return { lo, hi, ticks };
+}
+
+/** Gráfico do saldo acumulado dia a dia — verde acima de zero, vermelho abaixo, com eixos. */
 function GraficoCaixa({ serie }: { serie: { dia: string; saldo: number }[] }) {
   if (serie.length < 2) return null;
-  const W = 320, H = 150, padL = 4, padR = 4, padT = 12, padB = 18;
+  const W = 320, H = 168, padL = 34, padR = 6, padT = 10, padB = 22;
   const vals = serie.map((s) => s.saldo);
-  let min = Math.min(0, ...vals), max = Math.max(0, ...vals);
-  if (min === max) { max += 1; min -= 1; }
+  const { lo, hi, ticks } = escalaY(Math.min(0, ...vals), Math.max(0, ...vals));
   const x = (i: number) => padL + (i / (serie.length - 1)) * (W - padL - padR);
-  const y = (v: number) => padT + (1 - (v - min) / (max - min)) * (H - padT - padB);
+  const y = (v: number) => padT + (1 - (v - lo) / ((hi - lo) || 1)) * (H - padT - padB);
   const zeroY = y(0);
   const pts = serie.map((s, i) => `${x(i).toFixed(1)},${y(s.saldo).toFixed(1)}`);
   const lineD = `M${pts.join(" L")}`;
@@ -119,20 +139,34 @@ function GraficoCaixa({ serie }: { serie: { dia: string; saldo: number }[] }) {
   let minI = 0;
   for (let i = 1; i < serie.length; i++) if (serie[i].saldo < serie[minI].saldo) minI = i;
   const ddmm = (iso: string) => formatarData(iso).slice(0, 5);
+  // ticks do eixo X: no máx. 5 rótulos, sempre com o primeiro e o último.
+  const maxX = Math.min(5, serie.length);
+  const passoX = Math.max(1, Math.ceil((serie.length - 1) / (maxX - 1)));
+  const idxX = Array.from(new Set([...Array.from({ length: serie.length }, (_, i) => i).filter((i) => i % passoX === 0), serie.length - 1]));
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Projeção de saldo diário">
       <defs>
         <clipPath id="fluxoPos"><rect x="0" y="0" width={W} height={zeroY} /></clipPath>
         <clipPath id="fluxoNeg"><rect x="0" y={zeroY} width={W} height={Math.max(0, H - zeroY)} /></clipPath>
       </defs>
+      {/* Grade + rótulos do eixo Y */}
+      {ticks.map((t) => (
+        <g key={t}>
+          <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="hsl(var(--border))" strokeWidth={0.5} strokeOpacity={t === 0 ? 0 : 0.6} />
+          <text x={padL - 3} y={y(t) + 2.5} fontSize={7.5} textAnchor="end" fill="hsl(var(--muted-foreground))">{valorCompacto(t)}</text>
+        </g>
+      ))}
+      {/* Áreas e linha (dois tons no zero) */}
       <path d={areaD} fill="hsl(var(--success))" fillOpacity={0.14} clipPath="url(#fluxoPos)" />
       <path d={areaD} fill="hsl(var(--destructive))" fillOpacity={0.16} clipPath="url(#fluxoNeg)" />
       <line x1={padL} x2={W - padR} y1={zeroY} y2={zeroY} stroke="hsl(var(--border))" strokeWidth={1} strokeDasharray="3 3" />
       <path d={lineD} fill="none" stroke="hsl(var(--success))" strokeWidth={1.5} clipPath="url(#fluxoPos)" vectorEffect="non-scaling-stroke" />
       <path d={lineD} fill="none" stroke="hsl(var(--destructive))" strokeWidth={1.5} clipPath="url(#fluxoNeg)" vectorEffect="non-scaling-stroke" />
       <circle cx={x(minI)} cy={y(serie[minI].saldo)} r={2.6} fill={`hsl(var(--${serie[minI].saldo < 0 ? "destructive" : "success"}))`} />
-      <text x={padL} y={H - 5} fontSize={8} fill="hsl(var(--muted-foreground))">{ddmm(serie[0].dia)}</text>
-      <text x={W - padR} y={H - 5} fontSize={8} textAnchor="end" fill="hsl(var(--muted-foreground))">{ddmm(serie[serie.length - 1].dia)}</text>
+      {/* Rótulos do eixo X */}
+      {idxX.map((i) => (
+        <text key={i} x={x(i)} y={H - 6} fontSize={7.5} textAnchor={i === 0 ? "start" : i === serie.length - 1 ? "end" : "middle"} fill="hsl(var(--muted-foreground))">{ddmm(serie[i].dia)}</text>
+      ))}
     </svg>
   );
 }
