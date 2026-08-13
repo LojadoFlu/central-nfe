@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -124,50 +124,94 @@ function escalaY(min: number, max: number, alvo = 4): { lo: number; hi: number; 
   return { lo, hi, ticks };
 }
 
-/** Gráfico do saldo acumulado dia a dia — verde acima de zero, vermelho abaixo, com eixos. */
+/** Gráfico do saldo acumulado dia a dia — verde acima de zero, vermelho abaixo, com eixos + hover. */
 function GraficoCaixa({ serie }: { serie: { dia: string; saldo: number }[] }) {
-  if (serie.length < 2) return null;
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [hoverI, setHoverI] = useState<number | null>(null);
   const W = 320, H = 168, padL = 34, padR = 6, padT = 10, padB = 22;
   const vals = serie.map((s) => s.saldo);
   const { lo, hi, ticks } = escalaY(Math.min(0, ...vals), Math.max(0, ...vals));
-  const x = (i: number) => padL + (i / (serie.length - 1)) * (W - padL - padR);
+  const n = serie.length;
+  const x = (i: number) => padL + (i / Math.max(1, n - 1)) * (W - padL - padR);
   const y = (v: number) => padT + (1 - (v - lo) / ((hi - lo) || 1)) * (H - padT - padB);
   const zeroY = y(0);
+
+  const apontar = (clientX: number) => {
+    const el = boxRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const frac = (clientX - r.left) / (r.width || 1);
+    const i = Math.round(((frac * W - padL) / (W - padL - padR)) * (n - 1));
+    setHoverI(Math.max(0, Math.min(n - 1, i)));
+  };
+
+  if (n < 2) return null;
   const pts = serie.map((s, i) => `${x(i).toFixed(1)},${y(s.saldo).toFixed(1)}`);
   const lineD = `M${pts.join(" L")}`;
-  const areaD = `M${x(0).toFixed(1)},${zeroY.toFixed(1)} L${pts.join(" L")} L${x(serie.length - 1).toFixed(1)},${zeroY.toFixed(1)} Z`;
+  const areaD = `M${x(0).toFixed(1)},${zeroY.toFixed(1)} L${pts.join(" L")} L${x(n - 1).toFixed(1)},${zeroY.toFixed(1)} Z`;
   let minI = 0;
-  for (let i = 1; i < serie.length; i++) if (serie[i].saldo < serie[minI].saldo) minI = i;
+  for (let i = 1; i < n; i++) if (serie[i].saldo < serie[minI].saldo) minI = i;
   const ddmm = (iso: string) => formatarData(iso).slice(0, 5);
   // ticks do eixo X: no máx. 5 rótulos, sempre com o primeiro e o último.
-  const maxX = Math.min(5, serie.length);
-  const passoX = Math.max(1, Math.ceil((serie.length - 1) / (maxX - 1)));
-  const idxX = Array.from(new Set([...Array.from({ length: serie.length }, (_, i) => i).filter((i) => i % passoX === 0), serie.length - 1]));
+  const maxX = Math.min(5, n);
+  const passoX = Math.max(1, Math.ceil((n - 1) / (maxX - 1)));
+  const idxX = Array.from(new Set([...Array.from({ length: n }, (_, i) => i).filter((i) => i % passoX === 0), n - 1]));
+
+  const hv = hoverI != null ? serie[hoverI] : null;
+  const hvCor = hv ? (hv.saldo < 0 ? "destructive" : "success") : "success";
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Projeção de saldo diário">
-      <defs>
-        <clipPath id="fluxoPos"><rect x="0" y="0" width={W} height={zeroY} /></clipPath>
-        <clipPath id="fluxoNeg"><rect x="0" y={zeroY} width={W} height={Math.max(0, H - zeroY)} /></clipPath>
-      </defs>
-      {/* Grade + rótulos do eixo Y */}
-      {ticks.map((t) => (
-        <g key={t}>
-          <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="hsl(var(--border))" strokeWidth={0.5} strokeOpacity={t === 0 ? 0 : 0.6} />
-          <text x={padL - 3} y={y(t) + 2.5} fontSize={7.5} textAnchor="end" fill="hsl(var(--muted-foreground))">{valorCompacto(t)}</text>
-        </g>
-      ))}
-      {/* Áreas e linha (dois tons no zero) */}
-      <path d={areaD} fill="hsl(var(--success))" fillOpacity={0.14} clipPath="url(#fluxoPos)" />
-      <path d={areaD} fill="hsl(var(--destructive))" fillOpacity={0.16} clipPath="url(#fluxoNeg)" />
-      <line x1={padL} x2={W - padR} y1={zeroY} y2={zeroY} stroke="hsl(var(--border))" strokeWidth={1} strokeDasharray="3 3" />
-      <path d={lineD} fill="none" stroke="hsl(var(--success))" strokeWidth={1.5} clipPath="url(#fluxoPos)" vectorEffect="non-scaling-stroke" />
-      <path d={lineD} fill="none" stroke="hsl(var(--destructive))" strokeWidth={1.5} clipPath="url(#fluxoNeg)" vectorEffect="non-scaling-stroke" />
-      <circle cx={x(minI)} cy={y(serie[minI].saldo)} r={2.6} fill={`hsl(var(--${serie[minI].saldo < 0 ? "destructive" : "success"}))`} />
-      {/* Rótulos do eixo X */}
-      {idxX.map((i) => (
-        <text key={i} x={x(i)} y={H - 6} fontSize={7.5} textAnchor={i === 0 ? "start" : i === serie.length - 1 ? "end" : "middle"} fill="hsl(var(--muted-foreground))">{ddmm(serie[i].dia)}</text>
-      ))}
-    </svg>
+    <div
+      ref={boxRef}
+      className="relative touch-none"
+      onMouseMove={(e) => apontar(e.clientX)}
+      onMouseLeave={() => setHoverI(null)}
+      onTouchStart={(e) => apontar(e.touches[0].clientX)}
+      onTouchMove={(e) => apontar(e.touches[0].clientX)}
+      onTouchEnd={() => setHoverI(null)}
+    >
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Projeção de saldo diário">
+        <defs>
+          <clipPath id="fluxoPos"><rect x="0" y="0" width={W} height={zeroY} /></clipPath>
+          <clipPath id="fluxoNeg"><rect x="0" y={zeroY} width={W} height={Math.max(0, H - zeroY)} /></clipPath>
+        </defs>
+        {/* Grade + rótulos do eixo Y */}
+        {ticks.map((t) => (
+          <g key={t}>
+            <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="hsl(var(--border))" strokeWidth={0.5} strokeOpacity={t === 0 ? 0 : 0.6} />
+            <text x={padL - 3} y={y(t) + 2.5} fontSize={7.5} textAnchor="end" fill="hsl(var(--muted-foreground))">{valorCompacto(t)}</text>
+          </g>
+        ))}
+        {/* Áreas e linha (dois tons no zero) */}
+        <path d={areaD} fill="hsl(var(--success))" fillOpacity={0.14} clipPath="url(#fluxoPos)" />
+        <path d={areaD} fill="hsl(var(--destructive))" fillOpacity={0.16} clipPath="url(#fluxoNeg)" />
+        <line x1={padL} x2={W - padR} y1={zeroY} y2={zeroY} stroke="hsl(var(--border))" strokeWidth={1} strokeDasharray="3 3" />
+        <path d={lineD} fill="none" stroke="hsl(var(--success))" strokeWidth={1.5} clipPath="url(#fluxoPos)" vectorEffect="non-scaling-stroke" />
+        <path d={lineD} fill="none" stroke="hsl(var(--destructive))" strokeWidth={1.5} clipPath="url(#fluxoNeg)" vectorEffect="non-scaling-stroke" />
+        <circle cx={x(minI)} cy={y(serie[minI].saldo)} r={2.6} fill={`hsl(var(--${serie[minI].saldo < 0 ? "destructive" : "success"}))`} />
+        {/* Rótulos do eixo X */}
+        {idxX.map((i) => (
+          <text key={i} x={x(i)} y={H - 6} fontSize={7.5} textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"} fill="hsl(var(--muted-foreground))">{ddmm(serie[i].dia)}</text>
+        ))}
+        {/* Hover: linha-guia + ponto */}
+        {hv ? (
+          <g>
+            <line x1={x(hoverI as number)} x2={x(hoverI as number)} y1={padT} y2={H - padB} stroke="hsl(var(--muted-foreground))" strokeWidth={0.6} strokeDasharray="2 2" />
+            <circle cx={x(hoverI as number)} cy={y(hv.saldo)} r={3} fill="hsl(var(--card))" stroke={`hsl(var(--${hvCor}))`} strokeWidth={1.5} />
+          </g>
+        ) : null}
+      </svg>
+      {/* Tooltip */}
+      {hv ? (
+        <div
+          className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full whitespace-nowrap rounded-md border border-border bg-card px-2 py-1 text-center shadow-md"
+          style={{ left: `${(x(hoverI as number) / W) * 100}%`, top: `calc(${(y(hv.saldo) / H) * 100}% - 6px)` }}
+        >
+          <p className="text-[10px] text-muted-foreground">{formatarData(hv.dia)}</p>
+          <p className={`text-[11px] font-bold tnum text-${hvCor}`}>{formatBRL(hv.saldo)}</p>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
