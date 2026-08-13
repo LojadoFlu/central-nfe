@@ -30,6 +30,7 @@ export default function NotasPage() {
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [syncStates, setSyncStates] = useState<SyncEstado[]>([]);
   const [empresaId, setEmpresaId] = useState("");
+  const [emitente, setEmitente] = useState(""); // cnpjEmit; "" = todos
   const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
   const [erro, setErro] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
@@ -81,9 +82,29 @@ export default function NotasPage() {
 
   const focusId = empresaId || (empresas.length === 1 ? empresas[0]?.id : "");
   const estado = syncStates.find((s) => s.id === focusId) ?? null;
+  const nomeEmpresa = useCallback(
+    (id?: string) => {
+      const e = empresas.find((x) => x.id === id);
+      return e?.nomeFantasia || e?.razaoSocial || id || "—";
+    },
+    [empresas],
+  );
+  // Emitentes (fornecedores) distintos presentes nas notas, ordenados por nome.
+  const emitentes = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const d of docs ?? []) {
+      if (!d.cnpjEmit) continue;
+      if (!m.has(d.cnpjEmit)) m.set(d.cnpjEmit, d.xNomeEmit || d.cnpjEmit);
+    }
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [docs]);
   const visiveis = useMemo(
-    () => (docs ?? []).filter((d) => (!empresaId || d.companyId === empresaId) && noPeriodo(d.dhEmi, periodo)),
-    [docs, empresaId, periodo],
+    () => (docs ?? []).filter(
+      (d) => (!empresaId || d.companyId === empresaId)
+        && (!emitente || d.cnpjEmit === emitente)
+        && noPeriodo(d.dhEmi, periodo),
+    ),
+    [docs, empresaId, emitente, periodo],
   );
 
   return (
@@ -101,18 +122,38 @@ export default function NotasPage() {
         }
       />
 
-      {empresas.length > 1 ? (
-        <select
-          value={empresaId}
-          onChange={(e) => setEmpresaId(e.target.value)}
-          className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="">Todas as empresas</option>
-          {empresas.map((e) => (
-            <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
-          ))}
-        </select>
-      ) : null}
+      <div className="mb-3 grid gap-2 sm:grid-cols-2">
+        {empresas.length > 1 ? (
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium text-muted-foreground">Empresa recebedora</span>
+            <select
+              value={empresaId}
+              onChange={(e) => setEmpresaId(e.target.value)}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Todas as recebedoras</option>
+              {empresas.map((e) => (
+                <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {emitentes.length > 1 ? (
+          <label className="block">
+            <span className="mb-1 block text-[11px] font-medium text-muted-foreground">Emitente (fornecedor)</span>
+            <select
+              value={emitente}
+              onChange={(e) => setEmitente(e.target.value)}
+              className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="">Todos os emitentes</option>
+              {emitentes.map(([cnpj, nome]) => (
+                <option key={cnpj} value={cnpj}>{nome}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+      </div>
 
       <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
 
@@ -154,6 +195,9 @@ export default function NotasPage() {
                       {d.nNF ? ` · NF ${d.nNF}` : ""}
                       {d.serie ? `/${d.serie}` : ""}
                     </p>
+                    {!empresaId ? (
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">Recebida por {nomeEmpresa(d.companyId)}</p>
+                    ) : null}
                   </div>
                   <Badge variant={d.temXmlCompleto ? "success" : "neutral"}>
                     {d.temXmlCompleto ? "XML completo" : "Resumo"}

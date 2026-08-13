@@ -16,11 +16,13 @@ import {
   parcelasDoDocumento,
   manifestar,
   baixarParcela,
+  listarEmpresas,
   type NfeDocumento,
   type Item,
   type Parcela,
   type ResultadoManifestacao,
 } from "@/lib/nfe/repo";
+import type { Company } from "@/lib/nfe/types";
 import { gerarDanfe } from "@/lib/nfe/danfe";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { Textarea } from "@/components/ui/textarea";
@@ -49,6 +51,7 @@ export default function NotaDetalhePage() {
   const [doc, setDoc] = useState<NfeDocumento | null | undefined>(undefined);
   const [itens, setItens] = useState<Item[]>([]);
   const [parcelas, setParcelas] = useState<Parcela[]>([]);
+  const [empresas, setEmpresas] = useState<Company[]>([]);
   const [xml, setXml] = useState<string | null>(null);
   const [carregandoXml, setCarregandoXml] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
@@ -89,6 +92,17 @@ export default function NotaDetalhePage() {
   useEffect(() => {
     void carregar();
   }, [carregar]);
+
+  useEffect(() => {
+    void listarEmpresas().then(setEmpresas).catch(() => {});
+  }, []);
+
+  const nomeRecebedora = doc?.companyId
+    ? (() => {
+        const e = empresas.find((x) => x.id === doc.companyId);
+        return e?.nomeFantasia || e?.razaoSocial || doc.companyId;
+      })()
+    : null;
 
   async function verXml() {
     if (!doc?.storagePath) return;
@@ -205,6 +219,7 @@ export default function NotaDetalhePage() {
           <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">
             Resumo
           </h2>
+          <Linha rotulo="Recebida por" valor={nomeRecebedora ?? "—"} />
           <Linha rotulo="Número / Série" valor={doc.nNF ? `${doc.nNF}${doc.serie ? "/" + doc.serie : ""}` : "—"} />
           <Linha rotulo="Situação" valor={doc.situacao ?? "—"} />
           <Linha rotulo="NSU" valor={doc.nsu ?? "—"} />
