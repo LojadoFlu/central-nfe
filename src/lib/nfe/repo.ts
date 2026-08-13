@@ -572,6 +572,16 @@ export async function pagamentosPendentes(empresaId?: string): Promise<NotaPende
   return (res.data as { ok: boolean; pendentes: NotaPendente[] }).pendentes ?? [];
 }
 
+/** Lote: marca várias NF-e como pagas à vista na data de emissão de cada uma. */
+export async function definirPagamentoLoteEmissao(
+  chaves: string[],
+): Promise<{ ok: boolean; criadas: number; puladas: number; semValor: number }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeDefinirPagamentoLoteEmissao");
+  const res = await fn({ chaves });
+  return res.data as { ok: boolean; criadas: number; puladas: number; semValor: number };
+}
+
 /** Itens (produtos) de uma NF-e específica. */
 export async function itensDoDocumento(chNFe: string): Promise<Item[]> {
   const { db } = fb();

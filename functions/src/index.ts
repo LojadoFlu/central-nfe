@@ -968,6 +968,73 @@ export const nfePagamentosPendentes = onCall(opcoes, async (req) => {
 });
 
 /**
+ * Lote: define o pagamento de várias NF-e sem parcelas como "à vista e já quitado"
+ * na DATA DE EMISSÃO de cada nota (1 parcela paga, valor = vNF). Pula as que já
+ * têm parcela ou sem valor/data. Só admin/financeiro.
+ */
+export const nfeDefinirPagamentoLoteEmissao = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const chaves: string[] = Array.isArray(d.chaves)
+    ? [...new Set((d.chaves as unknown[]).map((x) => String(x).trim()).filter((s) => s !== ""))]
+    : [];
+  if (chaves.length === 0) throw new HttpsError("invalid-argument", "Nenhuma nota informada.");
+  if (chaves.length > 500) throw new HttpsError("invalid-argument", "Máximo de 500 notas por vez.");
+
+  // Chaves que já têm parcela (não sobrescrever).
+  const comParcela = new Set<string>();
+  for (const x of (await db.collection("nfe_installments").select("chNFe").get()).docs) {
+    const ch = (x.data() as { chNFe?: string }).chNFe;
+    if (ch) comParcela.add(ch);
+  }
+  const alvo = chaves.filter((c) => !comParcela.has(c));
+
+  const now = agoraISO();
+  let criadas = 0, puladas = chaves.length - alvo.length, semValor = 0;
+  // Lê os documentos em blocos (getAll) e cria as parcelas.
+  for (let i = 0; i < alvo.length; i += 300) {
+    const bloco = alvo.slice(i, i + 300);
+    const refs = bloco.map((ch) => db.collection("nfe_documents").doc(ch));
+    const snaps = await db.getAll(...refs);
+    const batch = db.batch();
+    let ops = 0;
+    for (const snap of snaps) {
+      if (!snap.exists) { puladas++; continue; }
+      const nf = snap.data() as { vNF?: number; dhEmi?: string; companyId?: string; cnpjEmit?: string | null; xNomeEmit?: string | null };
+      const chNFe = snap.id;
+      const valor = Number(nf.vNF);
+      const dia = String(nf.dhEmi ?? "").slice(0, 10);
+      if (!Number.isFinite(valor) || valor <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(dia)) { semValor++; continue; }
+      const v = Math.round(valor * 100) / 100;
+      batch.set(db.collection("nfe_installments").doc(`${chNFe}_1`), {
+        companyId: nf.companyId ?? null,
+        chNFe,
+        cnpjEmit: nf.cnpjEmit ?? null,
+        xNomeEmit: nf.xNomeEmit ?? null,
+        nDup: "1",
+        vencimento: dia,
+        valor: v,
+        statusPagamento: "pago",
+        dataPagamento: dia,
+        valorPago: v,
+        baixadoPor: uid,
+        baixadoEm: now,
+        origem: "manual",
+        definidoPor: uid,
+        definidoEm: now,
+        updatedAt: now,
+      });
+      ops++;
+      criadas++;
+    }
+    if (ops > 0) await batch.commit();
+  }
+
+  await auditar(uid, "nfe.definirPagamentoLoteEmissao", { criadas, puladas, semValor });
+  return { ok: true, criadas, puladas, semValor };
+});
+
+/**
  * Cria/atualiza um ACORDO de renegociação com um fornecedor (dívidas atrasadas).
  * Guarda as parcelas renegociadas (valor + vencimento + status). Só admin/financeiro.
  */

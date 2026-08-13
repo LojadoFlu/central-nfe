@@ -14,6 +14,7 @@ import {
   sincronizarAgora,
   listarSyncStates,
   pagamentosPendentes,
+  definirPagamentoLoteEmissao,
   type NfeDocumento,
   type SyncEstado,
   type ResultadoSync,
@@ -41,6 +42,8 @@ export default function NotasPage() {
   const [varredura, setVarredura] = useState(false);
   const [pendentes, setPendentes] = useState<NotaPendente[] | null>(null);
   const [carregandoPend, setCarregandoPend] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [lote, setLote] = useState(false);
 
   const carregar = useCallback(async () => {
     setErro(null);
@@ -118,6 +121,7 @@ export default function NotasPage() {
     if (!varredura) return;
     setCarregandoPend(true);
     setPendentes(null);
+    setSel(new Set());
     pagamentosPendentes(empresaId)
       .then(setPendentes)
       .catch((e) => setErro((e as Error).message))
@@ -130,6 +134,45 @@ export default function NotasPage() {
     ),
     [pendentes, emitente, periodo],
   );
+
+  const chavesSelecionaveis = useMemo(
+    () => pendentesVisiveis.map((p) => p.chNFe).filter((c): c is string => !!c),
+    [pendentesVisiveis],
+  );
+  const todosSel = chavesSelecionaveis.length > 0 && chavesSelecionaveis.every((c) => sel.has(c));
+  const nSel = chavesSelecionaveis.filter((c) => sel.has(c)).length;
+
+  function alternarSel(ch: string) {
+    setSel((s) => {
+      const n = new Set(s);
+      if (n.has(ch)) n.delete(ch); else n.add(ch);
+      return n;
+    });
+  }
+  function alternarTodos() {
+    setSel(todosSel ? new Set() : new Set(chavesSelecionaveis));
+  }
+  async function marcarLoteEmissao() {
+    const chaves = chavesSelecionaveis.filter((c) => sel.has(c));
+    if (chaves.length === 0) return;
+    setLote(true);
+    setErro(null);
+    setResultado(null);
+    try {
+      const r = await definirPagamentoLoteEmissao(chaves);
+      setResultado(
+        `${r.criadas} nota(s) marcada(s) como paga(s) na emissão`
+        + (r.puladas ? ` · ${r.puladas} já tinham pagamento` : "")
+        + (r.semValor ? ` · ${r.semValor} sem valor/data` : "") + ".",
+      );
+      setSel(new Set());
+      setPendentes(await pagamentosPendentes(empresaId));
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setLote(false);
+    }
+  }
 
   return (
     <div>
@@ -215,33 +258,56 @@ export default function NotasPage() {
           </ModulePlaceholder>
         ) : (
           <div className="space-y-3">
+            {/* Cabeçalho de seleção + ação em lote */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" className="size-4" checked={todosSel} onChange={alternarTodos} />
+                Selecionar todas ({chavesSelecionaveis.length})
+              </label>
+              {nSel > 0 ? (
+                <Button size="sm" disabled={lote} onClick={marcarLoteEmissao}>
+                  {lote ? "Marcando…" : `Marcar ${nSel} paga(s) na emissão`}
+                </Button>
+              ) : null}
+            </div>
             <p className="text-xs text-muted-foreground">
-              Toque em uma nota para informar as parcelas ou marcar como paga à vista.
+              Selecione e use <strong>Marcar paga(s) na emissão</strong> (à vista, quitada na data de emissão da NF),
+              ou toque numa nota para definir parcelas.
             </p>
-            {pendentesVisiveis.map((d) => (
-              <Card key={d.id} className="border-primary/30 transition-colors hover:bg-accent/50">
-                <Link href={`/notas/${encodeURIComponent(d.id)}`} className="block">
-                  <CardContent className="py-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium">{d.xNomeEmit ?? "Fornecedor não identificado"}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {d.cnpjEmit ? formatCNPJ(d.cnpjEmit) : "—"}
-                          {d.nNF ? ` · NF ${d.nNF}` : ""}
-                          {d.serie ? `/${d.serie}` : ""}
-                        </p>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">Recebida por {nomeEmpresa(d.companyId ?? undefined)}</p>
+            {pendentesVisiveis.map((d) => {
+              const ch = d.chNFe;
+              return (
+                <Card key={d.id} className="border-primary/30">
+                  <CardContent className="flex items-start gap-3 py-4">
+                    <input
+                      type="checkbox"
+                      className="mt-1 size-4 shrink-0"
+                      disabled={!ch}
+                      checked={!!ch && sel.has(ch)}
+                      onChange={() => ch && alternarSel(ch)}
+                    />
+                    <Link href={`/notas/${encodeURIComponent(d.id)}`} className="block min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">{d.xNomeEmit ?? "Fornecedor não identificado"}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {d.cnpjEmit ? formatCNPJ(d.cnpjEmit) : "—"}
+                            {d.nNF ? ` · NF ${d.nNF}` : ""}
+                            {d.serie ? `/${d.serie}` : ""}
+                          </p>
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">Recebida por {nomeEmpresa(d.companyId ?? undefined)}</p>
+                        </div>
+                        <Badge variant="warning">Sem pagamento</Badge>
                       </div>
-                      <Badge variant="warning">Sem pagamento</Badge>
-                    </div>
-                    <div className="mt-2 flex items-end justify-between">
-                      <p className="text-lg font-bold tnum">{formatBRL(d.vNF)}</p>
-                      <p className="text-xs text-muted-foreground">{formatarData(d.dhEmi)}</p>
-                    </div>
+                      <div className="mt-2 flex items-end justify-between">
+                        <p className="text-lg font-bold tnum">{formatBRL(d.vNF)}</p>
+                        <p className="text-xs text-muted-foreground">{formatarData(d.dhEmi)}</p>
+                      </div>
+                    </Link>
                   </CardContent>
-                </Link>
-              </Card>
-            ))}
+                </Card>
+              );
+            })}
           </div>
         )
       ) : docs === null ? (
