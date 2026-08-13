@@ -52,6 +52,15 @@ function diasNoIntervalo(de: string, ate: string): number {
   const b = new Date(`${ate}T00:00:00`).getTime();
   return Math.round((b - a) / 86_400_000) + 1;
 }
+/** Lista todos os dias YYYY-MM-DD de [de, ate] (inclusivo, teto de segurança). */
+function enumerarDias(de: string, ate: string): string[] {
+  const out: string[] = [];
+  const [y, m, d] = de.split("-").map(Number);
+  const dt = new Date(y, m - 1, d);
+  let guard = 0;
+  while (ymd(dt) <= ate && guard++ < 400) { out.push(ymd(dt)); dt.setDate(dt.getDate() + 1); }
+  return out;
+}
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 function mesLabel(ym: string): string {
   const [y, m] = ym.split("-");
@@ -92,6 +101,40 @@ interface Grupo {
   saldo: number;
   acumulado: number;
   futuro: boolean;
+}
+
+/** Gráfico do saldo acumulado dia a dia — verde acima de zero, vermelho abaixo. */
+function GraficoCaixa({ serie }: { serie: { dia: string; saldo: number }[] }) {
+  if (serie.length < 2) return null;
+  const W = 320, H = 150, padL = 4, padR = 4, padT = 12, padB = 18;
+  const vals = serie.map((s) => s.saldo);
+  let min = Math.min(0, ...vals), max = Math.max(0, ...vals);
+  if (min === max) { max += 1; min -= 1; }
+  const x = (i: number) => padL + (i / (serie.length - 1)) * (W - padL - padR);
+  const y = (v: number) => padT + (1 - (v - min) / (max - min)) * (H - padT - padB);
+  const zeroY = y(0);
+  const pts = serie.map((s, i) => `${x(i).toFixed(1)},${y(s.saldo).toFixed(1)}`);
+  const lineD = `M${pts.join(" L")}`;
+  const areaD = `M${x(0).toFixed(1)},${zeroY.toFixed(1)} L${pts.join(" L")} L${x(serie.length - 1).toFixed(1)},${zeroY.toFixed(1)} Z`;
+  let minI = 0;
+  for (let i = 1; i < serie.length; i++) if (serie[i].saldo < serie[minI].saldo) minI = i;
+  const ddmm = (iso: string) => formatarData(iso).slice(0, 5);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Projeção de saldo diário">
+      <defs>
+        <clipPath id="fluxoPos"><rect x="0" y="0" width={W} height={zeroY} /></clipPath>
+        <clipPath id="fluxoNeg"><rect x="0" y={zeroY} width={W} height={Math.max(0, H - zeroY)} /></clipPath>
+      </defs>
+      <path d={areaD} fill="hsl(var(--success))" fillOpacity={0.14} clipPath="url(#fluxoPos)" />
+      <path d={areaD} fill="hsl(var(--destructive))" fillOpacity={0.16} clipPath="url(#fluxoNeg)" />
+      <line x1={padL} x2={W - padR} y1={zeroY} y2={zeroY} stroke="hsl(var(--border))" strokeWidth={1} strokeDasharray="3 3" />
+      <path d={lineD} fill="none" stroke="hsl(var(--success))" strokeWidth={1.5} clipPath="url(#fluxoPos)" vectorEffect="non-scaling-stroke" />
+      <path d={lineD} fill="none" stroke="hsl(var(--destructive))" strokeWidth={1.5} clipPath="url(#fluxoNeg)" vectorEffect="non-scaling-stroke" />
+      <circle cx={x(minI)} cy={y(serie[minI].saldo)} r={2.6} fill={`hsl(var(--${serie[minI].saldo < 0 ? "destructive" : "success"}))`} />
+      <text x={padL} y={H - 5} fontSize={8} fill="hsl(var(--muted-foreground))">{ddmm(serie[0].dia)}</text>
+      <text x={W - padR} y={H - 5} fontSize={8} textAnchor="end" fill="hsl(var(--muted-foreground))">{ddmm(serie[serie.length - 1].dia)}</text>
+    </svg>
+  );
 }
 
 export default function FluxoPage() {
@@ -202,19 +245,23 @@ export default function FluxoPage() {
   const saldoFinal = saldoInicial + (totais?.saldo ?? 0);
   const semMovimento = !carregando && dados && (dados.linhas?.length ?? 0) === 0;
 
-  // Menor saldo projetado no período (resolução diária): revela se o caixa fica
-  // negativo em algum dia, mesmo quando começa positivo.
-  const menorSaldo = useMemo(() => {
-    const linhas = [...(dados?.linhas ?? [])].sort((a, b) => a.dia.localeCompare(b.dia));
+  // Saldo acumulado dia a dia no período (base do gráfico e do menor saldo).
+  const serieSaldo = useMemo(() => {
+    const mov = new Map<string, number>();
+    for (const l of dados?.linhas ?? []) mov.set(l.dia, (mov.get(l.dia) ?? 0) + (l.entrada - l.saida));
     let acc = saldoInicial;
+    return enumerarDias(de, ate).map((dia) => { acc += mov.get(dia) ?? 0; return { dia, saldo: acc }; });
+  }, [dados, de, ate, saldoInicial]);
+
+  // Menor saldo projetado no período: revela se o caixa fica negativo em algum
+  // dia, mesmo quando começa positivo.
+  const menorSaldo = useMemo(() => {
     let menor = { valor: saldoInicial, dia: dados?.hoje ?? hojeISO() };
-    for (const l of linhas) {
-      acc += l.entrada - l.saida;
-      if (acc < menor.valor) menor = { valor: acc, dia: l.dia };
-    }
+    for (const p of serieSaldo) if (p.saldo < menor.valor) menor = { valor: p.saldo, dia: p.dia };
     return menor;
-  }, [dados, saldoInicial]);
+  }, [serieSaldo, saldoInicial, dados]);
   const caixaEstoura = menorSaldo.valor < 0;
+  const diasNegativos = useMemo(() => serieSaldo.filter((p) => p.saldo < 0).length, [serieSaldo]);
 
   return (
     <div>
@@ -365,6 +412,24 @@ export default function FluxoPage() {
             </div>
           ) : (
             <>
+              {/* Gráfico do saldo projetado dia a dia */}
+              {serieSaldo.length >= 2 ? (
+                <Card className="mt-3">
+                  <CardContent className="py-4">
+                    <div className="mb-1 flex items-baseline justify-between gap-2">
+                      <h2 className="text-[0.95rem] font-semibold tracking-tight">Saldo projetado</h2>
+                      <span className={`text-[12px] font-medium ${diasNegativos > 0 ? "text-destructive" : "text-success"}`}>
+                        {diasNegativos > 0 ? `${diasNegativos} ${diasNegativos === 1 ? "dia negativo" : "dias negativos"}` : "sempre positivo"}
+                      </span>
+                    </div>
+                    <p className="mb-2 text-[11px] text-muted-foreground">
+                      Saldo do banco dia a dia. Abaixo da linha tracejada (zero), em vermelho, o caixa fica negativo.
+                    </p>
+                    <GraficoCaixa serie={serieSaldo} />
+                  </CardContent>
+                </Card>
+              ) : null}
+
               {/* Por origem */}
               {dados?.porOrigem ? (
                 <Card className="mt-3">
