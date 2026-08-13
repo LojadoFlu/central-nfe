@@ -542,6 +542,36 @@ export async function parcelasDoDocumento(chNFe: string): Promise<Parcela[]> {
   );
 }
 
+/** Define manualmente o pagamento de uma NF-e sem parcelas (parcelado ou à vista quitado). */
+export async function definirPagamento(input: {
+  chNFe: string;
+  parcelas: Array<{ vencimento: string; valor: number; pago?: boolean; dataPagamento?: string }>;
+}): Promise<{ ok: boolean; parcelas: number }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeDefinirPagamento");
+  const res = await fn(input);
+  return res.data as { ok: boolean; parcelas: number };
+}
+
+export interface NotaPendente {
+  id: string;
+  chNFe: string | null;
+  companyId: string | null;
+  cnpjEmit: string | null;
+  xNomeEmit: string | null;
+  vNF: number | null;
+  dhEmi: string | null;
+  nNF: string | null;
+  serie: string | null;
+}
+/** Varredura: NF-e sem nenhuma parcela cadastrada (pagamento a definir). */
+export async function pagamentosPendentes(empresaId?: string): Promise<NotaPendente[]> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfePagamentosPendentes");
+  const res = await fn({ empresaId: empresaId || undefined });
+  return (res.data as { ok: boolean; pendentes: NotaPendente[] }).pendentes ?? [];
+}
+
 /** Itens (produtos) de uma NF-e específica. */
 export async function itensDoDocumento(chNFe: string): Promise<Item[]> {
   const { db } = fb();

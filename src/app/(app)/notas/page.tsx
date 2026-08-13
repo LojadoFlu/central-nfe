@@ -13,19 +13,22 @@ import {
   listarEmpresas,
   sincronizarAgora,
   listarSyncStates,
+  pagamentosPendentes,
   type NfeDocumento,
   type SyncEstado,
   type ResultadoSync,
+  type NotaPendente,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
-import { FileText, RefreshCw } from "lucide-react";
+import { FileText, RefreshCw, AlertCircle } from "lucide-react";
 
 export default function NotasPage() {
   const { podeAcao } = useAuth();
   const podeSincronizar = podeAcao("integracoes.sincronizar");
+  const podeFinanceiro = podeAcao("financeiro.baixar");
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [syncStates, setSyncStates] = useState<SyncEstado[]>([]);
@@ -35,6 +38,9 @@ export default function NotasPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
   const [resultado, setResultado] = useState<string | null>(null);
+  const [varredura, setVarredura] = useState(false);
+  const [pendentes, setPendentes] = useState<NotaPendente[] | null>(null);
+  const [carregandoPend, setCarregandoPend] = useState(false);
 
   const carregar = useCallback(async () => {
     setErro(null);
@@ -107,6 +113,24 @@ export default function NotasPage() {
     [docs, empresaId, emitente, periodo],
   );
 
+  // Varredura: carrega as NF-e sem pagamento definido (respeita empresa; emitente/período no cliente).
+  useEffect(() => {
+    if (!varredura) return;
+    setCarregandoPend(true);
+    setPendentes(null);
+    pagamentosPendentes(empresaId)
+      .then(setPendentes)
+      .catch((e) => setErro((e as Error).message))
+      .finally(() => setCarregandoPend(false));
+  }, [varredura, empresaId]);
+
+  const pendentesVisiveis = useMemo(
+    () => (pendentes ?? []).filter(
+      (d) => (!emitente || d.cnpjEmit === emitente) && noPeriodo(d.dhEmi, periodo),
+    ),
+    [pendentes, emitente, periodo],
+  );
+
   return (
     <div>
       <PageHeader
@@ -157,6 +181,17 @@ export default function NotasPage() {
 
       <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
 
+      {podeFinanceiro ? (
+        <button
+          onClick={() => setVarredura((v) => !v)}
+          className={`mb-3 flex w-full items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium transition-colors ${varredura ? "border-primary bg-primary text-primary-foreground" : "border-border text-foreground hover:bg-accent/50"}`}
+        >
+          <AlertCircle className="size-4" />
+          {varredura ? "Mostrando: sem pagamento definido" : "Varredura: notas sem pagamento definido"}
+          {varredura && pendentes ? ` (${pendentesVisiveis.length})` : ""}
+        </button>
+      ) : null}
+
       {erro ? (
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p>
       ) : null}
@@ -171,7 +206,45 @@ export default function NotasPage() {
         </p>
       ) : null}
 
-      {docs === null ? (
+      {varredura ? (
+        carregandoPend || pendentes === null ? (
+          <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-24" /></div>
+        ) : pendentesVisiveis.length === 0 ? (
+          <ModulePlaceholder icon={FileText} title="Tudo com pagamento definido" etapa="Varredura">
+            Nenhuma nota sem pagamento no filtro atual. Toque no botão acima para voltar à lista.
+          </ModulePlaceholder>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Toque em uma nota para informar as parcelas ou marcar como paga à vista.
+            </p>
+            {pendentesVisiveis.map((d) => (
+              <Card key={d.id} className="border-primary/30 transition-colors hover:bg-accent/50">
+                <Link href={`/notas/${encodeURIComponent(d.id)}`} className="block">
+                  <CardContent className="py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{d.xNomeEmit ?? "Fornecedor não identificado"}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {d.cnpjEmit ? formatCNPJ(d.cnpjEmit) : "—"}
+                          {d.nNF ? ` · NF ${d.nNF}` : ""}
+                          {d.serie ? `/${d.serie}` : ""}
+                        </p>
+                        <p className="mt-0.5 truncate text-xs text-muted-foreground">Recebida por {nomeEmpresa(d.companyId ?? undefined)}</p>
+                      </div>
+                      <Badge variant="warning">Sem pagamento</Badge>
+                    </div>
+                    <div className="mt-2 flex items-end justify-between">
+                      <p className="text-lg font-bold tnum">{formatBRL(d.vNF)}</p>
+                      <p className="text-xs text-muted-foreground">{formatarData(d.dhEmi)}</p>
+                    </div>
+                  </CardContent>
+                </Link>
+              </Card>
+            ))}
+          </div>
+        )
+      ) : docs === null ? (
         <div className="space-y-3">
           <Skeleton className="h-24" />
           <Skeleton className="h-24" />

@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   obterDocumento,
@@ -17,6 +18,7 @@ import {
   manifestar,
   baixarParcela,
   listarEmpresas,
+  definirPagamento,
   type NfeDocumento,
   type Item,
   type Parcela,
@@ -42,6 +44,167 @@ function Linha({ rotulo, valor }: { rotulo: string; valor: React.ReactNode }) {
       <span className="text-muted-foreground">{rotulo}</span>
       <span className="text-right font-medium">{valor ?? "—"}</span>
     </div>
+  );
+}
+
+function hojeISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function addDias(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return ymd(new Date(y, m - 1, d + n));
+}
+function addMeses(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return ymd(new Date(y, m - 1 + n, d));
+}
+type Periodicidade = "mensal" | "quinzenal" | "semanal";
+function gerarDatas(base: string, n: number, p: Periodicidade): string[] {
+  return Array.from({ length: n }, (_, i) => (p === "mensal" ? addMeses(base, i) : addDias(base, i * (p === "quinzenal" ? 15 : 7))));
+}
+
+/** Formulário para definir o pagamento de uma NF sem parcelas no XML. */
+function DefinirPagamento({ chNFe, total, onSaved }: { chNFe: string; total: number; onSaved: () => void }) {
+  const [modo, setModo] = useState<"avista" | "parcelado">("avista");
+  // À vista
+  const [avistaData, setAvistaData] = useState(hojeISO());
+  const [avistaQuitado, setAvistaQuitado] = useState(true);
+  // Parcelado
+  const [numParc, setNumParc] = useState(2);
+  const [base, setBase] = useState(addDias(hojeISO(), 30));
+  const [period, setPeriod] = useState<Periodicidade>("mensal");
+  const [igual, setIgual] = useState(true);
+  const [rows, setRows] = useState<{ venc: string; valor: string }[]>([]);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  // (Re)gera as parcelas quando os parâmetros mudam. Divisão igual com ajuste no último centavo.
+  useEffect(() => {
+    if (modo !== "parcelado") return;
+    const n = Math.max(1, Math.min(60, numParc || 1));
+    const datas = gerarDatas(base, n, period);
+    const cent = Math.round(total * 100);
+    const b = Math.floor(cent / n);
+    const val = Array.from({ length: n }, (_, i) => ((i === n - 1 ? cent - b * (n - 1) : b) / 100));
+    setRows(datas.map((venc, i) => ({ venc, valor: val[i].toFixed(2) })));
+  }, [modo, numParc, base, period, total, igual]);
+
+  const soma = rows.reduce((s, r) => s + (Number(r.valor) || 0), 0);
+  const dif = Math.round((soma - total) * 100) / 100;
+
+  async function salvar() {
+    setErro(null);
+    setSalvando(true);
+    try {
+      const parcelas = modo === "avista"
+        ? [{ vencimento: avistaData, valor: total, pago: avistaQuitado, dataPagamento: avistaQuitado ? avistaData : undefined }]
+        : rows.map((r) => ({ vencimento: r.venc, valor: Number(r.valor) }));
+      await definirPagamento({ chNFe, parcelas });
+      onSaved();
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Card className="mb-4 border-primary/30">
+      <CardContent className="py-4">
+        <h2 className="mb-1 text-[0.95rem] font-semibold tracking-tight">Definir pagamento</h2>
+        <p className="mb-3 text-xs text-muted-foreground">
+          Esta nota veio <strong>sem parcelas</strong> no XML. Informe como ela será paga para entrar no contas a pagar e no fluxo de caixa.
+        </p>
+
+        {/* Modo */}
+        <div className="mb-3 flex rounded-md border border-border p-0.5 text-sm">
+          {([["avista", "À vista"], ["parcelado", "Parcelado"]] as const).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => setModo(k)}
+              className={`flex-1 rounded px-3 py-1.5 font-medium transition-colors ${modo === k ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {modo === "avista" ? (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="space-y-1">
+                <span className="block text-[11px] text-muted-foreground">Data</span>
+                <Input type="date" value={avistaData} onChange={(e) => setAvistaData(e.target.value)} className="h-9 w-44" />
+              </label>
+              <label className="flex items-center gap-2 pb-2 text-sm">
+                <input type="checkbox" className="size-4" checked={avistaQuitado} onChange={(e) => setAvistaQuitado(e.target.checked)} />
+                Já quitado
+              </label>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {avistaQuitado
+                ? `Registra 1 pagamento de ${formatBRL(total)} já pago em ${formatarData(avistaData)}.`
+                : `Registra 1 conta de ${formatBRL(total)} a vencer em ${formatarData(avistaData)}.`}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="space-y-1">
+                <span className="block text-[11px] text-muted-foreground">Quantas parcelas</span>
+                <Input type="number" min={2} max={60} value={numParc} onChange={(e) => setNumParc(Math.max(1, Math.min(60, Number(e.target.value) || 1)))} className="h-9 w-24" />
+              </label>
+              <label className="space-y-1">
+                <span className="block text-[11px] text-muted-foreground">1º vencimento</span>
+                <Input type="date" value={base} onChange={(e) => setBase(e.target.value)} className="h-9 w-44" />
+              </label>
+              <label className="space-y-1">
+                <span className="block text-[11px] text-muted-foreground">A cada</span>
+                <select value={period} onChange={(e) => setPeriod(e.target.value as Periodicidade)} className="h-9 w-32 rounded-md border border-input bg-background px-2 text-sm">
+                  <option value="mensal">Mês</option>
+                  <option value="quinzenal">15 dias</option>
+                  <option value="semanal">Semana</option>
+                </select>
+              </label>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" className="size-4" checked={igual} onChange={(e) => setIgual(e.target.checked)} />
+              Dividir igual pelo número de parcelas
+            </label>
+
+            <div className="space-y-1.5">
+              {rows.map((r, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="w-6 shrink-0 text-xs text-muted-foreground">{i + 1}.</span>
+                  <Input type="date" value={r.venc} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, venc: e.target.value } : x)))} className="h-9 flex-1" />
+                  <Input
+                    type="number" step="0.01" inputMode="decimal" value={r.valor}
+                    readOnly={igual}
+                    onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, valor: e.target.value } : x)))}
+                    className={`h-9 w-28 ${igual ? "bg-muted text-muted-foreground" : ""}`}
+                  />
+                </div>
+              ))}
+            </div>
+            <p className={`text-xs ${Math.abs(dif) >= 0.01 ? "text-destructive" : "text-muted-foreground"}`}>
+              Soma {formatBRL(soma)} · nota {formatBRL(total)}
+              {Math.abs(dif) >= 0.01 ? ` · diferença ${formatBRL(dif)}` : " · confere"}
+            </p>
+          </div>
+        )}
+
+        {erro ? <p className="mt-3 text-xs text-destructive">{erro}</p> : null}
+        <div className="mt-3">
+          <Button size="sm" disabled={salvando} onClick={salvar}>
+            {salvando ? "Salvando…" : "Salvar pagamento"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -325,6 +488,11 @@ export default function NotaDetalhePage() {
             ) : null}
           </CardContent>
         </Card>
+      ) : null}
+
+      {/* Definir pagamento — quando a NF não trouxe parcelas no XML */}
+      {parcelas.length === 0 && doc.chNFe && podeBaixar ? (
+        <DefinirPagamento chNFe={doc.chNFe} total={doc.vNF ?? 0} onSaved={carregar} />
       ) : null}
 
       {/* Financeiro (parcelas) */}

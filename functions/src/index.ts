@@ -867,6 +867,107 @@ export const nfeBaixarParcelasLote = onCall(opcoes, async (req) => {
 });
 
 /**
+ * Define manualmente o pagamento de uma NF-e que veio SEM parcelas no XML
+ * (sem <cobr>/<dup>). Cria as parcelas em nfe_installments (origem="manual").
+ * Suporta "à vista e já quitado" (1 parcela paga). NÃO sobrescreve parcelas do
+ * XML — só substitui uma definição manual anterior. Só admin/financeiro.
+ */
+export const nfeDefinirPagamento = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const chNFe = String(d.chNFe ?? "").trim();
+  if (!chNFe) throw new HttpsError("invalid-argument", "chNFe obrigatório.");
+
+  const docSnap = await db.collection("nfe_documents").doc(chNFe).get();
+  if (!docSnap.exists) throw new HttpsError("not-found", "Nota não encontrada.");
+  const nf = docSnap.data() as { companyId?: string; cnpjEmit?: string | null; xNomeEmit?: string | null };
+
+  const entradas = Array.isArray(d.parcelas) ? (d.parcelas as Array<Record<string, unknown>>) : [];
+  if (entradas.length === 0) throw new HttpsError("invalid-argument", "Inclua ao menos uma parcela.");
+  if (entradas.length > 60) throw new HttpsError("invalid-argument", "Máximo de 60 parcelas.");
+
+  const dataOK = (s: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(s ?? ""));
+  const parcelas = entradas.map((p, i) => {
+    const valor = Number(p.valor);
+    if (!Number.isFinite(valor) || valor <= 0) throw new HttpsError("invalid-argument", `Valor inválido na parcela ${i + 1}.`);
+    if (!dataOK(p.vencimento)) throw new HttpsError("invalid-argument", `Data inválida na parcela ${i + 1}.`);
+    const pago = p.pago === true;
+    const dataPagamento = pago ? (dataOK(p.dataPagamento) ? String(p.dataPagamento) : String(p.vencimento)) : null;
+    return { valor: Math.round(valor * 100) / 100, vencimento: String(p.vencimento), pago, dataPagamento };
+  });
+
+  // Protege parcelas do XML: só é permitido (re)definir quando não há parcela do XML.
+  const existentes = await db.collection("nfe_installments").where("chNFe", "==", chNFe).get();
+  const temXml = existentes.docs.some((x) => (x.data() as { origem?: string }).origem !== "manual");
+  if (temXml) throw new HttpsError("failed-precondition", "Esta nota já tem parcelas do XML — não é possível redefinir.");
+
+  const now = agoraISO();
+  // 1) limpa definição manual anterior (commit separado p/ evitar conflito na mesma doc)
+  if (!existentes.empty) {
+    const del = db.batch();
+    existentes.docs.forEach((x) => del.delete(x.ref));
+    await del.commit();
+  }
+  // 2) cria as novas parcelas
+  const batch = db.batch();
+  parcelas.forEach((p, i) => {
+    const nDup = String(i + 1);
+    batch.set(db.collection("nfe_installments").doc(`${chNFe}_${nDup}`), {
+      companyId: nf.companyId ?? null,
+      chNFe,
+      cnpjEmit: nf.cnpjEmit ?? null,
+      xNomeEmit: nf.xNomeEmit ?? null,
+      nDup,
+      vencimento: p.vencimento,
+      valor: p.valor,
+      statusPagamento: p.pago ? "pago" : "nao_informado",
+      ...(p.pago ? { dataPagamento: p.dataPagamento, valorPago: p.valor, baixadoPor: uid, baixadoEm: now } : {}),
+      origem: "manual",
+      definidoPor: uid,
+      definidoEm: now,
+      updatedAt: now,
+    });
+  });
+  await batch.commit();
+
+  await auditar(uid, "nfe.definirPagamento", {
+    chNFe, parcelas: parcelas.length, quitadas: parcelas.filter((p) => p.pago).length,
+  });
+  return { ok: true, parcelas: parcelas.length };
+});
+
+/**
+ * Varredura: NF-e SEM nenhuma parcela cadastrada (nem XML nem manual) — as que
+ * precisam ter o pagamento definido. Ordena por dhEmi desc. Só admin/financeiro.
+ */
+export const nfePagamentosPendentes = onCall(opcoes, async (req) => {
+  await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const empresaId = String(d.empresaId ?? "").trim();
+
+  const comParcela = new Set<string>();
+  for (const x of (await db.collection("nfe_installments").get()).docs) {
+    const ch = (x.data() as { chNFe?: string }).chNFe;
+    if (ch) comParcela.add(ch);
+  }
+  const docs = (await db.collection("nfe_documents").orderBy("dhEmi", "desc").limit(1500).get()).docs;
+  const pendentes: Array<Record<string, unknown>> = [];
+  for (const doc of docs) {
+    const nf = doc.data() as Record<string, unknown>;
+    if (empresaId && nf.companyId !== empresaId) continue;
+    const ch = nf.chNFe as string | undefined;
+    if (ch && comParcela.has(ch)) continue;
+    pendentes.push({
+      id: doc.id, chNFe: ch ?? null, companyId: nf.companyId ?? null,
+      cnpjEmit: nf.cnpjEmit ?? null, xNomeEmit: nf.xNomeEmit ?? null,
+      vNF: nf.vNF ?? null, dhEmi: nf.dhEmi ?? null, nNF: nf.nNF ?? null, serie: nf.serie ?? null,
+    });
+    if (pendentes.length >= 500) break;
+  }
+  return { ok: true, pendentes };
+});
+
+/**
  * Cria/atualiza um ACORDO de renegociação com um fornecedor (dívidas atrasadas).
  * Guarda as parcelas renegociadas (valor + vencimento + status). Só admin/financeiro.
  */
