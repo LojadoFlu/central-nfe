@@ -68,10 +68,11 @@ function gerarDatas(base: string, n: number, p: Periodicidade): string[] {
 }
 
 /** Formulário para definir o pagamento de uma NF sem parcelas no XML. */
-function DefinirPagamento({ chNFe, total, onSaved }: { chNFe: string; total: number; onSaved: () => void }) {
+function DefinirPagamento({ chNFe, total, dhEmi, onSaved }: { chNFe: string; total: number; dhEmi?: string | null; onSaved: () => void }) {
+  const emissao = dhEmi && /^\d{4}-\d{2}-\d{2}/.test(dhEmi) ? dhEmi.slice(0, 10) : hojeISO();
   const [modo, setModo] = useState<"avista" | "parcelado">("avista");
-  // À vista
-  const [avistaData, setAvistaData] = useState(hojeISO());
+  // À vista — padrão na data de emissão da NF.
+  const [avistaData, setAvistaData] = useState(emissao);
   const [avistaQuitado, setAvistaQuitado] = useState(true);
   // Parcelado
   const [numParc, setNumParc] = useState(2);
@@ -492,7 +493,7 @@ export default function NotaDetalhePage() {
 
       {/* Definir pagamento — quando a NF não trouxe parcelas no XML */}
       {parcelas.length === 0 && doc.chNFe && podeBaixar ? (
-        <DefinirPagamento chNFe={doc.chNFe} total={doc.vNF ?? 0} onSaved={carregar} />
+        <DefinirPagamento chNFe={doc.chNFe} total={doc.vNF ?? 0} dhEmi={doc.dhEmi} onSaved={carregar} />
       ) : null}
 
       {/* Financeiro (parcelas) */}
