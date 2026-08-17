@@ -14,8 +14,12 @@ import {
   importarExtrato,
   obterExtrato,
   type ExtratoBanco,
+  type TxBanco,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
+
+type TxView = TxBanco & { lojaNome?: string };
+type ExtratoView = Omit<ExtratoBanco, "transacoes"> & { transacoes: TxView[] };
 import { useAuth } from "@/lib/auth/auth-provider";
 import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
 import { Landmark, Upload, ArrowUpRight, ArrowDownRight } from "lucide-react";
@@ -35,9 +39,9 @@ export default function BancoPage() {
   const { podeAcao } = useAuth();
   const podeImportar = podeAcao("financeiro.baixar");
   const [empresas, setEmpresas] = useState<Company[]>([]);
-  const [empresaId, setEmpresaId] = useState("");
+  const [empresaId, setEmpresaId] = useState(""); // "" = Todas as lojas
   const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
-  const [dados, setDados] = useState<ExtratoBanco | null>(null);
+  const [dados, setDados] = useState<ExtratoView | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [importando, setImportando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -47,23 +51,49 @@ export default function BancoPage() {
   useEffect(() => {
     void listarEmpresas().then((es) => {
       setEmpresas(es);
-      if (es.length && !empresaId) setEmpresaId(es[0].id);
+      // 1 loja → seleciona ela (permite importar); várias → começa em "Todas".
+      if (es.length === 1) setEmpresaId((prev) => prev || es[0].id);
     }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const carregar = useCallback(async () => {
-    if (!empresaId) { setDados(null); return; }
     setCarregando(true);
     setErro(null);
     try {
-      setDados(await obterExtrato(empresaId));
+      if (empresaId) {
+        setDados(await obterExtrato(empresaId));
+      } else if (empresas.length) {
+        // Todas as lojas — soma os extratos de todos os bancos numa visão só.
+        const rs = await Promise.all(
+          empresas.map((e) => obterExtrato(e.id).then((r) => ({ e, r })).catch(() => null)),
+        );
+        const validos = rs.filter((x): x is { e: Company; r: ExtratoBanco } => !!x && !!x.r?.conta);
+        const transacoes: TxView[] = validos
+          .flatMap(({ e, r }) => r.transacoes.map((t) => ({ ...t, lojaNome: e.nomeFantasia || e.razaoSocial })))
+          .sort((a, b) => (b.data ?? "").localeCompare(a.data ?? ""));
+        const saldo = validos.reduce((s, { r }) => s + (r.conta?.saldo ?? 0), 0);
+        const ultimoImport = validos
+          .map(({ r }) => r.conta?.ultimoImport)
+          .filter((x): x is string => !!x)
+          .sort()
+          .pop() ?? null;
+        const conta = validos.length
+          ? {
+              empresaId: "", org: `Todas as lojas · ${validos.length} conta${validos.length > 1 ? "s" : ""}`,
+              fid: null, curdef: null, saldo, saldoData: null, dtStart: null, dtEnd: null, ultimoImport,
+            }
+          : null;
+        setDados({ ok: true, conta, creditos: 0, debitos: 0, saldoMov: 0, porCategoria: {}, total: transacoes.length, transacoes });
+      } else {
+        setDados(null);
+      }
     } catch (e) {
       setErro((e as Error).message);
     } finally {
       setCarregando(false);
     }
-  }, [empresaId]);
+  }, [empresaId, empresas]);
 
   useEffect(() => { void carregar(); }, [carregar]);
 
@@ -129,10 +159,15 @@ export default function BancoPage() {
           onChange={(e) => setEmpresaId(e.target.value)}
           className="mb-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
         >
+          <option value="">Todas as lojas (consolidado)</option>
           {empresas.map((e) => (
             <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
           ))}
         </select>
+      ) : null}
+
+      {!empresaId && empresas.length > 1 && podeImportar ? (
+        <p className="mb-3 -mt-1 text-[11px] text-muted-foreground">Para importar um OFX, escolha uma loja específica.</p>
       ) : null}
 
       {msg ? <p className="mb-4 rounded-md bg-success/10 p-3 text-sm text-success">{msg}</p> : null}
@@ -200,12 +235,13 @@ export default function BancoPage() {
               {txs.length} lançamento(s){dados && dados.total > txs.length ? ` · mostrando os do período (de ${dados.total} carregados)` : ""}
             </p>
             {txs.slice(0, 200).map((t) => (
-              <Card key={t.fitid}>
+              <Card key={`${t.lojaNome ?? empresaId}:${t.fitid}`}>
                 <CardContent className="flex items-center justify-between gap-3 py-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{t.memo || "—"}</p>
                     <p className="text-xs text-muted-foreground">
                       {formatarData(t.data)} · <Badge variant="neutral">{CAT_LABEL[t.categoria] ?? t.categoria}</Badge>
+                      {t.lojaNome ? <Badge variant="neutral" className="ml-1">{t.lojaNome}</Badge> : null}
                     </p>
                   </div>
                   <p className={`shrink-0 font-bold tnum ${t.valor < 0 ? "text-destructive" : "text-success"}`}>
