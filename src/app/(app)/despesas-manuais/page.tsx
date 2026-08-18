@@ -50,6 +50,8 @@ export default function DespesasManuaisPage() {
   const [descricao, setDescricao] = useState("");
   const [categoria, setCategoria] = useState("outros");
   const [valor, setValor] = useState("");
+  const [forma, setForma] = useState<"dinheiro" | "pix">("dinheiro");
+  const [conta, setConta] = useState("");
   const [salvando, setSalvando] = useState(false);
 
   const nomeEmp = (id?: string) => empresas.find((e) => e.id === id)?.nomeFantasia || empresas.find((e) => e.id === id)?.razaoSocial || id || "—";
@@ -78,6 +80,8 @@ export default function DespesasManuaisPage() {
     setDescricao("");
     setValor("");
     setCategoria("outros");
+    setForma("dinheiro");
+    setConta("");
     setDia(hojeISO());
   }
   function editar(d: DespesaManual) {
@@ -87,6 +91,8 @@ export default function DespesasManuaisPage() {
     setDescricao(d.descricao);
     setCategoria(d.categoria || "outros");
     setValor(String(d.valor ?? ""));
+    setForma(d.formaPagamento === "pix" ? "pix" : "dinheiro");
+    setConta(d.contaEmpresaId ?? "");
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -98,7 +104,10 @@ export default function DespesasManuaisPage() {
     setSalvando(true);
     setErro(null);
     try {
-      await salvarDespesaManual({ id: editId ?? undefined, empresaId, dia, descricao: descricao.trim(), categoria, valor: v });
+      await salvarDespesaManual({
+        id: editId ?? undefined, empresaId, dia, descricao: descricao.trim(), categoria, valor: v,
+        formaPagamento: forma, contaEmpresaId: forma === "pix" ? (conta || empresaId) : undefined,
+      });
       limparForm();
       await carregar();
     } catch (e) {
@@ -188,6 +197,22 @@ export default function DespesasManuaisPage() {
                     <span className="block text-[11px] text-muted-foreground">Valor (R$)</span>
                     <Input type="number" step="0.01" inputMode="decimal" value={valor} onChange={(e) => setValor(e.target.value)} className="h-9" />
                   </label>
+                  <label className="space-y-1">
+                    <span className="block text-[11px] text-muted-foreground">Forma de pagamento</span>
+                    <select value={forma} onChange={(e) => setForma(e.target.value as "dinheiro" | "pix")} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+                      <option value="dinheiro">Dinheiro</option>
+                      <option value="pix">PIX da conta</option>
+                    </select>
+                  </label>
+                  {forma === "pix" ? (
+                    <label className="space-y-1">
+                      <span className="block text-[11px] text-muted-foreground">Conta (banco de onde saiu o PIX)</span>
+                      <select value={conta} onChange={(e) => setConta(e.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+                        <option value="">Mesma empresa da despesa</option>
+                        {empresas.map((e) => <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
                 </div>
                 <Button size="sm" disabled={salvando} onClick={salvar}>
                   <Plus className="size-4" /> {salvando ? "Salvando…" : editId ? "Salvar alterações" : "Adicionar despesa"}
@@ -247,6 +272,9 @@ export default function DespesasManuaisPage() {
                       <p className="truncate text-sm font-medium">{d.descricao}</p>
                       <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <Badge variant="neutral">{CAT_LABEL[d.categoria] ?? d.categoria}</Badge>
+                        {d.formaPagamento === "pix"
+                          ? <Badge variant="neutral">PIX · {nomeEmp(d.contaEmpresaId ?? d.empresaId)}</Badge>
+                          : <Badge variant="neutral">Dinheiro</Badge>}
                         {formatarData(d.dia)} · {nomeEmp(d.empresaId)}
                       </p>
                     </div>

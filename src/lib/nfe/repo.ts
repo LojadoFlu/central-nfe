@@ -480,6 +480,8 @@ export interface DespesaManual {
   descricao: string;
   categoria: string;
   valor: number;
+  formaPagamento?: "dinheiro" | "pix";
+  contaEmpresaId?: string | null; // conta bancária (empresa) de onde saiu o PIX
   criadoEm?: string;
   atualizadoEm?: string;
 }
@@ -500,6 +502,8 @@ export async function salvarDespesaManual(input: {
   descricao: string;
   categoria: string;
   valor: number;
+  formaPagamento?: "dinheiro" | "pix";
+  contaEmpresaId?: string;
 }): Promise<{ ok: boolean; id: string }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "salvarDespesaManual");

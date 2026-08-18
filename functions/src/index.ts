@@ -2226,11 +2226,13 @@ export const fluxoCaixa = onCall(
         }
       }
     }
-    // SAÍDAS — despesas manuais (pagas na data)
+    // SAÍDAS — despesas manuais (pagas na data). O caixa sai da conta do pagamento
+    // (contaEmpresaId no PIX; a própria empresa no dinheiro).
     const dmSnap = await db.collection("manual_expenses").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of dmSnap.docs) {
       const x = doc.data();
-      if (!daEmpresa(x.empresaId)) continue;
+      const cid = x.contaEmpresaId ?? x.empresaId;
+      if (!daEmpresa(cid)) continue;
       saida(d10(x.dia), Number(x.valor ?? 0), true, "despesasManuais");
     }
     // SAÍDAS — parcelas de acordos
@@ -2517,6 +2519,26 @@ export const extratoBanco = onCall(
       porCategoria[t.categoria] = (porCategoria[t.categoria] ?? 0) + valor;
       txs.push({ fitid: t.fitid, tipo: t.tipo, data: dia, valor, memo: t.memo, categoria: t.categoria });
     }
+
+    // LANÇAMENTOS VIRTUAIS — despesas manuais pagas por PIX desta conta. Aparecem no
+    // extrato até o OFX trazer o mesmo débito; aí são absorvidas (sem duplicar).
+    const ofxDeb = txs.filter((t) => t.valor < 0).map((t) => ({ valor: t.valor, data: t.data, usado: false }));
+    const diffDias = (a: string, b: string) => Math.abs((new Date(`${a}T00:00:00`).getTime() - new Date(`${b}T00:00:00`).getTime()) / 86_400_000);
+    const dmSnap = await db.collection("manual_expenses").where("contaEmpresaId", "==", empresaId).get();
+    for (const doc of dmSnap.docs) {
+      const x = doc.data();
+      if (x.formaPagamento !== "pix") continue;
+      const dia = String(x.dia ?? "");
+      if (!dia || (de && dia < de) || (ate && dia > ate)) continue;
+      const v = -Math.abs(Number(x.valor ?? 0));
+      if (v === 0) continue;
+      const m = ofxDeb.find((o) => !o.usado && Math.abs(o.valor - v) < 0.01 && diffDias(o.data, dia) <= 3);
+      if (m) { m.usado = true; continue; } // já veio no OFX → não duplica
+      debitos += v;
+      porCategoria["pagamento"] = (porCategoria["pagamento"] ?? 0) + v;
+      txs.push({ fitid: `dm-${doc.id}`, tipo: "DEBIT", data: dia, valor: v, memo: `${String(x.descricao ?? "Despesa")} (despesa manual)`, categoria: "pagamento" });
+    }
+
     txs.sort((a, b) => b.data.localeCompare(a.data));
     return { ok: true, conta, creditos, debitos, saldoMov: creditos + debitos, porCategoria, total: txs.length, transacoes: txs.slice(0, 300) };
   },
@@ -2839,6 +2861,9 @@ export const salvarDespesaManual = onCall(opcoes, async (req) => {
   const descricao = String(d.descricao ?? "").trim().slice(0, 200);
   const categoria = String(d.categoria ?? "").trim().slice(0, 40) || "outros";
   const valor = Number(d.valor);
+  // Forma de pagamento: dinheiro (não toca no banco) ou pix (débito na conta escolhida).
+  const formaPagamento = d.formaPagamento === "pix" ? "pix" : "dinheiro";
+  const contaEmpresaId = formaPagamento === "pix" ? (String(d.contaEmpresaId ?? "").trim() || empresaId) : null;
   if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) throw new HttpsError("invalid-argument", "Data inválida.");
   if (!descricao) throw new HttpsError("invalid-argument", "Informe a descrição.");
@@ -2847,6 +2872,7 @@ export const salvarDespesaManual = onCall(opcoes, async (req) => {
   const now = agoraISO();
   const doc: Record<string, unknown> = {
     empresaId, empresaNome: emp?.nome ?? null, dia, descricao, categoria,
+    formaPagamento, contaEmpresaId,
     valor: Math.round(valor * 100) / 100, atualizadoEm: now, atualizadoPor: uid,
   };
   if (!d.id) { doc.criadoEm = now; doc.criadoPor = uid; }
