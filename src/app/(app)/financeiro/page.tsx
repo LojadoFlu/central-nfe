@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, type Parcela } from "@/lib/nfe/repo";
+import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, type Parcela, type Acordo } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
@@ -19,8 +19,28 @@ import { Wallet, Check, RotateCcw, CheckSquare, X } from "lucide-react";
 
 type Situacao = "paga" | "vencida" | "a_vencer" | "sem_venc";
 
+/** Conta a pagar: parcela de NF-e ou parcela de acordo, tratadas do mesmo jeito. */
+interface Conta {
+  id: string;               // único: NF-e = id da parcela; acordo = "acordo:{id}:{indice}"
+  origem: "nfe" | "acordo";
+  acordoId?: string;
+  indice?: number;
+  companyId?: string | null;
+  cnpjEmit?: string | null;
+  xNomeEmit?: string | null;
+  nDup?: string;
+  vencimento?: string | null;
+  valor?: number | null;
+  statusPagamento?: string;
+  dataPagamento?: string | null;
+  valorPago?: number | null;
+  obsPagamento?: string | null;
+  chNFe?: string | null;
+  descricao?: string | null;
+}
+
 /** Uma parcela paga sai da régua de vencimento — vira "paga". */
-function situacao(p: Parcela): { s: Situacao; dias: number | null } {
+function situacao(p: { statusPagamento?: string; vencimento?: string | null }): { s: Situacao; dias: number | null } {
   if (p.statusPagamento === "pago") return { s: "paga", dias: null };
   const dias = diasAte(p.vencimento);
   if (dias === null) return { s: "sem_venc", dias: null };
@@ -44,6 +64,7 @@ export default function FinanceiroPage() {
   const { podeAcao } = useAuth();
   const podeBaixar = podeAcao("financeiro.baixar");
   const [parcelas, setParcelas] = useState<Parcela[] | null>(null);
+  const [acordos, setAcordos] = useState<Acordo[]>([]);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
@@ -68,38 +89,62 @@ export default function FinanceiroPage() {
   const carregar = useCallback(async () => {
     setErro(null);
     try {
-      const [ps, emps] = await Promise.all([listarParcelas(), listarEmpresas()]);
+      const [ps, emps, acs] = await Promise.all([listarParcelas(), listarEmpresas(), listarAcordos()]);
       setParcelas(ps);
       setEmpresas(emps);
+      setAcordos(acs);
     } catch (e) {
       setErro((e as Error).message);
       setParcelas([]);
     }
   }, []);
 
+  // Unifica parcelas de NF-e + parcelas de acordos numa lista só de "contas".
+  const contas = useMemo<Conta[]>(() => {
+    const nfe: Conta[] = (parcelas ?? []).map((p) => ({
+      id: p.id, origem: "nfe", companyId: p.companyId, cnpjEmit: p.cnpjEmit, xNomeEmit: p.xNomeEmit,
+      nDup: p.nDup, vencimento: p.vencimento, valor: p.valor, statusPagamento: p.statusPagamento,
+      dataPagamento: p.dataPagamento, valorPago: p.valorPago, obsPagamento: p.obsPagamento, chNFe: p.chNFe,
+    }));
+    const ac: Conta[] = acordos.flatMap((a) =>
+      (a.parcelas ?? []).map((pc, i) => ({
+        id: `acordo:${a.id}:${i}`, origem: "acordo" as const, acordoId: a.id, indice: i,
+        companyId: a.companyId, cnpjEmit: a.cnpjFornecedor, xNomeEmit: a.nomeFornecedor,
+        nDup: String(pc.n ?? i + 1), vencimento: pc.vencimento, valor: pc.valor,
+        statusPagamento: pc.statusPagamento === "pago" ? "pago" : "nao_informado",
+        dataPagamento: pc.dataPagamento ?? null, descricao: a.descricao ?? a.nomeFornecedor,
+      })),
+    );
+    return [...nfe, ...ac];
+  }, [parcelas, acordos]);
+
   useEffect(() => {
     void carregar();
   }, [carregar]);
 
-  function abrirSingle(p: Parcela) {
+  function abrirSingle(p: Conta) {
     setPendente(p.id);
     setDataPg(hojeISO());
     setValorPg(p.valor != null ? String(p.valor) : "");
     setObsPg("");
   }
 
-  async function confirmarSingle(p: Parcela) {
+  async function confirmarSingle(p: Conta) {
     setSalvando(p.id);
     setErro(null);
     try {
-      const v = Number(valorPg);
-      await baixarParcela({
-        parcelaId: p.id,
-        pago: true,
-        dataPagamento: dataPg,
-        valorPago: Number.isFinite(v) && valorPg !== "" ? v : undefined,
-        obsPagamento: obsPg.trim() || undefined,
-      });
+      if (p.origem === "acordo") {
+        await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: true, dataPagamento: dataPg });
+      } else {
+        const v = Number(valorPg);
+        await baixarParcela({
+          parcelaId: p.id,
+          pago: true,
+          dataPagamento: dataPg,
+          valorPago: Number.isFinite(v) && valorPg !== "" ? v : undefined,
+          obsPagamento: obsPg.trim() || undefined,
+        });
+      }
       setPendente(null);
       await carregar();
     } catch (e) {
@@ -109,11 +154,15 @@ export default function FinanceiroPage() {
     }
   }
 
-  async function reabrir(p: Parcela) {
+  async function reabrir(p: Conta) {
     setSalvando(p.id);
     setErro(null);
     try {
-      await baixarParcela({ parcelaId: p.id, pago: false });
+      if (p.origem === "acordo") {
+        await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: false });
+      } else {
+        await baixarParcela({ parcelaId: p.id, pago: false });
+      }
       await carregar();
     } catch (e) {
       setErro((e as Error).message);
@@ -159,23 +208,23 @@ export default function FinanceiroPage() {
   // Fornecedores distintos (para o filtro).
   const fornecedores = useMemo(() => {
     const m = new Map<string, string>();
-    for (const p of parcelas ?? []) {
+    for (const p of contas) {
       const c = p.cnpjEmit ?? "";
       if (c) m.set(c, p.xNomeEmit ?? c);
     }
     return [...m.entries()].map(([cnpj, nome]) => ({ cnpj, nome })).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [parcelas]);
+  }, [contas]);
 
   // Base filtrada por empresa + fornecedor (alimenta totais, resumo e lista).
   const base = useMemo(
     () =>
-      (parcelas ?? []).filter(
+      contas.filter(
         (p) =>
           (!empresaId || (p.companyId ?? "") === empresaId) &&
           (!forn || (p.cnpjEmit ?? "") === forn) &&
           noPeriodo(p.vencimento, periodo),
       ),
-    [parcelas, forn, empresaId, periodo],
+    [contas, forn, empresaId, periodo],
   );
 
   const totais = useMemo(() => {
@@ -211,15 +260,15 @@ export default function FinanceiroPage() {
   // Total selecionado (para a barra de lote).
   const totalSel = useMemo(() => {
     let t = 0;
-    for (const p of parcelas ?? []) if (sel.has(p.id)) t += p.valor ?? 0;
+    for (const p of contas) if (sel.has(p.id)) t += p.valor ?? 0;
     return t;
-  }, [parcelas, sel]);
+  }, [contas, sel]);
 
   return (
     <div>
       <PageHeader
         title="Financeiro"
-        description="Contas a pagar das NF-e. Dê baixa ao pagar."
+        description="Contas a pagar das NF-e e dos acordos. Dê baixa ao pagar."
         action={
           podeBaixar && !selMode ? (
             <Button size="sm" variant="outline" onClick={() => setSelMode(true)}>
@@ -348,7 +397,8 @@ export default function FinanceiroPage() {
             }[s];
             const abrindo = pendente === p.id;
             const ocupado = salvando === p.id;
-            const selecionavel = selMode && s !== "paga";
+            // Lote de baixa só cobre parcelas de NF-e; acordo baixa individualmente.
+            const selecionavel = selMode && s !== "paga" && p.origem !== "acordo";
             const marcada = sel.has(p.id);
 
             const info = (
@@ -357,10 +407,13 @@ export default function FinanceiroPage() {
                   <div className="min-w-0">
                     <p className="truncate font-medium">{p.xNomeEmit ?? "Fornecedor"}</p>
                     <p className="text-xs text-muted-foreground">
-                      Parcela {p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
+                      {p.origem === "acordo" ? "Acordo · parcela" : "Parcela"} {p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
                     </p>
                   </div>
-                  <Badge variant={cfg.variant}>{cfg.label}</Badge>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {p.origem === "acordo" ? <Badge variant="neutral">Acordo</Badge> : null}
+                    <Badge variant={cfg.variant}>{cfg.label}</Badge>
+                  </div>
                 </div>
                 <div className="mt-2 flex items-end justify-between">
                   <p className="text-lg font-bold tnum">{formatBRL(p.valor)}</p>
@@ -406,7 +459,7 @@ export default function FinanceiroPage() {
                     </button>
                   ) : (
                     <>
-                      <Link href={p.chNFe ? `/notas/${encodeURIComponent(p.chNFe)}` : "#"} className="block">
+                      <Link href={p.origem === "acordo" ? "/acordos" : (p.chNFe ? `/notas/${encodeURIComponent(p.chNFe)}` : "#")} className="block">
                         {info}
                       </Link>
 
@@ -430,28 +483,32 @@ export default function FinanceiroPage() {
                                     className="h-9 w-40"
                                   />
                                 </div>
+                                {p.origem !== "acordo" ? (
+                                  <div className="space-y-1">
+                                    <label className="text-xs text-muted-foreground">Valor pago (R$)</label>
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      inputMode="decimal"
+                                      value={valorPg}
+                                      onChange={(e) => setValorPg(e.target.value)}
+                                      className="h-9 w-32"
+                                    />
+                                  </div>
+                                ) : null}
+                              </div>
+                              {p.origem !== "acordo" ? (
                                 <div className="space-y-1">
-                                  <label className="text-xs text-muted-foreground">Valor pago (R$)</label>
+                                  <label className="text-xs text-muted-foreground">Observação (opcional)</label>
                                   <Input
-                                    type="number"
-                                    step="0.01"
-                                    inputMode="decimal"
-                                    value={valorPg}
-                                    onChange={(e) => setValorPg(e.target.value)}
-                                    className="h-9 w-32"
+                                    placeholder="Ex.: pago via PIX, desconto de 2%…"
+                                    value={obsPg}
+                                    onChange={(e) => setObsPg(e.target.value)}
+                                    maxLength={300}
+                                    className="h-9"
                                   />
                                 </div>
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-xs text-muted-foreground">Observação (opcional)</label>
-                                <Input
-                                  placeholder="Ex.: pago via PIX, desconto de 2%…"
-                                  value={obsPg}
-                                  onChange={(e) => setObsPg(e.target.value)}
-                                  maxLength={300}
-                                  className="h-9"
-                                />
-                              </div>
+                              ) : null}
                               <div className="flex gap-2 pt-1">
                                 <Button size="sm" disabled={ocupado} onClick={() => confirmarSingle(p)}>
                                   <Check className="size-4" />

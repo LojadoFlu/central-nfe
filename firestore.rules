@@ -106,6 +106,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Despesas manuais (sem NF / extraordinárias) — leitura por autenticado;
+    // escrita só backend (admin/financeiro via callable).
+    match /manual_expenses/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
     // CT-e (fretes) — documentos, eventos, estado/logs de sync. Leitura por
     // autenticado (estado/logs restritos a fiscal/admin); escrita só backend.
     match /cte_documents/{id} {
