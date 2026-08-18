@@ -765,6 +765,26 @@ export const marcarNotaRecebida = onCall(opcoes, async (req) => {
 });
 
 /**
+ * Valida/normaliza as CONTAS DE PAGAMENTO (rateio) de uma baixa: de qual(is)
+ * conta(s) bancária(s) — empresa(s) — o dinheiro saiu e quanto de cada. Pode ser
+ * de outra empresa (cross-company) e mais de uma (rateio). A soma tem que bater
+ * com o valor pago. Retorna null quando não informado (baixa "legada" = empresa
+ * da própria conta a pagar).
+ */
+function parseContasPagamento(raw: unknown, valorPago: number): Array<{ empresaId: string; valor: number }> | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out = (raw as Array<Record<string, unknown>>)
+    .map((x) => ({ empresaId: String(x?.empresaId ?? "").trim(), valor: Math.round(Number(x?.valor ?? 0) * 100) / 100 }))
+    .filter((x) => x.empresaId && x.valor > 0);
+  if (out.length === 0) return null;
+  const soma = out.reduce((s, x) => s + x.valor, 0);
+  if (Math.abs(soma - valorPago) > 0.05) {
+    throw new HttpsError("invalid-argument", `A soma das contas de pagamento (R$ ${soma.toFixed(2)}) difere do valor pago (R$ ${valorPago.toFixed(2)}).`);
+  }
+  return out;
+}
+
+/**
  * Baixa (conciliação) de uma parcela: marca como paga ou reabre.
  * IMPORTANTE: "pago" NUNCA é inferido do XML — é sempre uma ação manual,
  * registrada com autor e horário. Só admin/financeiro.
@@ -789,12 +809,15 @@ export const nfeBaixarParcela = onCall(opcoes, async (req) => {
       ? String(d.dataPagamento)
       : now.slice(0, 10);
     const obsPagamento = String(d.obsPagamento ?? "").trim().slice(0, 300) || null;
+    const valorRef = valorPago ?? Number(snap.data()?.valor ?? 0);
+    const contasPagamento = parseContasPagamento(d.contasPagamento, valorRef);
     await ref.set(
       {
         statusPagamento: "pago",
         dataPagamento,
         valorPago,
         obsPagamento,
+        contasPagamento: contasPagamento ?? FieldValue.delete(),
         baixadoPor: uid,
         baixadoEm: now,
         updatedAt: now,
@@ -809,6 +832,7 @@ export const nfeBaixarParcela = onCall(opcoes, async (req) => {
         dataPagamento: FieldValue.delete(),
         valorPago: FieldValue.delete(),
         obsPagamento: FieldValue.delete(),
+        contasPagamento: FieldValue.delete(),
         baixadoPor: FieldValue.delete(),
         baixadoEm: FieldValue.delete(),
         reabertoPor: uid,
@@ -845,6 +869,8 @@ export const nfeBaixarParcelasLote = onCall(opcoes, async (req) => {
     ? String(d.dataPagamento)
     : now.slice(0, 10);
   const obsPagamento = String(d.obsPagamento ?? "").trim().slice(0, 300) || null;
+  // Conta única de pagamento p/ o lote (opcional): aplica a cada parcela pelo seu valor.
+  const contaLote = String(d.contaEmpresaId ?? "").trim();
 
   const refs = ids.map((id) => db.collection("nfe_installments").doc(id));
   const snaps = await db.getAll(...refs);
@@ -853,13 +879,15 @@ export const nfeBaixarParcelasLote = onCall(opcoes, async (req) => {
   for (const snap of snaps) {
     if (!snap.exists) continue;
     const p = snap.data() as { valor?: number };
+    const valorPago = typeof p.valor === "number" ? p.valor : null;
     batch.set(
       snap.ref,
       {
         statusPagamento: "pago",
         dataPagamento,
-        valorPago: typeof p.valor === "number" ? p.valor : null,
+        valorPago,
         obsPagamento,
+        contasPagamento: contaLote && valorPago ? [{ empresaId: contaLote, valor: valorPago }] : FieldValue.delete(),
         baixadoPor: uid,
         baixadoEm: now,
         updatedAt: now,
@@ -1138,10 +1166,13 @@ export const nfeBaixarParcelaAcordo = onCall(opcoes, async (req) => {
       ? String(d.dataPagamento)
       : now.slice(0, 10)
     : null;
+  const valorParc = Number((parcelas[idx] as { valor?: number }).valor ?? 0);
+  const contasPagamento = pago ? parseContasPagamento(d.contasPagamento, valorParc) : null;
   parcelas[idx] = {
     ...parcelas[idx],
     statusPagamento: pago ? "pago" : "pendente",
     dataPagamento,
+    ...(pago ? { contasPagamento: contasPagamento ?? null } : { contasPagamento: null }),
   };
   await ref.set({ parcelas, updatedAt: now }, { merge: true });
   await auditar(uid, pago ? "acordo.baixarParcela" : "acordo.reabrirParcela", { id, indice: idx });
@@ -1233,12 +1264,15 @@ export const nfePagarDespesaFixa = onCall(opcoes, async (req) => {
   if (pago) {
     const data = /^\d{4}-\d{2}-\d{2}$/.test(String(d.data ?? "")) ? String(d.data) : `${mes}-01`;
     const valor = Number(d.valor); // valor REAL pago (pode diferir do previsto)
+    const valorEfetivo = Number.isFinite(valor) && valor > 0 ? valor : Number(previsto ?? 0);
+    const contasPagamento = parseContasPagamento(d.contasPagamento, valorEfetivo);
     await ref.update({
       [campo]: {
         pago: true,
         data,
         valor: Number.isFinite(valor) && valor > 0 ? valor : previsto,
         previsto,
+        contasPagamento: contasPagamento ?? null,
         por: uid,
         em: now,
       },
@@ -2200,29 +2234,43 @@ export const fluxoCaixa = onCall(
       entrada(dia, Number(p.valor ?? 0), dia <= hoje, "avista");
     }
 
+    // Saída de uma obrigação: quando PAGA com contas de pagamento, o caixa sai da(s)
+    // conta(s) pagadora(s) (rateio/cross-company); senão, cai na empresa da obrigação.
+    const saidaObrig = (dia: string, valorTotal: number, pago: boolean, origem: string, companyIdFallback: unknown, contasPagamento: unknown) => {
+      const splits = pago && Array.isArray(contasPagamento) && contasPagamento.length
+        ? (contasPagamento as Array<Record<string, unknown>>)
+          .map((c) => ({ empresaId: String(c.empresaId ?? ""), valor: Number(c.valor ?? 0) }))
+          .filter((c) => c.empresaId && c.valor > 0)
+        : [{ empresaId: String(companyIdFallback ?? ""), valor: valorTotal }];
+      for (const sp of splits) {
+        if (!daEmpresa(sp.empresaId) || !(sp.valor > 0)) continue;
+        saida(dia, sp.valor, pago, origem);
+      }
+    };
+
     // SAÍDAS — contas a pagar das NF-e
     const parcSnap = await db.collection("nfe_installments").get();
     for (const doc of parcSnap.docs) {
       const p = doc.data();
-      if (!daEmpresa(p.companyId)) continue;
       const pago = p.statusPagamento === "pago";
       const dia = d10(pago ? p.dataPagamento : p.vencimento);
-      saida(dia, Number((pago ? p.valorPago ?? p.valor : p.valor) ?? 0), pago, "nfe");
+      const valor = Number((pago ? p.valorPago ?? p.valor : p.valor) ?? 0);
+      saidaObrig(dia, valor, pago, "nfe", p.companyId, p.contasPagamento);
     }
     // SAÍDAS — despesas fixas (previsto por mês; realizado ao pagar)
     const mesesRange = mesesEntre(de, ate);
     const despSnap = await db.collection("nfe_fixed_expenses").get();
     for (const doc of despSnap.docs) {
       const x = doc.data();
-      if (!daEmpresa(x.companyId) || x.ativo === false) continue;
+      if (x.ativo === false) continue;
       for (const ym of mesesRange) {
         if (!incideNoMes(x, ym)) continue;
         const pg = x.pagamentos?.[ym];
         if (pg?.pago) {
-          saida(d10(pg.data) || `${ym}-01`, Number(pg.valor ?? x.valor ?? 0), true, "despesas");
+          saidaObrig(d10(pg.data) || `${ym}-01`, Number(pg.valor ?? x.valor ?? 0), true, "despesas", x.companyId, pg.contasPagamento);
         } else {
           const dia = `${ym}-${String(Math.min(Number(x.diaVencimento) || 1, 28)).padStart(2, "0")}`;
-          saida(dia, Number(x.valor ?? 0), false, "despesas");
+          saidaObrig(dia, Number(x.valor ?? 0), false, "despesas", x.companyId, null);
         }
       }
     }
@@ -2239,11 +2287,10 @@ export const fluxoCaixa = onCall(
     const acSnap = await db.collection("nfe_agreements").get();
     for (const doc of acSnap.docs) {
       const a = doc.data();
-      if (!daEmpresa(a.companyId)) continue;
       for (const p of (a.parcelas ?? []) as Array<Record<string, unknown>>) {
         const pago = p.statusPagamento === "pago";
         const dia = d10(pago ? p.dataPagamento : p.vencimento);
-        saida(dia, Number(p.valor ?? 0), pago, "acordos");
+        saidaObrig(dia, Number(p.valor ?? 0), pago, "acordos", a.companyId, p.contasPagamento);
       }
     }
 
@@ -2715,34 +2762,45 @@ export const conciliacaoSaidas = onCall(
     // OBRIGAÇÕES pagas no período (dataPagamento em [de,ate])
     interface Paga { tipo: string; descricao: string; valor: number; data: string; ref: string; conciliado: boolean }
     const pagas: Paga[] = [];
+    // Atribui o pagamento à(s) CONTA(S) que pagaram (contasPagamento): rateio e
+    // cross-company. Sem contasPagamento, cai na empresa da própria obrigação.
+    const pushPaga = (tipo: string, descricao: string, valorTotal: number, data: string, ref: string, companyIdFallback: unknown, contasPagamento: unknown) => {
+      const splits = Array.isArray(contasPagamento) && contasPagamento.length
+        ? (contasPagamento as Array<Record<string, unknown>>)
+          .map((c) => ({ empresaId: String(c.empresaId ?? ""), valor: Number(c.valor ?? 0) }))
+          .filter((c) => c.empresaId && c.valor > 0)
+        : [{ empresaId: String(companyIdFallback ?? ""), valor: valorTotal }];
+      splits.forEach((sp, k) => {
+        if (!daEmpresa(sp.empresaId) || !(sp.valor > 0)) return;
+        pagas.push({ tipo, descricao, valor: sp.valor, data, ref: splits.length > 1 ? `${ref}#${k}` : ref, conciliado: false });
+      });
+    };
     // fornecedores (nfe_installments)
     for (const doc of (await db.collection("nfe_installments").get()).docs) {
       const p = doc.data();
-      if (p.statusPagamento !== "pago" || !daEmpresa(p.companyId)) continue;
+      if (p.statusPagamento !== "pago") continue;
       const data = d10(p.dataPagamento);
       if (!noRange(data)) continue;
       const valor = Number(p.valorPago ?? p.valor ?? 0);
       if (!(valor > 0)) continue;
-      pagas.push({ tipo: "fornecedor", descricao: String(p.xNomeEmit || p.cnpjEmit || "Fornecedor"), valor, data, ref: doc.id, conciliado: false });
+      pushPaga("fornecedor", String(p.xNomeEmit || p.cnpjEmit || "Fornecedor"), valor, data, doc.id, p.companyId, p.contasPagamento);
     }
     // despesas fixas (pagamentos.{ym})
     for (const doc of (await db.collection("nfe_fixed_expenses").get()).docs) {
       const x = doc.data();
-      if (!daEmpresa(x.companyId)) continue;
-      const pgs = (x.pagamentos ?? {}) as Record<string, { pago?: boolean; data?: string; valor?: number }>;
+      const pgs = (x.pagamentos ?? {}) as Record<string, { pago?: boolean; data?: string; valor?: number; contasPagamento?: unknown }>;
       for (const [ym, pg] of Object.entries(pgs)) {
         if (!pg?.pago) continue;
         const data = d10(pg.data) || `${ym}-01`;
         if (!noRange(data)) continue;
         const valor = Number(pg.valor ?? x.valor ?? 0);
         if (!(valor > 0)) continue;
-        pagas.push({ tipo: "despesa", descricao: String(x.nome || x.categoria || "Despesa fixa"), valor, data, ref: `${doc.id}_${ym}`, conciliado: false });
+        pushPaga("despesa", String(x.nome || x.categoria || "Despesa fixa"), valor, data, `${doc.id}_${ym}`, x.companyId, pg.contasPagamento);
       }
     }
     // acordos (parcelas pagas)
     for (const doc of (await db.collection("nfe_agreements").get()).docs) {
       const a = doc.data();
-      if (!daEmpresa(a.companyId)) continue;
       const parcelas = (a.parcelas ?? []) as Array<Record<string, unknown>>;
       parcelas.forEach((p, i) => {
         if (p.statusPagamento !== "pago") return;
@@ -2750,7 +2808,7 @@ export const conciliacaoSaidas = onCall(
         if (!noRange(data)) return;
         const valor = Number(p.valorPago ?? p.valor ?? 0);
         if (!(valor > 0)) return;
-        pagas.push({ tipo: "acordo", descricao: String(a.fornecedorNome || a.credor || "Acordo"), valor, data, ref: `${doc.id}_${i}`, conciliado: false });
+        pushPaga("acordo", String(a.nomeFornecedor || a.fornecedorNome || a.credor || "Acordo"), valor, data, `${doc.id}_${i}`, a.companyId, p.contasPagamento);
       });
     }
 

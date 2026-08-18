@@ -18,7 +18,9 @@ import {
   importarContasPagar,
   type DespesaFixa,
   type ImportContasResp,
+  type ContaPagamento,
 } from "@/lib/nfe/repo";
+import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
@@ -112,6 +114,7 @@ export default function DespesasPage() {
   const [pMes, setPMes] = useState(mesAtualYM());
   const [pValor, setPValor] = useState("");
   const [pData, setPData] = useState("");
+  const [pContas, setPContas] = useState<ContaPagamento[]>([]);
 
   // Formulário de cadastro
   const [formAberto, setFormAberto] = useState(false);
@@ -255,8 +258,10 @@ export default function DespesasPage() {
     const alvo = incid.find((ym) => !pagamentoDe(d, ym)?.pago) ?? incid[incid.length - 1] ?? meses[0];
     setPagandoId(d.id);
     setPMes(alvo);
+    const vAlvo = Number(pagamentoDe(d, alvo)?.valor ?? d.valor ?? 0);
     setPValor(String(pagamentoDe(d, alvo)?.valor ?? d.valor ?? ""));
     setPData(dataDefault(d, alvo));
+    setPContas(d.companyId ? [{ empresaId: d.companyId, valor: vAlvo }] : []);
   }
   function trocarMesBaixa(d: DespesaFixa, ym: string) {
     setPMes(ym);
@@ -268,7 +273,8 @@ export default function DespesasPage() {
     setErro(null);
     try {
       const v = Number(pValor);
-      await pagarDespesaFixa({ id: d.id, mes: pMes, pago: true, valor: Number.isFinite(v) ? v : d.valor, data: pData });
+      const cps = contasValidas(pContas);
+      await pagarDespesaFixa({ id: d.id, mes: pMes, pago: true, valor: Number.isFinite(v) ? v : d.valor, data: pData, contasPagamento: cps.length ? cps : undefined });
       setPagandoId(null);
       await carregar();
     } catch (e) {
@@ -606,6 +612,14 @@ export default function DespesasPage() {
                               <div className="space-y-1">
                                 <label className="text-[11px] text-muted-foreground">Data</label>
                                 <Input type="date" value={pData} onChange={(e) => setPData(e.target.value)} className="h-9 w-40" />
+                              </div>
+                              <div className="w-full rounded-md border border-border p-2">
+                                <ContasPagamento
+                                  empresas={empresas}
+                                  valorTotal={Number(pValor) || d.valor || 0}
+                                  contas={pContas}
+                                  onChange={setPContas}
+                                />
                               </div>
                               <Button size="sm" disabled={ocupado === bz} onClick={() => confirmarBaixa(d)}>
                                 <Check className="size-4" /> {ocupado === bz ? "…" : "Confirmar"}

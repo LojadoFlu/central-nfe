@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, type Parcela, type Acordo } from "@/lib/nfe/repo";
+import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, type Parcela, type Acordo, type ContaPagamento } from "@/lib/nfe/repo";
+import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
@@ -35,6 +36,7 @@ interface Conta {
   dataPagamento?: string | null;
   valorPago?: number | null;
   obsPagamento?: string | null;
+  contasPagamento?: ContaPagamento[] | null;
   chNFe?: string | null;
   descricao?: string | null;
 }
@@ -78,6 +80,7 @@ export default function FinanceiroPage() {
   const [dataPg, setDataPg] = useState(hojeISO());
   const [valorPg, setValorPg] = useState("");
   const [obsPg, setObsPg] = useState("");
+  const [contasPg, setContasPg] = useState<ContaPagamento[]>([]);
 
   // Baixa em lote (modo seleção)
   const [selMode, setSelMode] = useState(false);
@@ -85,6 +88,7 @@ export default function FinanceiroPage() {
   const [loteForm, setLoteForm] = useState(false);
   const [dataLote, setDataLote] = useState(hojeISO());
   const [obsLote, setObsLote] = useState("");
+  const [contaLote, setContaLote] = useState("");
 
   const carregar = useCallback(async () => {
     setErro(null);
@@ -104,19 +108,24 @@ export default function FinanceiroPage() {
     const nfe: Conta[] = (parcelas ?? []).map((p) => ({
       id: p.id, origem: "nfe", companyId: p.companyId, cnpjEmit: p.cnpjEmit, xNomeEmit: p.xNomeEmit,
       nDup: p.nDup, vencimento: p.vencimento, valor: p.valor, statusPagamento: p.statusPagamento,
-      dataPagamento: p.dataPagamento, valorPago: p.valorPago, obsPagamento: p.obsPagamento, chNFe: p.chNFe,
+      dataPagamento: p.dataPagamento, valorPago: p.valorPago, obsPagamento: p.obsPagamento, contasPagamento: p.contasPagamento, chNFe: p.chNFe,
     }));
     const ac: Conta[] = acordos.flatMap((a) =>
       (a.parcelas ?? []).map((pc, i) => ({
         id: `acordo:${a.id}:${i}`, origem: "acordo" as const, acordoId: a.id, indice: i,
         companyId: a.companyId, cnpjEmit: a.cnpjFornecedor, xNomeEmit: a.nomeFornecedor,
-        nDup: String(pc.n ?? i + 1), vencimento: pc.vencimento, valor: pc.valor,
+        nDup: String(pc.n ?? i + 1), vencimento: pc.vencimento, valor: pc.valor, contasPagamento: pc.contasPagamento,
         statusPagamento: pc.statusPagamento === "pago" ? "pago" : "nao_informado",
         dataPagamento: pc.dataPagamento ?? null, descricao: a.descricao ?? a.nomeFornecedor,
       })),
     );
     return [...nfe, ...ac];
   }, [parcelas, acordos]);
+
+  const nomeConta = (id: string) => {
+    const e = empresas.find((x) => x.id === id);
+    return e?.nomeFantasia || e?.razaoSocial || id;
+  };
 
   useEffect(() => {
     void carregar();
@@ -127,14 +136,17 @@ export default function FinanceiroPage() {
     setDataPg(hojeISO());
     setValorPg(p.valor != null ? String(p.valor) : "");
     setObsPg("");
+    // Pré-preenche com a própria empresa da conta a pagar (edite p/ outra conta ou rateio).
+    setContasPg(p.companyId ? [{ empresaId: p.companyId, valor: p.valor ?? 0 }] : []);
   }
 
   async function confirmarSingle(p: Conta) {
     setSalvando(p.id);
     setErro(null);
     try {
+      const cps = contasValidas(contasPg);
       if (p.origem === "acordo") {
-        await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: true, dataPagamento: dataPg });
+        await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: true, dataPagamento: dataPg, contasPagamento: cps.length ? cps : undefined });
       } else {
         const v = Number(valorPg);
         await baixarParcela({
@@ -143,6 +155,7 @@ export default function FinanceiroPage() {
           dataPagamento: dataPg,
           valorPago: Number.isFinite(v) && valorPg !== "" ? v : undefined,
           obsPagamento: obsPg.trim() || undefined,
+          contasPagamento: cps.length ? cps : undefined,
         });
       }
       setPendente(null);
@@ -195,6 +208,7 @@ export default function FinanceiroPage() {
         parcelaIds: [...sel],
         dataPagamento: dataLote,
         obsPagamento: obsLote.trim() || undefined,
+        contaEmpresaId: contaLote || undefined,
       });
       sairSelecao();
       await carregar();
@@ -441,6 +455,11 @@ export default function FinanceiroPage() {
                 {s === "paga" && p.obsPagamento ? (
                   <p className="mt-1 text-xs text-muted-foreground">Obs.: {p.obsPagamento}</p>
                 ) : null}
+                {s === "paga" && p.contasPagamento && p.contasPagamento.length ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Pago de: {p.contasPagamento.map((c) => `${nomeConta(c.empresaId)} (${formatBRL(c.valor)})`).join(" · ")}
+                  </p>
+                ) : null}
               </>
             );
 
@@ -519,6 +538,14 @@ export default function FinanceiroPage() {
                                   />
                                 </div>
                               ) : null}
+                              <div className="rounded-md border border-border p-2">
+                                <ContasPagamento
+                                  empresas={empresas}
+                                  valorTotal={p.origem === "acordo" ? (p.valor ?? 0) : (Number(valorPg) || p.valor || 0)}
+                                  contas={contasPg}
+                                  onChange={setContasPg}
+                                />
+                              </div>
                               <div className="flex gap-2 pt-1">
                                 <Button size="sm" disabled={ocupado} onClick={() => confirmarSingle(p)}>
                                   <Check className="size-4" />
@@ -555,6 +582,13 @@ export default function FinanceiroPage() {
                   <div className="space-y-1">
                     <label className="text-xs text-muted-foreground">Data do pagamento</label>
                     <Input type="date" value={dataLote} onChange={(e) => setDataLote(e.target.value)} className="h-9 w-40" />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground">Conta que pagou (opcional)</label>
+                    <select value={contaLote} onChange={(e) => setContaLote(e.target.value)} className="h-9 w-48 rounded-md border border-input bg-background px-2 text-sm">
+                      <option value="">Empresa de cada conta</option>
+                      {empresas.map((e) => <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>)}
+                    </select>
                   </div>
                   <div className="min-w-[10rem] flex-1 space-y-1">
                     <label className="text-xs text-muted-foreground">Observação (opcional)</label>

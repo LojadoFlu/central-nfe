@@ -196,7 +196,14 @@ export interface Parcela {
   dataPagamento?: string | null;
   valorPago?: number | null;
   obsPagamento?: string | null;
+  contasPagamento?: ContaPagamento[] | null;
   baixadoEm?: string | null;
+}
+
+/** Uma conta de pagamento (rateio): de qual empresa/conta saiu e quanto. */
+export interface ContaPagamento {
+  empresaId: string;
+  valor: number;
 }
 
 /** Marca uma parcela como paga (baixa) ou reabre. Passa pelo backend. */
@@ -206,6 +213,7 @@ export async function baixarParcela(input: {
   dataPagamento?: string;
   valorPago?: number;
   obsPagamento?: string;
+  contasPagamento?: ContaPagamento[];
 }): Promise<{ ok: boolean; statusPagamento: string }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "nfeBaixarParcela");
@@ -321,6 +329,7 @@ export interface ParcelaAcordo {
   vencimento: string; // YYYY-MM-DD
   statusPagamento: "pendente" | "pago";
   dataPagamento?: string | null;
+  contasPagamento?: ContaPagamento[] | null;
 }
 
 export interface Acordo {
@@ -369,6 +378,7 @@ export async function baixarParcelaAcordo(input: {
   indice: number;
   pago: boolean;
   dataPagamento?: string;
+  contasPagamento?: ContaPagamento[];
 }): Promise<{ ok: boolean }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "nfeBaixarParcelaAcordo");
@@ -452,6 +462,7 @@ export async function pagarDespesaFixa(input: {
   pago: boolean;
   data?: string;
   valor?: number;
+  contasPagamento?: ContaPagamento[];
 }): Promise<{ ok: boolean }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "nfePagarDespesaFixa");
@@ -532,6 +543,7 @@ export async function baixarParcelasLote(input: {
   parcelaIds: string[];
   dataPagamento?: string;
   obsPagamento?: string;
+  contaEmpresaId?: string;
 }): Promise<{ ok: boolean; total: number }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "nfeBaixarParcelasLote");
