@@ -39,6 +39,7 @@ const ROWS: Row[] = [
   { label: "margem bruta", key: "margemBruta", pct: true, indent: true },
   { label: "(−) Taxas de cartão", key: "taxasCartao", tipo: "neg" },
   { label: "(−) Despesas fixas", key: "despesasFixas", tipo: "neg" },
+  { label: "(−) Despesas manuais", key: "despesasManuais", tipo: "neg" },
   { label: "(−) Fretes (CT-e)", key: "fretes", tipo: "neg" },
   { label: "(−) Serviços (NFS-e)", key: "servicos", tipo: "neg" },
   { label: "= Resultado", key: "resultado", tipo: "res", forte: true },

@@ -1794,7 +1794,7 @@ interface DREResultado {
   receitaVendas: number; receitaManual: number; cmv: number; compras: number;
   cmvReal: number; cmvRealAquisicao: number; cmvRealGerencial: number; custoCobertura: number;
   lucroBruto: number; margemBruta: number; taxasCartao: number; despesasFixas: number;
-  fretes: number; servicos: number; resultado: number; margemLiquida: number;
+  despesasManuais: number; fretes: number; servicos: number; resultado: number; margemLiquida: number;
 }
 /** Núcleo do DRE gerencial (competência). Reutilizado pelo comparativo. */
 async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: number, cmvBase = "gerencial"): Promise<DREResultado> {
@@ -1888,6 +1888,13 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
       despesasFixas += pg?.pago ? Number(pg.valor ?? x.valor ?? 0) : Number(x.valor ?? 0);
     }
   }
+  // DESPESAS MANUAIS (sem NF / extraordinárias) — competência = dia
+  let despesasManuais = 0;
+  for (const doc of (await db.collection("manual_expenses").where("dia", ">=", de).where("dia", "<=", ate).get()).docs) {
+    const x = doc.data();
+    if (!daEmpresa(x.empresaId)) continue;
+    despesasManuais += Number(x.valor ?? 0);
+  }
   // FRETES (CT-e) e SERVIÇOS (NFS-e) — competência = dhEmi
   let fretes = 0;
   for (const doc of (await db.collection("cte_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get()).docs) {
@@ -1906,7 +1913,7 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
   else { cmv = compras; cmvOrigem = "compras"; }
   const custoCobertura = itensTot > 0 ? itensComCusto / itensTot : 0;
   const lucroBruto = receitaVendas - cmv;
-  const resultado = lucroBruto - taxasCartao - despesasFixas - fretes - servicos;
+  const resultado = lucroBruto - taxasCartao - despesasFixas - despesasManuais - fretes - servicos;
   const pct = (v: number) => (receitaVendas > 0 ? (v / receitaVendas) * 100 : 0);
 
   return {
@@ -1914,7 +1921,7 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     receitaVendas, receitaManual, cmv, compras,
     cmvReal, cmvRealAquisicao, cmvRealGerencial, custoCobertura,
     lucroBruto, margemBruta: pct(lucroBruto),
-    taxasCartao, despesasFixas, fretes, servicos,
+    taxasCartao, despesasFixas, despesasManuais, fretes, servicos,
     resultado, margemLiquida: pct(resultado),
   };
 }
@@ -1971,7 +1978,7 @@ export const dreComparativo = onCall(
     // Com CMV real (itens) ou CMV% informado, (b) deixa de valer.
     const ehIncompleto = (r: DREResultado): boolean => {
       if (r.receitaVendas <= 0) return true;
-      const custo = r.compras + r.despesasFixas + r.fretes + r.servicos;
+      const custo = r.compras + r.despesasFixas + r.despesasManuais + r.fretes + r.servicos;
       if (custo > 0 && r.receitaVendas < custo * 0.5) return true;
       if (r.cmvOrigem === "compras" && r.compras < r.receitaVendas * 0.15) return true;
       return false;
@@ -2008,6 +2015,7 @@ export const dreComparativo = onCall(
       cmv: soma("cmv"), compras: soma("compras"),
       lucroBruto: lbT, margemBruta: recT > 0 ? (lbT / recT) * 100 : 0,
       taxasCartao: soma("taxasCartao"), despesasFixas: soma("despesasFixas"),
+      despesasManuais: soma("despesasManuais"),
       fretes: soma("fretes"), servicos: soma("servicos"),
       resultado: resT, margemLiquida: recT > 0 ? (resT / recT) * 100 : 0,
     };
@@ -2217,6 +2225,13 @@ export const fluxoCaixa = onCall(
           saida(dia, Number(x.valor ?? 0), false, "despesas");
         }
       }
+    }
+    // SAÍDAS — despesas manuais (pagas na data)
+    const dmSnap = await db.collection("manual_expenses").where("dia", ">=", de).where("dia", "<=", ate).get();
+    for (const doc of dmSnap.docs) {
+      const x = doc.data();
+      if (!daEmpresa(x.empresaId)) continue;
+      saida(d10(x.dia), Number(x.valor ?? 0), true, "despesasManuais");
     }
     // SAÍDAS — parcelas de acordos
     const acSnap = await db.collection("nfe_agreements").get();
@@ -2810,6 +2825,46 @@ async function resolverEmpresa(companyId: string): Promise<{ id: string; nome: s
   const e = snap.data() as { razaoSocial?: string; nomeFantasia?: string };
   return { id: companyId, nome: e.nomeFantasia || e.razaoSocial || companyId };
 }
+
+/**
+ * Cria/atualiza uma DESPESA MANUAL (sem NF / extraordinária: limpeza, escritório,
+ * uber, etc.). Entra no DRE (competência = dia) e no fluxo de caixa (saída paga na
+ * data). Admin/financeiro.
+ */
+export const salvarDespesaManual = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const empresaId = String(d.empresaId ?? "").trim();
+  const dia = String(d.dia ?? "").slice(0, 10);
+  const descricao = String(d.descricao ?? "").trim().slice(0, 200);
+  const categoria = String(d.categoria ?? "").trim().slice(0, 40) || "outros";
+  const valor = Number(d.valor);
+  if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) throw new HttpsError("invalid-argument", "Data inválida.");
+  if (!descricao) throw new HttpsError("invalid-argument", "Informe a descrição.");
+  if (!Number.isFinite(valor) || valor <= 0) throw new HttpsError("invalid-argument", "Valor inválido.");
+  const emp = await resolverEmpresa(empresaId);
+  const now = agoraISO();
+  const doc: Record<string, unknown> = {
+    empresaId, empresaNome: emp?.nome ?? null, dia, descricao, categoria,
+    valor: Math.round(valor * 100) / 100, atualizadoEm: now, atualizadoPor: uid,
+  };
+  if (!d.id) { doc.criadoEm = now; doc.criadoPor = uid; }
+  const ref = d.id ? db.collection("manual_expenses").doc(String(d.id)) : db.collection("manual_expenses").doc();
+  await ref.set(doc, { merge: true });
+  await auditar(uid, "manual.salvarDespesa", { id: ref.id, empresaId, dia, categoria, valor });
+  return { ok: true, id: ref.id };
+});
+
+/** Exclui uma despesa manual. Admin/financeiro. */
+export const excluirDespesaManual = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const id = String(req.data?.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  await db.collection("manual_expenses").doc(id).delete();
+  await auditar(uid, "manual.excluirDespesa", { id });
+  return { ok: true };
+});
 
 // ============ GESTÃO DE USUÁRIOS E PERFIS (RBAC) ============
 

@@ -459,6 +459,62 @@ export async function pagarDespesaFixa(input: {
   return res.data as { ok: boolean };
 }
 
+/** Categorias das despesas manuais (sem NF / extraordinárias). */
+export const CATEGORIAS_DESPESA_MANUAL: { key: string; label: string }[] = [
+  { key: "limpeza", label: "Material de limpeza" },
+  { key: "escritorio", label: "Material de escritório" },
+  { key: "transporte", label: "Transporte / Uber / combustível" },
+  { key: "alimentacao", label: "Alimentação" },
+  { key: "manutencao", label: "Manutenção / reparos" },
+  { key: "marketing", label: "Marketing / brindes" },
+  { key: "taxas", label: "Taxas / cartório / correio" },
+  { key: "rh", label: "RH / pessoal" },
+  { key: "outros", label: "Outros" },
+];
+
+export interface DespesaManual {
+  id: string;
+  empresaId: string;
+  empresaNome?: string | null;
+  dia: string; // YYYY-MM-DD
+  descricao: string;
+  categoria: string;
+  valor: number;
+  criadoEm?: string;
+  atualizadoEm?: string;
+}
+
+/** Lista as despesas manuais (mais recentes primeiro). */
+export async function listarDespesasManuais(): Promise<DespesaManual[]> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, "manual_expenses"));
+  const arr = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as DespesaManual[];
+  return arr.sort((a, b) => (b.dia ?? "").localeCompare(a.dia ?? ""));
+}
+
+/** Cria/atualiza uma despesa manual (sem NF / extraordinária). */
+export async function salvarDespesaManual(input: {
+  id?: string;
+  empresaId: string;
+  dia: string;
+  descricao: string;
+  categoria: string;
+  valor: number;
+}): Promise<{ ok: boolean; id: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "salvarDespesaManual");
+  const res = await fn(input);
+  return res.data as { ok: boolean; id: string };
+}
+
+/** Exclui uma despesa manual. */
+export async function excluirDespesaManual(id: string): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "excluirDespesaManual");
+  const res = await fn({ id });
+  return res.data as { ok: boolean };
+}
+
 /** Exclui uma despesa fixa. */
 export async function excluirDespesaFixa(id: string): Promise<{ ok: boolean }> {
   const { functions } = fb();
@@ -909,6 +965,7 @@ export interface DRE {
   margemBruta: number;
   taxasCartao: number;
   despesasFixas: number;
+  despesasManuais: number;
   fretes: number;
   servicos: number;
   resultado: number;
@@ -997,6 +1054,7 @@ export interface DREColuna {
   margemBruta: number;
   taxasCartao: number;
   despesasFixas: number;
+  despesasManuais: number;
   fretes: number;
   servicos: number;
   resultado: number;

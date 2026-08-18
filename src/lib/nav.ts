@@ -27,6 +27,7 @@ import {
   PackageCheck,
   TrendingUp,
   ArrowDownLeft,
+  Coins,
   type LucideIcon,
 } from "lucide-react";
 
@@ -66,6 +67,7 @@ export const SECONDARY_NAV: NavItem[] = [
   { label: "Serviços (NFS-e)", href: "/nfses", icon: Wrench, modulo: "nfses" },
   { label: "Acordos", href: "/acordos", icon: Handshake, modulo: "acordos" },
   { label: "Despesas fixas", href: "/despesas", icon: Receipt, modulo: "despesas" },
+  { label: "Despesas manuais", href: "/despesas-manuais", icon: Coins, modulo: "despesas" },
   { label: "Relatórios", href: "/relatorios", icon: BarChart3, modulo: "relatorios" },
   { label: "Alertas", href: "/alertas", icon: Bell, modulo: "alertas" },
   { label: "Integrações", href: "/integracoes", icon: Plug, modulo: "integracoes" },

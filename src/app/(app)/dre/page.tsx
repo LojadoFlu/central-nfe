@@ -149,6 +149,7 @@ export default function DrePage() {
                     nota={`margem bruta ${fmtPct(dados.margemBruta)}`} />
                   <Linha titulo="(−) Taxas de cartão" valor={-dados.taxasCartao} tom="neg" />
                   <Linha titulo="(−) Despesas fixas" valor={-dados.despesasFixas} tom="neg" />
+                  <Linha titulo="(−) Despesas manuais" valor={-dados.despesasManuais} tom="neg" />
                   <Linha titulo="(−) Fretes (CT-e)" valor={-dados.fretes} tom="neg" />
                   <Linha titulo="(−) Serviços (NFS-e)" valor={-dados.servicos} tom="neg" />
                   <Linha titulo="= Resultado do período" valor={dados.resultado} forte destaque

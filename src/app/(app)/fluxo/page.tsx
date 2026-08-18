@@ -90,7 +90,7 @@ function agrupamentoPara(de: string, ate: string): "dia" | "semana" | "mes" {
 
 const ORIGEM_LABEL: Record<string, string> = {
   cartao: "Cartões (líquido)", avista: "PIX + dinheiro",
-  nfe: "Contas a pagar (NF-e)", despesas: "Despesas fixas", acordos: "Acordos",
+  nfe: "Contas a pagar (NF-e)", despesas: "Despesas fixas", despesasManuais: "Despesas manuais", acordos: "Acordos",
 };
 
 interface Grupo {
