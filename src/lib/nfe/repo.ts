@@ -197,7 +197,21 @@ export interface Parcela {
   valorPago?: number | null;
   obsPagamento?: string | null;
   contasPagamento?: ContaPagamento[] | null;
+  migradoAcordo?: boolean;
+  acordoId?: string | null;
   baixadoEm?: string | null;
+}
+
+/** Marca/desmarca uma parcela como migrada para acordo (só registro, sem baixa). */
+export async function migrarParcelaAcordo(input: {
+  parcelaId: string;
+  migrado: boolean;
+  acordoId?: string;
+}): Promise<{ ok: boolean; migradoAcordo: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "nfeMigrarParcelaAcordo");
+  const res = await fn(input);
+  return res.data as { ok: boolean; migradoAcordo: boolean };
 }
 
 /** Uma conta de pagamento (rateio): de qual empresa/conta saiu e quanto. */

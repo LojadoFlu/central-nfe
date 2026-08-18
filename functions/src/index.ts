@@ -852,6 +852,57 @@ export const nfeBaixarParcela = onCall(opcoes, async (req) => {
 });
 
 /**
+ * Marca (ou desmarca) uma parcela de NF-e como MIGRADA PARA ACORDO. Só REGISTRO:
+ * a dívida foi renegociada e passou a ser controlada por um acordo — NÃO é
+ * pagamento e NÃO gera movimentação financeira (sai do "a pagar" em aberto, não
+ * entra no fluxo nem na conciliação). Opcionalmente associa a um acordo existente.
+ * Só admin/financeiro.
+ */
+export const nfeMigrarParcelaAcordo = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const parcelaId = String(d.parcelaId ?? "").trim();
+  if (!parcelaId) throw new HttpsError("invalid-argument", "parcelaId obrigatório.");
+  const migrado = d.migrado !== false; // default = marcar migrado
+  const acordoId = String(d.acordoId ?? "").trim() || null;
+
+  const ref = db.collection("nfe_installments").doc(parcelaId);
+  if (!(await ref.get()).exists) throw new HttpsError("not-found", "Parcela não encontrada.");
+  const now = agoraISO();
+
+  if (migrado) {
+    await ref.set(
+      {
+        migradoAcordo: true,
+        acordoId,
+        // garante que NÃO fique como paga (migração não é pagamento)
+        statusPagamento: "nao_informado",
+        dataPagamento: FieldValue.delete(),
+        valorPago: FieldValue.delete(),
+        contasPagamento: FieldValue.delete(),
+        migradoPor: uid,
+        migradoEm: now,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  } else {
+    await ref.set(
+      {
+        migradoAcordo: FieldValue.delete(),
+        acordoId: FieldValue.delete(),
+        migradoPor: FieldValue.delete(),
+        migradoEm: FieldValue.delete(),
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  }
+  await auditar(uid, migrado ? "financeiro.migrarAcordo" : "financeiro.desmigrarAcordo", { parcelaId, acordoId });
+  return { ok: true, migradoAcordo: migrado };
+});
+
+/**
  * Baixa em lote: marca várias parcelas como pagas de uma vez (mesma data/obs).
  * Lê o valor real de cada parcela no servidor (valorPago = valor). Só admin/financeiro.
  */
@@ -2252,6 +2303,7 @@ export const fluxoCaixa = onCall(
     const parcSnap = await db.collection("nfe_installments").get();
     for (const doc of parcSnap.docs) {
       const p = doc.data();
+      if (p.migradoAcordo === true) continue; // virou acordo — o acordo carrega o fluxo
       const pago = p.statusPagamento === "pago";
       const dia = d10(pago ? p.dataPagamento : p.vencimento);
       const valor = Number((pago ? p.valorPago ?? p.valor : p.valor) ?? 0);

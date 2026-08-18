@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, listarDespesasFixas, pagarDespesaFixa, type Parcela, type Acordo, type ContaPagamento, type DespesaFixa } from "@/lib/nfe/repo";
+import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, listarDespesasFixas, pagarDespesaFixa, migrarParcelaAcordo, type Parcela, type Acordo, type ContaPagamento, type DespesaFixa } from "@/lib/nfe/repo";
 import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -18,7 +18,7 @@ import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/compone
 import { formatBRL, formatarData, diasAte } from "@/lib/utils";
 import { Wallet, Check, RotateCcw, CheckSquare, X } from "lucide-react";
 
-type Situacao = "paga" | "vencida" | "a_vencer" | "sem_venc";
+type Situacao = "paga" | "vencida" | "a_vencer" | "sem_venc" | "migrado";
 
 const PERIODO_REC: Record<string, number> = { mensal: 1, bimestral: 2, trimestral: 3, semestral: 6, anual: 12 };
 /** Uma despesa fixa incide num mês (YYYY-MM)? Replica a regra do backend. */
@@ -44,7 +44,7 @@ function janelaMeses(back: number, fwd: number): string[] {
 interface Conta {
   id: string;               // NF-e = id; acordo = "acordo:{id}:{i}"; despesa = "despesa:{id}:{ym}"
   origem: "nfe" | "acordo" | "despesa";
-  acordoId?: string;
+  acordoId?: string | null;
   indice?: number;
   despesaId?: string;
   ym?: string;
@@ -59,12 +59,14 @@ interface Conta {
   valorPago?: number | null;
   obsPagamento?: string | null;
   contasPagamento?: ContaPagamento[] | null;
+  migradoAcordo?: boolean;
   chNFe?: string | null;
   descricao?: string | null;
 }
 
-/** Uma parcela paga sai da régua de vencimento — vira "paga". */
-function situacao(p: { statusPagamento?: string; vencimento?: string | null }): { s: Situacao; dias: number | null } {
+/** Uma parcela paga sai da régua de vencimento — vira "paga". Migrada p/ acordo sai do fluxo. */
+function situacao(p: { statusPagamento?: string; vencimento?: string | null; migradoAcordo?: boolean }): { s: Situacao; dias: number | null } {
+  if (p.migradoAcordo) return { s: "migrado", dias: null };
   if (p.statusPagamento === "pago") return { s: "paga", dias: null };
   const dias = diasAte(p.vencimento);
   if (dias === null) return { s: "sem_venc", dias: null };
@@ -104,6 +106,8 @@ export default function FinanceiroPage() {
   const [valorPg, setValorPg] = useState("");
   const [obsPg, setObsPg] = useState("");
   const [contasPg, setContasPg] = useState<ContaPagamento[]>([]);
+  const [migrarChk, setMigrarChk] = useState(false);
+  const [migrarAcordoId, setMigrarAcordoId] = useState("");
 
   // Baixa em lote (modo seleção)
   const [selMode, setSelMode] = useState(false);
@@ -132,7 +136,8 @@ export default function FinanceiroPage() {
     const nfe: Conta[] = (parcelas ?? []).map((p) => ({
       id: p.id, origem: "nfe", companyId: p.companyId, cnpjEmit: p.cnpjEmit, xNomeEmit: p.xNomeEmit,
       nDup: p.nDup, vencimento: p.vencimento, valor: p.valor, statusPagamento: p.statusPagamento,
-      dataPagamento: p.dataPagamento, valorPago: p.valorPago, obsPagamento: p.obsPagamento, contasPagamento: p.contasPagamento, chNFe: p.chNFe,
+      dataPagamento: p.dataPagamento, valorPago: p.valorPago, obsPagamento: p.obsPagamento, contasPagamento: p.contasPagamento,
+      migradoAcordo: p.migradoAcordo, acordoId: p.acordoId, chNFe: p.chNFe,
     }));
     const ac: Conta[] = acordos.flatMap((a) =>
       (a.parcelas ?? []).map((pc, i) => ({
@@ -180,12 +185,21 @@ export default function FinanceiroPage() {
     setObsPg("");
     // Pré-preenche com a própria empresa da conta a pagar (edite p/ outra conta ou rateio).
     setContasPg(p.companyId ? [{ empresaId: p.companyId, valor: p.valor ?? 0 }] : []);
+    setMigrarChk(false);
+    setMigrarAcordoId("");
   }
 
   async function confirmarSingle(p: Conta) {
     setSalvando(p.id);
     setErro(null);
     try {
+      // "Migrou para acordo" (só NF-e): registra sem baixar (sem movimentação).
+      if (p.origem === "nfe" && migrarChk) {
+        await migrarParcelaAcordo({ parcelaId: p.id, migrado: true, acordoId: migrarAcordoId || undefined });
+        setPendente(null);
+        await carregar();
+        return;
+      }
       const cps = contasValidas(contasPg);
       if (p.origem === "acordo") {
         await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: true, dataPagamento: dataPg, contasPagamento: cps.length ? cps : undefined });
@@ -216,7 +230,9 @@ export default function FinanceiroPage() {
     setSalvando(p.id);
     setErro(null);
     try {
-      if (p.origem === "acordo") {
+      if (p.migradoAcordo) {
+        await migrarParcelaAcordo({ parcelaId: p.id, migrado: false });
+      } else if (p.origem === "acordo") {
         await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: false });
       } else if (p.origem === "despesa") {
         await pagarDespesaFixa({ id: p.despesaId as string, mes: p.ym as string, pago: false });
@@ -468,6 +484,7 @@ export default function FinanceiroPage() {
               vencida: { variant: "destructive" as const, label: "Vencida" },
               a_vencer: { variant: "warning" as const, label: "A vencer" },
               sem_venc: { variant: "neutral" as const, label: "Sem vencimento" },
+              migrado: { variant: "neutral" as const, label: "Migrou p/ acordo" },
             }[s];
             const abrindo = pendente === p.id;
             const ocupado = salvando === p.id;
@@ -512,6 +529,11 @@ export default function FinanceiroPage() {
                     Pago de: {p.contasPagamento.map((c) => `${nomeConta(c.empresaId)} (${formatBRL(c.valor)})`).join(" · ")}
                   </p>
                 ) : null}
+                {s === "migrado" ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Renegociada em acordo{p.acordoId ? ` · ${acordos.find((a) => a.id === p.acordoId)?.nomeFornecedor ?? "acordo"}` : ""} — sem movimentação financeira.
+                  </p>
+                ) : null}
               </>
             );
 
@@ -547,13 +569,35 @@ export default function FinanceiroPage() {
                       {/* Ações de baixa (admin/financeiro) */}
                       {podeBaixar ? (
                         <div className="mt-3 border-t border-border pt-3">
-                          {s === "paga" ? (
+                          {s === "migrado" ? (
+                            <Button size="sm" variant="ghost" disabled={ocupado} onClick={() => reabrir(p)}>
+                              <RotateCcw className="size-4" />
+                              {ocupado ? "Desfazendo…" : "Desfazer migração p/ acordo"}
+                            </Button>
+                          ) : s === "paga" ? (
                             <Button size="sm" variant="ghost" disabled={ocupado} onClick={() => reabrir(p)}>
                               <RotateCcw className="size-4" />
                               {ocupado ? "Reabrindo…" : "Reabrir (marcar como não paga)"}
                             </Button>
                           ) : abrindo ? (
                             <div className="space-y-2">
+                              {p.origem === "nfe" ? (
+                                <label className="flex items-center gap-2 text-sm">
+                                  <input type="checkbox" className="size-4" checked={migrarChk} onChange={(e) => setMigrarChk(e.target.checked)} />
+                                  Migrou para acordo <span className="text-xs text-muted-foreground">(só registra, sem movimentação)</span>
+                                </label>
+                              ) : null}
+                              {p.origem === "nfe" && migrarChk ? (
+                                <div className="space-y-1">
+                                  <label className="text-xs text-muted-foreground">Associar a um acordo (opcional)</label>
+                                  <select value={migrarAcordoId} onChange={(e) => setMigrarAcordoId(e.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+                                    <option value="">— sem associação —</option>
+                                    {acordos.map((a) => <option key={a.id} value={a.id}>{a.nomeFornecedor}{a.companyId ? ` · ${nomeConta(a.companyId)}` : ""}</option>)}
+                                  </select>
+                                  <p className="text-[11px] text-muted-foreground">A parcela sai do &quot;a pagar&quot; em aberto e não entra no fluxo/conciliação. O acordo carrega as novas parcelas.</p>
+                                </div>
+                              ) : (
+                              <>
                               <div className="flex flex-wrap items-end gap-2">
                                 <div className="space-y-1">
                                   <label className="text-xs text-muted-foreground">Data do pagamento</label>
@@ -598,10 +642,12 @@ export default function FinanceiroPage() {
                                   onChange={setContasPg}
                                 />
                               </div>
+                              </>
+                              )}
                               <div className="flex gap-2 pt-1">
                                 <Button size="sm" disabled={ocupado} onClick={() => confirmarSingle(p)}>
                                   <Check className="size-4" />
-                                  {ocupado ? "Salvando…" : "Confirmar baixa"}
+                                  {ocupado ? "Salvando…" : (p.origem === "nfe" && migrarChk) ? "Registrar migração" : "Confirmar baixa"}
                                 </Button>
                                 <Button size="sm" variant="ghost" disabled={ocupado} onClick={() => setPendente(null)}>
                                   Cancelar
