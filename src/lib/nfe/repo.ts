@@ -401,6 +401,7 @@ export interface PagamentoDespesa {
   data?: string;
   valor?: number | null; // valor REAL pago
   previsto?: number | null; // valor previsto na hora da baixa
+  contasPagamento?: ContaPagamento[] | null;
 }
 
 export type Recorrencia = "mensal" | "bimestral" | "trimestral" | "semestral" | "anual";

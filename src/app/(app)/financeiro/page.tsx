@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, type Parcela, type Acordo, type ContaPagamento } from "@/lib/nfe/repo";
+import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, listarDespesasFixas, pagarDespesaFixa, type Parcela, type Acordo, type ContaPagamento, type DespesaFixa } from "@/lib/nfe/repo";
 import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -20,12 +20,34 @@ import { Wallet, Check, RotateCcw, CheckSquare, X } from "lucide-react";
 
 type Situacao = "paga" | "vencida" | "a_vencer" | "sem_venc";
 
-/** Conta a pagar: parcela de NF-e ou parcela de acordo, tratadas do mesmo jeito. */
+const PERIODO_REC: Record<string, number> = { mensal: 1, bimestral: 2, trimestral: 3, semestral: 6, anual: 12 };
+/** Uma despesa fixa incide num mês (YYYY-MM)? Replica a regra do backend. */
+function incideNoMes(d: DespesaFixa, ym: string): boolean {
+  const p = PERIODO_REC[d.recorrencia ?? "mensal"] ?? 1;
+  if (p === 1) return true;
+  const mesBase = Number(d.mesBase ?? 1);
+  const m = Number(ym.slice(5, 7));
+  return ((((m - mesBase) % p) + p) % p) === 0;
+}
+/** Janela de meses (YYYY-MM) de `back` meses atrás até `fwd` meses à frente. */
+function janelaMeses(back: number, fwd: number): string[] {
+  const out: string[] = [];
+  const now = new Date();
+  for (let i = -back; i <= fwd; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  return out;
+}
+
+/** Conta a pagar: parcela de NF-e, parcela de acordo ou mês de despesa fixa. */
 interface Conta {
-  id: string;               // único: NF-e = id da parcela; acordo = "acordo:{id}:{indice}"
-  origem: "nfe" | "acordo";
+  id: string;               // NF-e = id; acordo = "acordo:{id}:{i}"; despesa = "despesa:{id}:{ym}"
+  origem: "nfe" | "acordo" | "despesa";
   acordoId?: string;
   indice?: number;
+  despesaId?: string;
+  ym?: string;
   companyId?: string | null;
   cnpjEmit?: string | null;
   xNomeEmit?: string | null;
@@ -67,6 +89,7 @@ export default function FinanceiroPage() {
   const podeBaixar = podeAcao("financeiro.baixar");
   const [parcelas, setParcelas] = useState<Parcela[] | null>(null);
   const [acordos, setAcordos] = useState<Acordo[]>([]);
+  const [despesas, setDespesas] = useState<DespesaFixa[]>([]);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
@@ -93,10 +116,11 @@ export default function FinanceiroPage() {
   const carregar = useCallback(async () => {
     setErro(null);
     try {
-      const [ps, emps, acs] = await Promise.all([listarParcelas(2000), listarEmpresas(), listarAcordos()]);
+      const [ps, emps, acs, dfs] = await Promise.all([listarParcelas(2000), listarEmpresas(), listarAcordos(), listarDespesasFixas()]);
       setParcelas(ps);
       setEmpresas(emps);
       setAcordos(acs);
+      setDespesas(dfs);
     } catch (e) {
       setErro((e as Error).message);
       setParcelas([]);
@@ -119,8 +143,26 @@ export default function FinanceiroPage() {
         dataPagamento: pc.dataPagamento ?? null, descricao: a.descricao ?? a.nomeFornecedor,
       })),
     );
-    return [...nfe, ...ac];
-  }, [parcelas, acordos]);
+    // Despesas fixas — uma "conta" por mês que incide (janela recente + próximos).
+    const meses = janelaMeses(3, 1);
+    const df: Conta[] = despesas.flatMap((d) => {
+      if (d.ativo === false) return [];
+      const dia = String(Math.min(Number(d.diaVencimento) || 1, 28)).padStart(2, "0");
+      return meses.filter((ym) => incideNoMes(d, ym)).map((ym) => {
+        const pg = d.pagamentos?.[ym];
+        return {
+          id: `despesa:${d.id}:${ym}`, origem: "despesa" as const, despesaId: d.id, ym,
+          companyId: d.companyId ?? undefined, cnpjEmit: null, xNomeEmit: d.nome,
+          nDup: ym, vencimento: `${ym}-${dia}`,
+          valor: pg?.pago ? (pg.valor ?? d.valor) : d.valor,
+          statusPagamento: pg?.pago ? "pago" : "nao_informado",
+          dataPagamento: pg?.data ?? null, valorPago: pg?.valor ?? null,
+          contasPagamento: pg?.contasPagamento, descricao: d.categoria,
+        };
+      });
+    });
+    return [...nfe, ...ac, ...df];
+  }, [parcelas, acordos, despesas]);
 
   const nomeConta = (id: string) => {
     const e = empresas.find((x) => x.id === id);
@@ -147,6 +189,9 @@ export default function FinanceiroPage() {
       const cps = contasValidas(contasPg);
       if (p.origem === "acordo") {
         await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: true, dataPagamento: dataPg, contasPagamento: cps.length ? cps : undefined });
+      } else if (p.origem === "despesa") {
+        const v = Number(valorPg);
+        await pagarDespesaFixa({ id: p.despesaId as string, mes: p.ym as string, pago: true, valor: Number.isFinite(v) && valorPg !== "" ? v : (p.valor ?? undefined), data: dataPg, contasPagamento: cps.length ? cps : undefined });
       } else {
         const v = Number(valorPg);
         await baixarParcela({
@@ -173,6 +218,8 @@ export default function FinanceiroPage() {
     try {
       if (p.origem === "acordo") {
         await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: false });
+      } else if (p.origem === "despesa") {
+        await pagarDespesaFixa({ id: p.despesaId as string, mes: p.ym as string, pago: false });
       } else {
         await baixarParcela({ parcelaId: p.id, pago: false });
       }
@@ -269,15 +316,15 @@ export default function FinanceiroPage() {
 
   const lista = useMemo(() => {
     const arr = base.filter((p) => filtro === "todas" || situacao(p).s === filtro);
-    // Ordena por vencimento (mais urgente primeiro), pagas por último — interliga
-    // NF-e e acordos numa régua só (antes acordos ficavam enterrados no fim).
+    // Não pagas primeiro (por vencimento, mais recente primeiro); pagas depois
+    // (por data de pagamento, mais recente primeiro). Interliga NF-e, acordos e
+    // despesas fixas numa régua só.
     return [...arr].sort((a, b) => {
       const pagaA = situacao(a).s === "paga" ? 1 : 0;
       const pagaB = situacao(b).s === "paga" ? 1 : 0;
       if (pagaA !== pagaB) return pagaA - pagaB;
-      const va = a.vencimento ?? "";
-      const vb = b.vencimento ?? "";
-      return pagaA === 1 ? vb.localeCompare(va) : va.localeCompare(vb);
+      if (pagaA === 1) return (b.dataPagamento ?? "").localeCompare(a.dataPagamento ?? "");
+      return (b.vencimento ?? "").localeCompare(a.vencimento ?? "");
     });
   }, [base, filtro]);
 
@@ -411,7 +458,10 @@ export default function FinanceiroPage() {
         </ModulePlaceholder>
       ) : (
         <div className={`space-y-3 ${selMode ? "pb-28" : ""}`}>
-          {lista.map((p) => {
+          {lista.length > 600 ? (
+            <p className="text-xs text-muted-foreground">Mostrando as 600 primeiras de {lista.length}. Use os filtros (empresa, fornecedor, período) para refinar.</p>
+          ) : null}
+          {lista.slice(0, 600).map((p) => {
             const { s, dias } = situacao(p);
             const cfg = {
               paga: { variant: "success" as const, label: "Paga" },
@@ -421,8 +471,8 @@ export default function FinanceiroPage() {
             }[s];
             const abrindo = pendente === p.id;
             const ocupado = salvando === p.id;
-            // Lote de baixa só cobre parcelas de NF-e; acordo baixa individualmente.
-            const selecionavel = selMode && s !== "paga" && p.origem !== "acordo";
+            // Lote de baixa só cobre parcelas de NF-e; acordo/despesa baixa individualmente.
+            const selecionavel = selMode && s !== "paga" && p.origem === "nfe";
             const marcada = sel.has(p.id);
 
             const info = (
@@ -431,11 +481,13 @@ export default function FinanceiroPage() {
                   <div className="min-w-0">
                     <p className="truncate font-medium">{p.xNomeEmit ?? "Fornecedor"}</p>
                     <p className="text-xs text-muted-foreground">
-                      {p.origem === "acordo" ? "Acordo · parcela" : "Parcela"} {p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
+                      {p.origem === "acordo" ? "Acordo · parcela" : p.origem === "despesa" ? "Despesa fixa" : "Parcela"}
+                      {p.origem === "despesa" ? "" : ` ${p.nDup ?? "1"}`} · venc. {formatarData(p.vencimento)}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
                     {p.origem === "acordo" ? <Badge variant="neutral">Acordo</Badge> : null}
+                    {p.origem === "despesa" ? <Badge variant="neutral">Despesa fixa</Badge> : null}
                     <Badge variant={cfg.variant}>{cfg.label}</Badge>
                   </div>
                 </div>
@@ -488,7 +540,7 @@ export default function FinanceiroPage() {
                     </button>
                   ) : (
                     <>
-                      <Link href={p.origem === "acordo" ? "/acordos" : (p.chNFe ? `/notas/${encodeURIComponent(p.chNFe)}` : "#")} className="block">
+                      <Link href={p.origem === "acordo" ? "/acordos" : p.origem === "despesa" ? "/despesas" : (p.chNFe ? `/notas/${encodeURIComponent(p.chNFe)}` : "#")} className="block">
                         {info}
                       </Link>
 
@@ -526,7 +578,7 @@ export default function FinanceiroPage() {
                                   </div>
                                 ) : null}
                               </div>
-                              {p.origem !== "acordo" ? (
+                              {p.origem === "nfe" ? (
                                 <div className="space-y-1">
                                   <label className="text-xs text-muted-foreground">Observação (opcional)</label>
                                   <Input

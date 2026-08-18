@@ -310,7 +310,11 @@ export default function DespesasPage() {
   }
 
   const visiveis = useMemo(
-    () => (despesas ?? []).filter((d) => !filtroEmp || (d.companyId ?? "") === filtroEmp),
+    () => (despesas ?? [])
+      .filter((d) => !filtroEmp || (d.companyId ?? "") === filtroEmp)
+      // por data de vencimento (dia do mês), mais recente primeiro
+      .slice()
+      .sort((a, b) => (Number(b.diaVencimento) || 0) - (Number(a.diaVencimento) || 0)),
     [despesas, filtroEmp],
   );
 
