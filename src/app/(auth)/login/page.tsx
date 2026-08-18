@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createUserWithEmailAndPassword, updateProfile } from "firebase/auth";
+import { createUserWithEmailAndPassword, updateProfile, sendPasswordResetEmail } from "firebase/auth";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { getFirebase } from "@/lib/firebase/client";
 import { registrarUsuario } from "@/lib/nfe/repo";
@@ -23,6 +23,29 @@ export default function LoginPage() {
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
+  const [resetMsg, setResetMsg] = useState<string | null>(null);
+
+  async function esqueciSenha() {
+    setErro(null);
+    setResetMsg(null);
+    const mail = email.trim();
+    if (!mail) { setErro("Digite seu e-mail acima para receber o link de redefinição."); return; }
+    setEnviando(true);
+    try {
+      const fb = getFirebase();
+      if (!fb) throw new Error("Firebase não configurado.");
+      await sendPasswordResetEmail(fb.auth, mail);
+    } catch (err) {
+      if ((err as { code?: string }).code?.includes("invalid-email")) {
+        setErro("E-mail inválido.");
+        setEnviando(false);
+        return;
+      }
+      // Demais erros (ex.: e-mail sem conta) não são revelados por segurança.
+    }
+    setResetMsg("Se houver uma conta com esse e-mail, enviamos um link para redefinir a senha. Verifique também a caixa de spam.");
+    setEnviando(false);
+  }
 
   useEffect(() => {
     if (!loading && user) router.replace("/inicio");
@@ -85,14 +108,14 @@ export default function LoginPage() {
                 <div className="mb-5 grid grid-cols-2 gap-1 rounded-lg bg-muted p-1 text-sm font-medium">
                   <button
                     type="button"
-                    onClick={() => { setModo("entrar"); setErro(null); }}
+                    onClick={() => { setModo("entrar"); setErro(null); setResetMsg(null); }}
                     className={`rounded-md py-1.5 transition-colors ${!criar ? "bg-background shadow-sm" : "text-muted-foreground"}`}
                   >
                     Entrar
                   </button>
                   <button
                     type="button"
-                    onClick={() => { setModo("criar"); setErro(null); }}
+                    onClick={() => { setModo("criar"); setErro(null); setResetMsg(null); }}
                     className={`rounded-md py-1.5 transition-colors ${criar ? "bg-background shadow-sm" : "text-muted-foreground"}`}
                   >
                     Criar conta
@@ -115,6 +138,7 @@ export default function LoginPage() {
                     <Input id="senha" type="password" autoComplete={criar ? "new-password" : "current-password"} value={senha} onChange={(e) => setSenha(e.target.value)} required />
                   </div>
                   {erro ? <p className="text-sm text-destructive">{erro}</p> : null}
+                  {resetMsg ? <p className="rounded-md bg-success/10 p-2.5 text-sm text-success">{resetMsg}</p> : null}
                   <Button type="submit" className="w-full" disabled={enviando}>
                     {enviando ? (criar ? "Criando…" : "Entrando…") : criar ? "Criar conta" : "Entrar"}
                   </Button>
@@ -122,7 +146,16 @@ export default function LoginPage() {
                     <p className="text-center text-xs text-muted-foreground">
                       Sua conta ficará <strong>pendente</strong> até um administrador liberar o acesso.
                     </p>
-                  ) : null}
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={esqueciSenha}
+                      disabled={enviando}
+                      className="block w-full text-center text-xs font-medium text-primary hover:underline disabled:opacity-60"
+                    >
+                      Esqueci minha senha
+                    </button>
+                  )}
                 </form>
               </>
             )}
