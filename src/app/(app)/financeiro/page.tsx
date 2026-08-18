@@ -332,15 +332,15 @@ export default function FinanceiroPage() {
 
   const lista = useMemo(() => {
     const arr = base.filter((p) => filtro === "todas" || situacao(p).s === filtro);
-    // Não pagas primeiro (por vencimento, mais recente primeiro); pagas depois
-    // (por data de pagamento, mais recente primeiro). Interliga NF-e, acordos e
-    // despesas fixas numa régua só.
+    // Não pagas primeiro, por vencimento MAIS PRÓXIMO no topo (atrasadas/urgentes
+    // em cima); pagas depois, por data de pagamento mais recente. Interliga NF-e,
+    // acordos e despesas fixas numa régua só.
     return [...arr].sort((a, b) => {
       const pagaA = situacao(a).s === "paga" ? 1 : 0;
       const pagaB = situacao(b).s === "paga" ? 1 : 0;
       if (pagaA !== pagaB) return pagaA - pagaB;
       if (pagaA === 1) return (b.dataPagamento ?? "").localeCompare(a.dataPagamento ?? "");
-      return (b.vencimento ?? "").localeCompare(a.vencimento ?? "");
+      return (a.vencimento ?? "").localeCompare(b.vencimento ?? "");
     });
   }, [base, filtro]);
 
