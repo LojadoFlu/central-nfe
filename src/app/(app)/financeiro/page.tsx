@@ -89,7 +89,7 @@ export default function FinanceiroPage() {
   const carregar = useCallback(async () => {
     setErro(null);
     try {
-      const [ps, emps, acs] = await Promise.all([listarParcelas(), listarEmpresas(), listarAcordos()]);
+      const [ps, emps, acs] = await Promise.all([listarParcelas(2000), listarEmpresas(), listarAcordos()]);
       setParcelas(ps);
       setEmpresas(emps);
       setAcordos(acs);
@@ -254,7 +254,17 @@ export default function FinanceiroPage() {
   const pagoNoMes = porMes.find(([k]) => k === mesAtual)?.[1] ?? 0;
 
   const lista = useMemo(() => {
-    return base.filter((p) => filtro === "todas" || situacao(p).s === filtro);
+    const arr = base.filter((p) => filtro === "todas" || situacao(p).s === filtro);
+    // Ordena por vencimento (mais urgente primeiro), pagas por último — interliga
+    // NF-e e acordos numa régua só (antes acordos ficavam enterrados no fim).
+    return [...arr].sort((a, b) => {
+      const pagaA = situacao(a).s === "paga" ? 1 : 0;
+      const pagaB = situacao(b).s === "paga" ? 1 : 0;
+      if (pagaA !== pagaB) return pagaA - pagaB;
+      const va = a.vencimento ?? "";
+      const vb = b.vencimento ?? "";
+      return pagaA === 1 ? vb.localeCompare(va) : va.localeCompare(vb);
+    });
   }, [base, filtro]);
 
   // Total selecionado (para a barra de lote).
