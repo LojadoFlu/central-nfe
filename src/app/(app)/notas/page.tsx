@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import {
@@ -15,10 +16,12 @@ import {
   listarSyncStates,
   pagamentosPendentes,
   definirPagamentoLoteEmissao,
+  manifestar,
   type NfeDocumento,
   type SyncEstado,
   type ResultadoSync,
   type NotaPendente,
+  type ResultadoManifestacao,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -26,10 +29,83 @@ import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/compone
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
 import { FileText, RefreshCw, AlertCircle } from "lucide-react";
 
+/** Recusa uma NF direto na SEFAZ pela chave (sem importar): não cria nota, pagamento nem pendência. */
+function RecusarPorChave({ empresas }: { empresas: Company[] }) {
+  const [chave, setChave] = useState("");
+  const [empresaId, setEmpresaId] = useState("");
+  const [tp, setTp] = useState("210220");
+  const [just, setJust] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [res, setRes] = useState<ResultadoManifestacao | null>(null);
+  const [erroR, setErroR] = useState<string | null>(null);
+  const digitos = chave.replace(/\D/g, "");
+  const precisaJust = tp === "210240";
+
+  async function enviar() {
+    setErroR(null); setRes(null);
+    if (digitos.length !== 44) { setErroR("A chave deve ter 44 dígitos."); return; }
+    if (!empresaId) { setErroR("Escolha a empresa (destinatário da NF)."); return; }
+    if (precisaJust && just.trim().length < 15) { setErroR("Justificativa de 15 a 255 caracteres."); return; }
+    setEnviando(true);
+    try {
+      const r = await manifestar({ companyId: empresaId, chNFe: digitos, tpEvento: tp, xJust: precisaJust ? just.trim() : undefined });
+      setRes(r);
+      if (r.ok) { setChave(""); setJust(""); }
+    } catch (e) { setErroR((e as Error).message); }
+    finally { setEnviando(false); }
+  }
+
+  return (
+    <details className="mb-3 rounded-md border border-border">
+      <summary className="cursor-pointer px-3 py-2 text-sm font-medium">Recusar NF por chave (sem importar)</summary>
+      <div className="space-y-3 border-t border-border p-3">
+        <p className="text-xs text-muted-foreground">
+          Envia a recusa direto à SEFAZ pela chave de acesso — <strong>não cria nota, pagamento nem pendência</strong>.
+          Use quando a nota não está na base. Evento <strong>conclusivo</strong> (definitivo).
+        </p>
+        <label className="block space-y-1">
+          <span className="text-[11px] text-muted-foreground">Chave de acesso (44 dígitos)</span>
+          <Input value={chave} onChange={(e) => setChave(e.target.value)} inputMode="numeric" placeholder="4226 0601 …" className="h-9 font-mono" />
+          <span className="text-[10px] text-muted-foreground">{digitos.length}/44</span>
+        </label>
+        <label className="block space-y-1">
+          <span className="text-[11px] text-muted-foreground">Empresa (destinatário da NF)</span>
+          <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+            <option value="">— escolher —</option>
+            {empresas.map((e) => <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>)}
+          </select>
+        </label>
+        <label className="block space-y-1">
+          <span className="text-[11px] text-muted-foreground">Tipo de recusa</span>
+          <select value={tp} onChange={(e) => setTp(e.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+            <option value="210220">Desconhecimento da Operação</option>
+            <option value="210240">Operação não Realizada</option>
+          </select>
+        </label>
+        {precisaJust ? (
+          <label className="block space-y-1">
+            <span className="text-[11px] text-muted-foreground">Justificativa (15 a 255)</span>
+            <textarea value={just} onChange={(e) => setJust(e.target.value)} maxLength={255} rows={2} className="w-full rounded-md border border-input bg-background p-2 text-sm" />
+            <span className="text-[10px] text-muted-foreground">{just.length}/255</span>
+          </label>
+        ) : null}
+        {erroR ? <p className="text-xs text-destructive">{erroR}</p> : null}
+        {res ? (
+          res.ok
+            ? <p className="text-xs text-success">✓ Recusa registrada na SEFAZ (cStat {res.cStatEvento}). {res.xMotivoEvento}</p>
+            : <p className="break-words text-xs text-destructive">Falha{res.cStatEvento ? ` (cStat ${res.cStatEvento})` : ""}: {res.erro ?? res.xMotivoEvento}</p>
+        ) : null}
+        <Button size="sm" disabled={enviando} onClick={enviar}>{enviando ? "Enviando…" : "Enviar recusa à SEFAZ"}</Button>
+      </div>
+    </details>
+  );
+}
+
 export default function NotasPage() {
   const { podeAcao } = useAuth();
   const podeSincronizar = podeAcao("integracoes.sincronizar");
   const podeFinanceiro = podeAcao("financeiro.baixar");
+  const podeManifestar = podeAcao("nfe.manifestar");
   const [docs, setDocs] = useState<NfeDocumento[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [syncStates, setSyncStates] = useState<SyncEstado[]>([]);
@@ -48,7 +124,7 @@ export default function NotasPage() {
   const carregar = useCallback(async () => {
     setErro(null);
     try {
-      const [ds, emps, sts] = await Promise.all([listarDocumentos(), listarEmpresas(), listarSyncStates()]);
+      const [ds, emps, sts] = await Promise.all([listarDocumentos(1500), listarEmpresas(), listarSyncStates()]);
       setDocs(ds);
       setEmpresas(emps);
       setSyncStates(sts);
@@ -234,6 +310,8 @@ export default function NotasPage() {
           {varredura && pendentes ? ` (${pendentesVisiveis.length})` : ""}
         </button>
       ) : null}
+
+      {podeManifestar ? <RecusarPorChave empresas={empresas} /> : null}
 
       {erro ? (
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p>

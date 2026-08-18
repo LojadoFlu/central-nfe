@@ -631,16 +631,23 @@ export const nfeManifestar = onCall(
       });
 
       // Atualiza o status de manifestação da nota, se aceito.
+      // IMPORTANTE: só mexe no doc se a nota JÁ existir — nunca cria um doc-fantasma
+      // (recusa por chave de nota que não está na base não deve virar pendência/pagamento).
       if (r.ok) {
-        await db.collection("nfe_documents").doc(chNFe).set(
-          {
-            manifestStatus: DESC_EVENTO[tpEvento],
-            manifestTpEvento: tpEvento,
-            manifestEm: now,
-            updatedAt: now,
-          },
-          { merge: true },
-        );
+        const ref = db.collection("nfe_documents").doc(chNFe);
+        if ((await ref.get()).exists) {
+          const recusa = tpEvento === "210220" || tpEvento === "210240"; // desconhecimento / não realizada
+          await ref.set(
+            {
+              manifestStatus: DESC_EVENTO[tpEvento],
+              manifestTpEvento: tpEvento,
+              manifestEm: now,
+              ...(recusa ? { recusada: true } : {}),
+              updatedAt: now,
+            },
+            { merge: true },
+          );
+        }
       }
 
       await auditar(uid, "sefaz.manifestar", {
@@ -955,6 +962,7 @@ export const nfePagamentosPendentes = onCall(opcoes, async (req) => {
   for (const doc of docs) {
     const nf = doc.data() as Record<string, unknown>;
     if (empresaId && nf.companyId !== empresaId) continue;
+    if (nf.recusada === true) continue; // nota recusada não é conta a pagar
     const ch = nf.chNFe as string | undefined;
     if (ch && comParcela.has(ch)) continue;
     pendentes.push({
