@@ -126,6 +126,7 @@ export default function DespesasPage() {
   const [fRecorrencia, setFRecorrencia] = useState("mensal");
   const [fMesBase, setFMesBase] = useState("1");
   const [fDia, setFDia] = useState("");
+  const [fParcelas, setFParcelas] = useState(""); // vazio = permanente
   const [fBenef, setFBenef] = useState("");
   const [fObs, setFObs] = useState("");
   const [fAtivo, setFAtivo] = useState(true);
@@ -198,6 +199,7 @@ export default function DespesasPage() {
     setFRecorrencia("mensal");
     setFMesBase(String(Number(mesAtualYM().slice(5, 7))));
     setFDia("");
+    setFParcelas("");
     setFBenef("");
     setFObs("");
     setFAtivo(true);
@@ -215,6 +217,7 @@ export default function DespesasPage() {
     setFRecorrencia(d.recorrencia ?? "mensal");
     setFMesBase(String(d.mesBase ?? Number(mesAtualYM().slice(5, 7))));
     setFDia(d.diaVencimento != null ? String(d.diaVencimento) : "");
+    setFParcelas(d.qtdParcelas ? String(d.qtdParcelas) : "");
     setFBenef(d.beneficiario ?? "");
     setFObs(d.observacao ?? "");
     setFAtivo(d.ativo !== false);
@@ -237,6 +240,7 @@ export default function DespesasPage() {
         recorrencia: fRecorrencia as DespesaFixa["recorrencia"],
         mesBase: fRecorrencia === "mensal" ? undefined : Number(fMesBase),
         diaVencimento: fDia ? Number(fDia) : undefined,
+        qtdParcelas: fParcelas ? Number(fParcelas) : null,
         beneficiario: fBenef.trim() || undefined,
         observacao: fObs.trim() || undefined,
         ativo: fAtivo,
@@ -301,6 +305,25 @@ export default function DespesasPage() {
     try {
       await excluirDespesaFixa(d.id);
       setConfirmDel(null);
+      await carregar();
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setOcupado(null);
+    }
+  }
+  // Cancelar/reativar uma despesa fixa (inativar sem apagar o histórico).
+  async function alternarAtivo(d: DespesaFixa) {
+    setOcupado(`at:${d.id}`);
+    setErro(null);
+    try {
+      await salvarDespesaFixa({
+        id: d.id, companyId: d.companyId ?? undefined, nome: d.nome, categoria: d.categoria,
+        valor: d.valor, recorrencia: d.recorrencia, mesBase: d.mesBase ?? undefined,
+        diaVencimento: d.diaVencimento ?? undefined, qtdParcelas: d.qtdParcelas ?? null,
+        beneficiario: d.beneficiario ?? undefined, observacao: d.observacao ?? undefined,
+        ativo: d.ativo === false, // inativa se ativa; reativa se inativa
+      });
       await carregar();
     } catch (e) {
       setErro((e as Error).message);
@@ -481,6 +504,11 @@ export default function DespesasPage() {
                   </select>
                 </div>
               ) : null}
+              <div className="space-y-1.5">
+                <label className="block text-xs text-muted-foreground">Nº de parcelas</label>
+                <Input type="number" min={1} max={600} inputMode="numeric" placeholder="permanente" value={fParcelas} onChange={(e) => setFParcelas(e.target.value)} className="h-10 w-32" />
+                <p className="text-[11px] text-muted-foreground">Vazio = permanente</p>
+              </div>
             </div>
 
             <div className="space-y-1.5">
@@ -559,6 +587,7 @@ export default function DespesasPage() {
                       {d.empresaNome ? <p className="mt-0.5 text-[11px] font-medium text-primary">{d.empresaNome}</p> : null}
                       <p className="mt-0.5 text-xs text-muted-foreground">
                         {d.diaVencimento ? `vence dia ${d.diaVencimento}` : "sem dia definido"}
+                        {d.qtdParcelas ? ` · ${d.qtdParcelas}x${d.fimVigencia ? ` (até ${d.fimVigencia.slice(5, 7)}/${d.fimVigencia.slice(0, 4)})` : ""}` : " · permanente"}
                         {d.beneficiario ? ` · ${d.beneficiario}` : ""}
                       </p>
                     </div>
@@ -642,6 +671,9 @@ export default function DespesasPage() {
                         <>
                           <Button size="sm" variant="ghost" onClick={() => abrirEdicao(d)}>
                             <Pencil className="size-4" /> Editar
+                          </Button>
+                          <Button size="sm" variant="ghost" disabled={ocupado === `at:${d.id}`} onClick={() => alternarAtivo(d)}>
+                            <X className="size-4" /> {ocupado === `at:${d.id}` ? "…" : (inativa ? "Reativar" : "Cancelar (inativar)")}
                           </Button>
                           {confirmDel === d.id ? (
                             <span className="flex items-center gap-2">

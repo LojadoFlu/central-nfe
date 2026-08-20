@@ -1264,7 +1264,34 @@ export const nfeSalvarDespesaFixa = onCall(opcoes, async (req) => {
   const ref = id
     ? db.collection("nfe_fixed_expenses").doc(id)
     : db.collection("nfe_fixed_expenses").doc();
-  const existe = id ? (await ref.get()).exists : false;
+  const snap = id ? await ref.get() : null;
+  const existe = snap?.exists ?? false;
+  const createdAt = existe ? String((snap!.data() as { createdAt?: string }).createdAt ?? now) : now;
+
+  const recorrencia = ["mensal", "bimestral", "trimestral", "semestral", "anual"].includes(String(d.recorrencia))
+    ? String(d.recorrencia) : "mensal";
+  const mesBase = Number.isInteger(Number(d.mesBase)) && Number(d.mesBase) >= 1 && Number(d.mesBase) <= 12
+    ? Number(d.mesBase) : null;
+
+  // Quantidade de parcelas (opcional): vazio/0 = permanente. Calcula o FIM da vigência
+  // (YYYY-MM) respeitando a periodicidade, a partir do mês de criação.
+  const qNum = Math.floor(Number(d.qtdParcelas));
+  const qtdParcelas = Number.isInteger(qNum) && qNum >= 1 && qNum <= 600 ? qNum : null;
+  let fimVigencia: string | null = null;
+  if (qtdParcelas) {
+    const p = PERIODO_REC[recorrencia] ?? 1;
+    let y = Number(createdAt.slice(0, 4));
+    let m = Number(createdAt.slice(5, 7));
+    // primeira incidência >= mês de criação
+    for (let i = 0; i < 36; i++) {
+      if (incideNoMes({ recorrencia, mesBase }, `${y}-${String(m).padStart(2, "0")}`)) break;
+      m++; if (m > 12) { m = 1; y++; }
+    }
+    // fim = primeira incidência + (qtd-1) × período
+    let em = m + (qtdParcelas - 1) * p;
+    y += Math.floor((em - 1) / 12); em = ((em - 1) % 12) + 1;
+    fimVigencia = `${y}-${String(em).padStart(2, "0")}`;
+  }
 
   await ref.set(
     {
@@ -1274,14 +1301,11 @@ export const nfeSalvarDespesaFixa = onCall(opcoes, async (req) => {
       nome,
       categoria: String(d.categoria ?? "outros").trim().slice(0, 40) || "outros",
       valor,
-      recorrencia: ["mensal", "bimestral", "trimestral", "semestral", "anual"].includes(String(d.recorrencia))
-        ? String(d.recorrencia)
-        : "mensal",
-      mesBase:
-        Number.isInteger(Number(d.mesBase)) && Number(d.mesBase) >= 1 && Number(d.mesBase) <= 12
-          ? Number(d.mesBase)
-          : null,
+      recorrencia,
+      mesBase,
       diaVencimento,
+      qtdParcelas,
+      fimVigencia,
       beneficiario: String(d.beneficiario ?? "").trim().slice(0, 120) || null,
       observacao: String(d.observacao ?? "").trim().slice(0, 300) || null,
       ativo: d.ativo === false ? false : true,
@@ -1967,9 +1991,10 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     const x = doc.data();
     if (!daEmpresa(x.companyId) || x.ativo === false) continue;
     const inicio = x.createdAt ? String(x.createdAt).slice(0, 7) : ""; // não retroagir antes da criação
+    const fim = x.fimVigencia ? String(x.fimVigencia) : ""; // qtd de parcelas limitada
     const pagamentos = (x.pagamentos ?? {}) as Record<string, { pago?: boolean; valor?: number }>;
     for (const ym of meses) {
-      if (!incideNoMes(x, ym) || (inicio && ym < inicio)) continue;
+      if (!incideNoMes(x, ym) || (inicio && ym < inicio) || (fim && ym > fim)) continue;
       const pg = pagamentos[ym];
       despesasFixas += pg?.pago ? Number(pg.valor ?? x.valor ?? 0) : Number(x.valor ?? 0);
     }
@@ -2317,8 +2342,9 @@ export const fluxoCaixa = onCall(
       const x = doc.data();
       if (x.ativo === false) continue;
       const inicio = x.createdAt ? String(x.createdAt).slice(0, 7) : ""; // não retroagir antes da criação
+      const fim = x.fimVigencia ? String(x.fimVigencia) : ""; // qtd de parcelas limitada
       for (const ym of mesesRange) {
-        if (!incideNoMes(x, ym) || (inicio && ym < inicio)) continue;
+        if (!incideNoMes(x, ym) || (inicio && ym < inicio) || (fim && ym > fim)) continue;
         const pg = x.pagamentos?.[ym];
         if (pg?.pago) {
           saidaObrig(d10(pg.data) || `${ym}-01`, Number(pg.valor ?? x.valor ?? 0), true, "despesas", x.companyId, pg.contasPagamento);

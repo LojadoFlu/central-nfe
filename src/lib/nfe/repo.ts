@@ -430,6 +430,8 @@ export interface DespesaFixa {
   recorrencia?: Recorrencia;
   mesBase?: number | null; // 1-12, âncora para recorrências não mensais
   diaVencimento?: number | null;
+  qtdParcelas?: number | null; // nº de parcelas (vazio = permanente)
+  fimVigencia?: string | null; // YYYY-MM do último mês (calculado no backend)
   beneficiario?: string | null;
   observacao?: string | null;
   ativo?: boolean;
@@ -460,6 +462,7 @@ export async function salvarDespesaFixa(input: {
   recorrencia?: Recorrencia;
   mesBase?: number;
   diaVencimento?: number;
+  qtdParcelas?: number | null;
   beneficiario?: string;
   observacao?: string;
   ativo?: boolean;

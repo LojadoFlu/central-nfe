@@ -153,9 +153,10 @@ export default function FinanceiroPage() {
     const df: Conta[] = despesas.flatMap((d) => {
       if (d.ativo === false) return [];
       const dia = String(Math.min(Number(d.diaVencimento) || 1, 28)).padStart(2, "0");
-      // Não retroagir antes do mês de criação da despesa.
+      // Não retroagir antes da criação; nem passar do fim da vigência (qtd de parcelas).
       const inicio = d.createdAt ? d.createdAt.slice(0, 7) : "";
-      return meses.filter((ym) => incideNoMes(d, ym) && (!inicio || ym >= inicio)).map((ym) => {
+      const fim = d.fimVigencia ?? "";
+      return meses.filter((ym) => incideNoMes(d, ym) && (!inicio || ym >= inicio) && (!fim || ym <= fim)).map((ym) => {
         const pg = d.pagamentos?.[ym];
         return {
           id: `despesa:${d.id}:${ym}`, origem: "despesa" as const, despesaId: d.id, ym,
