@@ -1966,9 +1966,10 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
   for (const doc of (await db.collection("nfe_fixed_expenses").get()).docs) {
     const x = doc.data();
     if (!daEmpresa(x.companyId) || x.ativo === false) continue;
+    const inicio = x.createdAt ? String(x.createdAt).slice(0, 7) : ""; // não retroagir antes da criação
     const pagamentos = (x.pagamentos ?? {}) as Record<string, { pago?: boolean; valor?: number }>;
     for (const ym of meses) {
-      if (!incideNoMes(x, ym)) continue;
+      if (!incideNoMes(x, ym) || (inicio && ym < inicio)) continue;
       const pg = pagamentos[ym];
       despesasFixas += pg?.pago ? Number(pg.valor ?? x.valor ?? 0) : Number(x.valor ?? 0);
     }
@@ -2315,8 +2316,9 @@ export const fluxoCaixa = onCall(
     for (const doc of despSnap.docs) {
       const x = doc.data();
       if (x.ativo === false) continue;
+      const inicio = x.createdAt ? String(x.createdAt).slice(0, 7) : ""; // não retroagir antes da criação
       for (const ym of mesesRange) {
-        if (!incideNoMes(x, ym)) continue;
+        if (!incideNoMes(x, ym) || (inicio && ym < inicio)) continue;
         const pg = x.pagamentos?.[ym];
         if (pg?.pago) {
           saidaObrig(d10(pg.data) || `${ym}-01`, Number(pg.valor ?? x.valor ?? 0), true, "despesas", x.companyId, pg.contasPagamento);
