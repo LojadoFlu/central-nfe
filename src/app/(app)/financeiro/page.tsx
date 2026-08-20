@@ -501,6 +501,9 @@ export default function FinanceiroPage() {
                       {p.origem === "acordo" ? "Acordo · parcela" : p.origem === "despesa" ? "Despesa fixa" : "Parcela"}
                       {p.origem === "despesa" ? "" : ` ${p.nDup ?? "1"}`} · venc. {formatarData(p.vencimento)}
                     </p>
+                    {p.companyId ? (
+                      <p className="mt-0.5 truncate text-xs font-medium text-muted-foreground">{nomeConta(p.companyId)}</p>
+                    ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
                     {p.origem === "acordo" ? <Badge variant="neutral">Acordo</Badge> : null}
