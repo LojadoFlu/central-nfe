@@ -65,6 +65,12 @@ function palpitar(headers: string[], campo: Campo): number {
   }
   return -1;
 }
+/** Índice de coluna → letra do Excel: 0→A, 25→Z, 26→AA. */
+function colLetra(i: number): string {
+  let s = "", n = i;
+  do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
+  return s;
+}
 function chaveFornecedor(cnpj: string, nome: string): string {
   const c = cnpj.replace(/\D/g, "");
   return c || normalizar(nome).replace(/\s+/g, "-").slice(0, 60) || "sem-fornecedor";
@@ -243,7 +249,7 @@ export default function PedidosPage() {
                         className="h-9 w-40 rounded-md border border-input bg-background px-2 text-sm"
                       >
                         <option value={-1}>—</option>
-                        {headers.map((h, i) => <option key={i} value={i}>{h || `Coluna ${i + 1}`}</option>)}
+                        {headers.map((h, i) => <option key={i} value={i}>{colLetra(i)}{h ? ` · ${h}` : ""}</option>)}
                       </select>
                     </label>
                   ))}
