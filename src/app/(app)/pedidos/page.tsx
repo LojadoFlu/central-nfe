@@ -82,6 +82,17 @@ function palpitarLivre(headers: string[], campo: Campo | "loja", usados: Set<num
   }
   return -1;
 }
+/** Resolve a coluna salva no mapa do fornecedor. Formato novo = índice ("2"); formato antigo
+ * = nome do cabeçalho — só aceito se for NÃO-VAZIO e ÚNICO (cabeçalhos vazios/duplicados,
+ * comuns em planilhas de grade, davam match na coluna errada). */
+function resolverCol(raw: string | undefined, hs: string[]): number {
+  if (raw == null) return -1;
+  if (/^\d+$/.test(raw)) { const n = Number(raw); return n >= 0 && n < hs.length ? n : -1; }
+  const alvo = raw.trim();
+  if (!alvo) return -1;
+  const i = hs.indexOf(alvo);
+  return i >= 0 && i === hs.lastIndexOf(alvo) ? i : -1; // ignora se ambíguo (duplicado)
+}
 function colLetra(i: number): string {
   let s = "", n = i;
   do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
@@ -191,8 +202,8 @@ export default function PedidosPage() {
     const usados = new Set<number>();
     const ordem: Campo[] = ["codigo", "valorTotal", "valorUnit", "qtd", "tamanho", "cor", "nome"];
     for (const c of ordem) {
-      let idx = salvoMap[c] ? hs.indexOf(salvoMap[c]) : -1;
-      if (idx < 0) idx = palpitarLivre(hs, c, usados);
+      let idx = resolverCol(salvoMap[c], hs);
+      if (idx < 0 || usados.has(idx)) idx = palpitarLivre(hs, c, usados);
       novo[c] = idx;
       if (idx >= 0) usados.add(idx);
     }
@@ -335,6 +346,18 @@ export default function PedidosPage() {
   const semEmpresa = grupos.filter((g) => !g.empresaId);
   const totalGeral = grupos.reduce((s, g) => s + g.total, 0);
 
+  // Ignora o mapa salvo do fornecedor e re-detecta tudo do zero a partir do arquivo.
+  function redefinirMapeamento() {
+    if (!abasRaw.length) return;
+    setSalvoMap({});
+    const cab = acharCab(abasRaw[0].rows);
+    const det = acharLinhaTam(abasRaw[0].rows, cab);
+    setLinhaCab(cab);
+    setFormato(det.count >= 4 ? "horizontal" : "vertical");
+    setLinhaTam(det.linha);
+    setTamOff([]);
+  }
+
   function limparNovo() {
     setAberto(false); setFornecedor(""); setCnpjForn(""); setData(hojeISO()); setDataEntrega("");
     setAbasRaw([]); setLinhaCab(0); setSalvoMap({}); setMap({ ...MAP_VAZIO }); setModoLoja("unica"); setColLoja(-1); setLojaEmp({});
@@ -351,7 +374,7 @@ export default function PedidosPage() {
     setErro(null);
     try {
       const mapNomes: Record<string, string> = { _linhaCab: String(linhaCab), _formato: formato, _linhaTam: String(linhaTam) };
-      for (const c of CAMPOS) if (map[c.key] >= 0) mapNomes[c.key] = abas[0].headers[map[c.key]] ?? "";
+      for (const c of CAMPOS) if (map[c.key] >= 0) mapNomes[c.key] = String(map[c.key]); // índice da coluna (robusto p/ cabeçalhos vazios/duplicados)
       await salvarMapaFornecedor(chaveFornecedor(cnpjForn, fornecedor), fornecedor.trim(), mapNomes).catch(() => {});
       let ultimoId = "";
       for (const g of grupos) {
@@ -477,7 +500,10 @@ export default function PedidosPage() {
 
                 {/* Mapeamento das colunas do produto */}
                 <div className="rounded-md border border-border p-3">
-                  <p className="mb-2 text-xs font-medium text-muted-foreground">Aponte cada coluna da planilha:</p>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <p className="text-xs font-medium text-muted-foreground">Aponte cada coluna da planilha:</p>
+                    <button onClick={redefinirMapeamento} className="text-[11px] font-medium text-primary hover:underline">Redefinir (ignorar memória)</button>
+                  </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {CAMPOS.filter((c) => formato !== "horizontal" || ["codigo", "nome", "cor", "valorUnit"].includes(c.key)).map((c) => (
                       <label key={c.key} className="flex items-center justify-between gap-2 text-sm">
