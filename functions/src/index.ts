@@ -3145,71 +3145,76 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
       });
     }
   }
-  // Item do pedido normalizado + acumuladores da NF que casarem com ele.
-  const peds = itensPed.map((it) => ({
-    it,
-    pc: normCod(it.codigo),                 // código só alfanumérico ("12345")
-    pt: norm(it.tamanho ?? "").trim(),       // tamanho normalizado ("m")
-    palavras: norm(it.nome ?? "").split(/\s+/).filter((w) => w.length >= 3),
-    qtdNf: 0, valorNf: 0, unitSoma: 0, unitN: 0,
-  }));
+  // Uma NF pode atender VÁRIOS pedidos. Junto todos os pedidos que compartilham
+  // alguma dessas NFs e aloco as quantidades da NF entre eles (o mais antigo puxa
+  // primeiro), pra não contar a NF inteira em cada pedido.
+  const copedMap = new Map<string, { id: string; itens: Array<Record<string, unknown>>; createdAt: string }>();
+  copedMap.set(id, { id, itens: itensPed, createdAt: String((snap.data() as { createdAt?: string }).createdAt ?? "") });
+  for (const ch of chaves) {
+    const q = await db.collection("purchase_orders").where("nfs", "array-contains", ch).get();
+    for (const doc of q.docs) {
+      if (copedMap.has(doc.id)) continue;
+      const dd = doc.data() as { itens?: Array<Record<string, unknown>>; createdAt?: string };
+      copedMap.set(doc.id, { id: doc.id, itens: dd.itens ?? [], createdAt: String(dd.createdAt ?? "") });
+    }
+  }
+  const copeds = [...copedMap.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const compartilhada = copeds.length > 1;
 
-  // Pontua o quão bem um item da NF casa com um item do pedido, combinando código,
-  // código+tamanho concatenado (caso Puma), prefixo, contido, e semelhança de NOME.
-  const pontuar = (p: typeof peds[number], n: typeof nfItens[number]): number => {
+  // Demanda de todos os pedidos (na ordem de criação) contra a piscina de itens da NF.
+  interface Dem { cpId: string; it: Record<string, unknown>; pc: string; pt: string; palavras: string[]; got: number; valorNf: number }
+  const demanda: Dem[] = [];
+  for (const cp of copeds) for (const it of cp.itens) {
+    demanda.push({ cpId: cp.id, it, pc: normCod(it.codigo), pt: norm(it.tamanho ?? "").trim(), palavras: norm(it.nome ?? "").split(/\s+/).filter((w) => w.length >= 3), got: 0, valorNf: 0 });
+  }
+
+  // Pontua o quão bem um item da NF casa com um item do pedido (código, código+tamanho
+  // concatenado, prefixo, contido, e semelhança de NOME).
+  const pontuar = (p: { pc: string; pt: string; palavras: string[] }, n: { cNorm: string; descNorm: string }): number => {
     let s = 0;
-    const pct = p.pc + p.pt; // "12345" + "m" = "12345m"
-    if (p.pc && n.cNorm === p.pc) s += 100;                                   // código exato
-    else if (pct && n.cNorm === pct) s += 100;                                // código+tamanho concatenado == cProd
-    else if (p.pc && p.pt && n.cNorm.startsWith(p.pc) && n.cNorm.slice(p.pc.length).includes(p.pt)) s += 90; // prefixo código + tamanho no resto
-    else if (p.pc.length >= 3 && n.cNorm.includes(p.pc)) s += 60;             // cProd contém o código
-    else if (n.cNorm.length >= 3 && p.pc.includes(n.cNorm)) s += 55;          // código contém o cProd
-    // NOME: fração de palavras do pedido presentes na descrição da NF (até 60 —
-    // um match perfeito de nome, sozinho, já liga quando o código não bate).
+    const pct = p.pc + p.pt;
+    if (p.pc && n.cNorm === p.pc) s += 100;
+    else if (pct && n.cNorm === pct) s += 100;
+    else if (p.pc && p.pt && n.cNorm.startsWith(p.pc) && n.cNorm.slice(p.pc.length).includes(p.pt)) s += 90;
+    else if (p.pc.length >= 3 && n.cNorm.includes(p.pc)) s += 60;
+    else if (n.cNorm.length >= 3 && p.pc.includes(n.cNorm)) s += 55;
     if (p.palavras.length) {
       const hits = p.palavras.filter((w) => n.descNorm.includes(w)).length;
       s += Math.round((hits / p.palavras.length) * 60);
     }
-    // tamanho como token na descrição — desempata a grade
     if (p.pt && tokenPresente(n.descNorm, p.pt)) s += 15;
     return s;
   };
 
-  const acumula = (i: number, n: typeof nfItens[number]) => {
-    const p = peds[i]; p.qtdNf += n.qtd; p.valorNf += n.valor; if (n.unit > 0) { p.unitSoma += n.unit; p.unitN++; } n.usado = true;
-  };
-  const LIMIAR = 55; // pontuação mínima para considerar casado
-  for (const n of nfItens) {
-    // 1) de-para manual (prioridade máxima)
-    const dp = dePara[n.cNorm];
-    if (dp) {
-      const idx = peds.findIndex((p) => normCod(dp.codigo) === p.pc && norm(dp.tamanho ?? "").trim() === p.pt);
-      if (idx >= 0) { acumula(idx, n); continue; }
+  const pool = nfItens.map((n) => ({ ...n, saldo: n.qtd }));
+  const LIMIAR = 55;
+  for (const dm of demanda) {
+    let need = Number(dm.it.qtd ?? 0) || 0;
+    if (need <= 0) continue;
+    const cands = pool.map((n) => {
+      const dp = dePara[n.cNorm];
+      const forcado = !!dp && normCod(dp.codigo) === dm.pc && norm(dp.tamanho ?? "").trim() === dm.pt;
+      return { n, sc: forcado ? 999 : pontuar(dm, n) };
+    }).filter((x) => x.n.saldo > 0.0001 && x.sc >= LIMIAR).sort((a, b) => b.sc - a.sc);
+    for (const { n } of cands) {
+      if (need <= 0.0001) break;
+      const take = Math.min(need, n.saldo);
+      if (take <= 0) continue;
+      dm.got += take; dm.valorNf += take * n.unit; n.saldo -= take; need -= take;
     }
-    // 2) casamento automático por pontuação
-    let melhor = -1, melhorS = 0;
-    for (let i = 0; i < peds.length; i++) {
-      const sc = pontuar(peds[i], n);
-      if (sc > melhorS) { melhorS = sc; melhor = i; }
-    }
-    if (melhor >= 0 && melhorS >= LIMIAR) acumula(melhor, n);
   }
 
-  const linhas = peds.map((p) => {
-    const it = p.it;
+  const linhas = demanda.filter((dm) => dm.cpId === id).map((dm) => {
+    const it = dm.it;
     const qtdPed = Number(it.qtd ?? 0) || 0;
-    const qtdNf = p.qtdNf;
+    const qtdNf = Math.round(dm.got * 1000) / 1000;
     const dif = Math.round((qtdNf - qtdPed) * 1000) / 1000;
-    // pedido 0 + NF > 0 = excesso; NF 0 = não entregue; senão parcial/sobra/ok.
     const status = (qtdPed === 0 && qtdNf > 0) ? "excesso"
       : qtdNf === 0 ? "nao_entregue" : dif < -0.001 ? "parcial" : dif > 0.001 ? "sobra" : "ok";
     const vtPed = Number(it.valorTotal ?? 0) || 0;
-    // Unitário do pedido = total ÷ qtd (mais confiável que a coluna de unitário,
-    // que em alguns fornecedores vem errada); só cai no valorUnit se não houver total.
     const vuPed = (vtPed > 0 && qtdPed > 0) ? Math.round((vtPed / qtdPed) * 100) / 100 : (Number(it.valorUnit ?? 0) || 0);
-    const vuNf = p.unitN ? Math.round((p.unitSoma / p.unitN) * 100) / 100 : 0;
-    const vtNf = Math.round(p.valorNf * 100) / 100;
-    // Divergência de valor, quando há valor dos dois lados (a NF entregou algo).
+    const vuNf = dm.got > 0 ? Math.round((dm.valorNf / dm.got) * 100) / 100 : 0; // unit médio ponderado
+    const vtNf = Math.round(dm.valorNf * 100) / 100;
     const unitDiverge = vuPed > 0 && qtdNf > 0 && Math.abs(vuNf - vuPed) > 0.01;
     const totalDiverge = vtPed > 0 && qtdNf > 0 && Math.abs(vtNf - vtPed) > 0.01;
     return {
@@ -3218,23 +3223,30 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
       qtdNf, valorUnitNf: vuNf, valorTotalNf: vtNf,
       dif, status, unitDiverge, totalDiverge,
     };
-  }).filter((l) => !(l.qtdPedido === 0 && l.qtdNf === 0)); // esconde linhas zeradas dos dois lados
-  // Itens que vieram na NF e NÃO casaram com o pedido (extras / a mais) — agrega por código.
-  const extrasMap = new Map<string, { nome: string; qtd: number; valor: number; unitSoma: number; unitN: number }>();
-  for (const n of nfItens) {
-    if (n.usado) continue;
-    const g = extrasMap.get(n.cProd) ?? { nome: n.nome, qtd: 0, valor: 0, unitSoma: 0, unitN: 0 };
-    g.qtd += n.qtd; g.valor += n.valor; if (n.unit > 0) { g.unitSoma += n.unit; g.unitN++; }
+  }).filter((l) => !(l.qtdPedido === 0 && l.qtdNf === 0));
+
+  // Extras: saldo da NF não alocado a NENHUM pedido — agrega por código.
+  const extrasMap = new Map<string, { nome: string; qtd: number; valor: number; unit: number }>();
+  for (const n of pool) {
+    if (n.saldo <= 0.0001) continue;
+    const g = extrasMap.get(n.cProd) ?? { nome: n.nome, qtd: 0, valor: 0, unit: n.unit };
+    g.qtd += n.saldo; g.valor += n.saldo * n.unit;
     extrasMap.set(n.cProd, g);
   }
   const extras = [...extrasMap.entries()].map(([cod, g]) => ({
-    codigo: cod, nome: g.nome, qtdNf: g.qtd, valorTotalNf: Math.round(g.valor * 100) / 100,
-    valorUnitNf: g.unitN ? Math.round((g.unitSoma / g.unitN) * 100) / 100 : 0,
+    codigo: cod, nome: g.nome, qtdNf: Math.round(g.qtd * 1000) / 1000, valorTotalNf: Math.round(g.valor * 100) / 100,
+    valorUnitNf: Math.round(g.unit * 100) / 100,
   }));
   const totalPedido = (pedido.itens ?? []).reduce((s, it) => s + (Number(it.valorTotal ?? 0) || 0), 0);
   const totalQtdPedido = itensPed.reduce((s, it) => s + (Number(it.qtd ?? 0) || 0), 0);
-  const totalQtdNf = nfItens.reduce((s, n) => s + n.qtd, 0);
-  const totalNfR = Math.round(nfValorTotal * 100) / 100;
+  // NF do pedido = o que foi alocado a ele (+ extras quando a NF não é compartilhada).
+  const gotP = demanda.filter((dm) => dm.cpId === id);
+  const totalQtdAlloc = gotP.reduce((s, dm) => s + dm.got, 0);
+  const totalNfAlloc = gotP.reduce((s, dm) => s + dm.valorNf, 0);
+  const extrasQtd = extras.reduce((s, e) => s + e.qtdNf, 0);
+  const extrasValor = extras.reduce((s, e) => s + e.valorTotalNf, 0);
+  const totalQtdNf = Math.round((totalQtdAlloc + (compartilhada ? 0 : extrasQtd)) * 1000) / 1000;
+  const totalNfR = Math.round((totalNfAlloc + (compartilhada ? 0 : extrasValor)) * 100) / 100;
   const totalPedR = Math.round(totalPedido * 100) / 100;
   const resumo = {
     itensPedido: linhas.length,
@@ -3252,6 +3264,7 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     totalNf: totalNfR,
     difValor: Math.round((totalNfR - totalPedR) * 100) / 100,
     atendidoIntegral: linhas.length > 0 && linhas.every((l) => l.status === "ok" || l.status === "sobra" || l.status === "excesso"),
+    pedidosCompartilhados: compartilhada ? copeds.length : 0, // >0 = a(s) NF(s) atende(m) outros pedidos
   };
   // Comparação de prazo: data prevista de entrega × data da NF (mais recente).
   // Até 7 dias de diferença = no prazo; antes = adiantado; depois = atrasado.

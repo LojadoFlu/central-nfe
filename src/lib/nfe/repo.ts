@@ -1462,6 +1462,7 @@ export interface ConcilPedido {
     itensPedido: number; ok: number; parcial: number; sobra: number; excesso: number; naoEntregue: number; valorDivergente: number; extras: number;
     totalQtdPedido: number; totalQtdNf: number; difQtd: number;
     totalPedido: number; totalNf: number; difValor: number; atendidoIntegral: boolean;
+    pedidosCompartilhados?: number;
   };
   nfs: string[];
   chaveFornecedor: string;

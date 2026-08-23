@@ -195,6 +195,12 @@ export default function PedidoDetalhePage() {
                   {" "}({concil.entrega.difDias > 0 ? "+" : ""}{concil.entrega.difDias} dias)
                 </p>
               ) : null}
+              {(concil.resumo.pedidosCompartilhados ?? 0) > 1 ? (
+                <p className="mt-1 rounded-md bg-warning/10 px-2 py-1 text-[11px] text-warning">
+                  NF compartilhada com {(concil.resumo.pedidosCompartilhados ?? 0) - 1} outro(s) pedido(s): as quantidades foram
+                  rateadas entre eles (o pedido mais antigo é atendido primeiro).
+                </p>
+              ) : null}
               {/* Totais pedido → NF + diferença (unidades e valor) */}
               <div className="mt-2 grid grid-cols-2 gap-2 text-center">
                 <div className="rounded-md border border-border p-2">
