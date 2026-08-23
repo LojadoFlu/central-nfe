@@ -3054,6 +3054,7 @@ export const salvarPedidoCompra = onCall({ ...opcoes, memory: "512MiB" }, async 
       codigo: String(it.codigo ?? "").trim().slice(0, 60),
       nome: String(it.nome ?? "").trim().slice(0, 200),
       cor: String(it.cor ?? "").trim().slice(0, 60) || null,
+      tamanho: String(it.tamanho ?? "").trim().slice(0, 40) || null,
       qtd, valorUnit: Math.round(valorUnit * 100) / 100, valorTotal: Math.round(valorTotal * 100) / 100,
     };
   }).filter((it) => it.codigo || it.nome);
@@ -3138,7 +3139,7 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     const dif = Math.round((qtdNf - qtdPed) * 1000) / 1000;
     const status = qtdNf === 0 ? "nao_entregue" : dif < -0.001 ? "parcial" : dif > 0.001 ? "sobra" : "ok";
     return {
-      codigo: cod, nome: String(it.nome ?? ""), cor: (it.cor as string) ?? null,
+      codigo: cod, nome: String(it.nome ?? ""), cor: (it.cor as string) ?? null, tamanho: (it.tamanho as string) ?? null,
       qtdPedido: qtdPed, valorUnitPedido: Number(it.valorUnit ?? 0) || 0, valorTotalPedido: Number(it.valorTotal ?? 0) || 0,
       qtdNf, valorUnitNf: nf && nf.unitN ? Math.round((nf.unitSoma / nf.unitN) * 100) / 100 : 0, valorTotalNf: Math.round((nf?.valor ?? 0) * 100) / 100,
       dif, status,

@@ -23,15 +23,17 @@ import { useAuth } from "@/lib/auth/auth-provider";
 import { formatBRL, formatarData, normalizar } from "@/lib/utils";
 import { ShoppingCart, Upload, Plus, X } from "lucide-react";
 
-type Campo = "codigo" | "nome" | "cor" | "qtd" | "valorUnit" | "valorTotal";
+type Campo = "codigo" | "nome" | "cor" | "tamanho" | "qtd" | "valorUnit" | "valorTotal";
 const CAMPOS: { key: Campo; label: string; req: boolean }[] = [
   { key: "codigo", label: "Código do produto", req: true },
   { key: "nome", label: "Nome / descrição", req: true },
   { key: "cor", label: "Cor (se houver)", req: false },
+  { key: "tamanho", label: "Tamanho (se houver)", req: false },
   { key: "qtd", label: "Quantidade", req: true },
   { key: "valorUnit", label: "Valor unitário", req: true },
   { key: "valorTotal", label: "Valor total (opcional)", req: false },
 ];
+const MAP_VAZIO: Record<Campo, number> = { codigo: -1, nome: -1, cor: -1, tamanho: -1, qtd: -1, valorUnit: -1, valorTotal: -1 };
 
 function hojeISO(): string {
   const d = new Date();
@@ -54,6 +56,7 @@ function palpitar(headers: string[], campo: Campo): number {
     codigo: ["codigo", "cod", "ref", "sku", "item"],
     nome: ["nome", "descri", "produto", "material"],
     cor: ["cor", "color"],
+    tamanho: ["tamanho", "tam", "size", "grade", "numer"],
     qtd: ["qtd", "quant", "qty", "pecas", "pares"],
     valorUnit: ["unit", "unitario", "preco", "vlrun", "valorun"],
     valorTotal: ["total", "vlrtot", "valortot", "subtotal"],
@@ -91,7 +94,7 @@ export default function PedidosPage() {
   const [data, setData] = useState(hojeISO());
   const [headers, setHeaders] = useState<string[]>([]);
   const [linhas, setLinhas] = useState<unknown[][]>([]);
-  const [map, setMap] = useState<Record<Campo, number>>({ codigo: -1, nome: -1, cor: -1, qtd: -1, valorUnit: -1, valorTotal: -1 });
+  const [map, setMap] = useState<Record<Campo, number>>(MAP_VAZIO);
   const [salvando, setSalvando] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -128,7 +131,7 @@ export default function PedidosPage() {
       setLinhas(dt);
       // aplica mapa salvo do fornecedor, senão palpita
       const salvo = await obterMapaFornecedor(chaveFornecedor(cnpjForn, fornecedor)).catch(() => null);
-      const novo: Record<Campo, number> = { codigo: -1, nome: -1, cor: -1, qtd: -1, valorUnit: -1, valorTotal: -1 };
+      const novo: Record<Campo, number> = { ...MAP_VAZIO };
       for (const c of CAMPOS) {
         const salvoIdx = salvo?.map?.[c.key] != null ? hs.indexOf(salvo.map[c.key]) : -1;
         novo[c.key] = salvoIdx >= 0 ? salvoIdx : palpitar(hs, c.key);
@@ -146,7 +149,7 @@ export default function PedidosPage() {
       const qtd = parseNum(g("qtd"));
       const valorUnit = parseNum(g("valorUnit"));
       const valorTotal = map.valorTotal >= 0 ? parseNum(g("valorTotal")) : Math.round(qtd * valorUnit * 100) / 100;
-      return { codigo: String(g("codigo") ?? "").trim(), nome: String(g("nome") ?? "").trim(), cor: String(g("cor") ?? "").trim(), qtd, valorUnit, valorTotal };
+      return { codigo: String(g("codigo") ?? "").trim(), nome: String(g("nome") ?? "").trim(), cor: String(g("cor") ?? "").trim(), tamanho: String(g("tamanho") ?? "").trim(), qtd, valorUnit, valorTotal };
     }).filter((it) => it.codigo || it.nome);
   }, [linhas, map]);
 
@@ -157,7 +160,7 @@ export default function PedidosPage() {
     setAberto(false);
     setFornecedor(""); setCnpjForn(""); setData(hojeISO());
     setHeaders([]); setLinhas([]);
-    setMap({ codigo: -1, nome: -1, cor: -1, qtd: -1, valorUnit: -1, valorTotal: -1 });
+    setMap(MAP_VAZIO);
   }
 
   async function salvar() {
@@ -174,7 +177,7 @@ export default function PedidosPage() {
       await salvarMapaFornecedor(chaveFornecedor(cnpjForn, fornecedor), fornecedor.trim(), mapNomes).catch(() => {});
       const r = await salvarPedido({
         empresaId, fornecedorNome: fornecedor.trim(), cnpjFornecedor: cnpjForn.replace(/\D/g, "") || undefined, data,
-        itens: previa.map((it) => ({ codigo: it.codigo, nome: it.nome, cor: it.cor || undefined, qtd: it.qtd, valorUnit: it.valorUnit, valorTotal: it.valorTotal })),
+        itens: previa.map((it) => ({ codigo: it.codigo, nome: it.nome, cor: it.cor || undefined, tamanho: it.tamanho || undefined, qtd: it.qtd, valorUnit: it.valorUnit, valorTotal: it.valorTotal })),
       });
       limparNovo();
       await carregar();
@@ -268,12 +271,12 @@ export default function PedidosPage() {
                 <div className="max-h-64 overflow-auto">
                   <table className="w-full text-xs">
                     <thead className="sticky top-0 bg-muted/60 text-muted-foreground">
-                      <tr><th className="p-1.5 text-left">Código</th><th className="p-1.5 text-left">Nome</th><th className="p-1.5 text-left">Cor</th><th className="p-1.5 text-right">Qtd</th><th className="p-1.5 text-right">Unit</th><th className="p-1.5 text-right">Total</th></tr>
+                      <tr><th className="p-1.5 text-left">Código</th><th className="p-1.5 text-left">Nome</th><th className="p-1.5 text-left">Cor</th><th className="p-1.5 text-left">Tam.</th><th className="p-1.5 text-right">Qtd</th><th className="p-1.5 text-right">Unit</th><th className="p-1.5 text-right">Total</th></tr>
                     </thead>
                     <tbody>
                       {previa.slice(0, 100).map((it, i) => (
                         <tr key={i} className="border-t border-border">
-                          <td className="p-1.5 font-mono">{it.codigo}</td><td className="p-1.5">{it.nome}</td><td className="p-1.5">{it.cor}</td>
+                          <td className="p-1.5 font-mono">{it.codigo}</td><td className="p-1.5">{it.nome}</td><td className="p-1.5">{it.cor}</td><td className="p-1.5">{it.tamanho}</td>
                           <td className="p-1.5 text-right tnum">{it.qtd}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorUnit)}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorTotal)}</td>
                         </tr>
                       ))}

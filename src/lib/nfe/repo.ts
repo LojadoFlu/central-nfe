@@ -1387,6 +1387,7 @@ export interface ItemPedido {
   codigo: string;
   nome: string;
   cor?: string | null;
+  tamanho?: string | null;
   qtd: number;
   valorUnit: number;
   valorTotal: number;
@@ -1422,7 +1423,7 @@ export async function obterPedido(id: string): Promise<PedidoCompra | null> {
 /** Cria/atualiza um pedido de compra. */
 export async function salvarPedido(input: {
   id?: string; empresaId: string; fornecedorNome: string; cnpjFornecedor?: string; data: string;
-  itens: Array<{ codigo: string; nome: string; cor?: string; qtd: number; valorUnit: number; valorTotal?: number }>;
+  itens: Array<{ codigo: string; nome: string; cor?: string; tamanho?: string; qtd: number; valorUnit: number; valorTotal?: number }>;
 }): Promise<{ ok: boolean; id: string }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "salvarPedidoCompra");
@@ -1445,7 +1446,7 @@ export async function associarNf(pedidoId: string, chNFe: string, add: boolean):
 }
 
 export interface LinhaConcilPedido {
-  codigo: string; nome: string; cor?: string | null;
+  codigo: string; nome: string; cor?: string | null; tamanho?: string | null;
   qtdPedido: number; valorUnitPedido: number; valorTotalPedido: number;
   qtdNf: number; valorUnitNf: number; valorTotalNf: number;
   dif: number; status: "ok" | "parcial" | "sobra" | "nao_entregue";

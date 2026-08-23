@@ -185,7 +185,7 @@ export default function PedidoDetalhePage() {
                   <tbody>
                     {concil.linhas.map((l, i) => (
                       <tr key={i} className="border-t border-border">
-                        <td className="p-1.5"><span className="font-mono">{l.codigo}</span> <span className="text-muted-foreground">{l.nome}{l.cor ? ` · ${l.cor}` : ""}</span></td>
+                        <td className="p-1.5"><span className="font-mono">{l.codigo}</span> <span className="text-muted-foreground">{l.nome}{l.cor ? ` · ${l.cor}` : ""}{l.tamanho ? ` · ${l.tamanho}` : ""}</span></td>
                         <td className="p-1.5 text-right tnum">{l.qtdPedido}</td>
                         <td className="p-1.5 text-right tnum">{l.qtdNf}</td>
                         <td className={`p-1.5 text-right tnum ${l.dif < 0 ? "text-destructive" : l.dif > 0 ? "text-warning" : ""}`}>{l.dif > 0 ? "+" : ""}{l.dif}</td>
@@ -230,11 +230,11 @@ export default function PedidoDetalhePage() {
           <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">Itens do pedido</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="text-muted-foreground"><tr><th className="p-1.5 text-left">Código</th><th className="p-1.5 text-left">Nome</th><th className="p-1.5 text-left">Cor</th><th className="p-1.5 text-right">Qtd</th><th className="p-1.5 text-right">Unit</th><th className="p-1.5 text-right">Total</th></tr></thead>
+              <thead className="text-muted-foreground"><tr><th className="p-1.5 text-left">Código</th><th className="p-1.5 text-left">Nome</th><th className="p-1.5 text-left">Cor</th><th className="p-1.5 text-left">Tam.</th><th className="p-1.5 text-right">Qtd</th><th className="p-1.5 text-right">Unit</th><th className="p-1.5 text-right">Total</th></tr></thead>
               <tbody>
                 {(pedido.itens ?? []).map((it, i) => (
                   <tr key={i} className="border-t border-border">
-                    <td className="p-1.5 font-mono">{it.codigo}</td><td className="p-1.5">{it.nome}</td><td className="p-1.5">{it.cor}</td>
+                    <td className="p-1.5 font-mono">{it.codigo}</td><td className="p-1.5">{it.nome}</td><td className="p-1.5">{it.cor}</td><td className="p-1.5">{it.tamanho}</td>
                     <td className="p-1.5 text-right tnum">{it.qtd}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorUnit)}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorTotal)}</td>
                   </tr>
                 ))}
