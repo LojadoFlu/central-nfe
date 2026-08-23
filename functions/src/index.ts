@@ -3110,43 +3110,68 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
   if (!snap.exists) throw new HttpsError("not-found", "Pedido não encontrado.");
   const pedido = snap.data() as { itens?: Array<Record<string, unknown>>; nfs?: string[] };
   const chaves = Array.isArray(pedido.nfs) ? pedido.nfs : [];
+  const itensPed = pedido.itens ?? [];
 
-  // Agrega itens das NFs por código (cProd).
-  const nfPorCodigo = new Map<string, { qtd: number; valor: number; nome: string; unitSoma: number; unitN: number }>();
+  const norm = (s: unknown) => String(s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  // Tamanho aparece como TOKEN isolado na descrição (evita "M" casar dentro de "HOME").
+  const tokenPresente = (descNorm: string, tam: string) => {
+    const t = norm(tam).trim();
+    if (!t) return false;
+    const esc = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`(^|[^a-z0-9])${esc}([^a-z0-9]|$)`).test(descNorm);
+  };
+
+  // Todos os itens das NFs associadas (para casar 1 a 1, marcando os usados).
+  const nfItens: Array<{ cProd: string; descNorm: string; nome: string; qtd: number; valor: number; unit: number; usado: boolean }> = [];
   let nfValorTotal = 0;
   for (const ch of chaves) {
     const its = await db.collection("nfe_items").where("chNFe", "==", ch).get();
     for (const doc of its.docs) {
       const it = doc.data();
-      const cod = String(it.cProd ?? "").trim();
-      const q = Number(it.quantidade ?? 0) || 0;
       const v = Number(it.valorTotal ?? 0) || 0;
-      const u = Number(it.valorUnitario ?? 0) || 0;
       nfValorTotal += v;
-      const g = nfPorCodigo.get(cod) ?? { qtd: 0, valor: 0, nome: String(it.descricao ?? ""), unitSoma: 0, unitN: 0 };
-      g.qtd += q; g.valor += v; if (u > 0) { g.unitSoma += u; g.unitN++; }
-      nfPorCodigo.set(cod, g);
+      nfItens.push({
+        cProd: String(it.cProd ?? "").trim(), descNorm: norm(it.descricaoBusca ?? it.descricao),
+        nome: String(it.descricao ?? ""), qtd: Number(it.quantidade ?? 0) || 0, valor: v, unit: Number(it.valorUnitario ?? 0) || 0, usado: false,
+      });
     }
   }
-
-  const usados = new Set<string>();
-  const linhas = (pedido.itens ?? []).map((it) => {
+  // Um código é "compartilhado" quando aparece em >1 item do pedido com tamanhos diferentes.
+  const tamsPorCodigo = new Map<string, Set<string>>();
+  for (const it of itensPed) {
     const cod = String(it.codigo ?? "").trim();
-    const nf = cod ? nfPorCodigo.get(cod) : undefined;
-    if (nf) usados.add(cod);
+    const set = tamsPorCodigo.get(cod) ?? new Set<string>();
+    set.add(String(it.tamanho ?? "").trim());
+    tamsPorCodigo.set(cod, set);
+  }
+  const compartilhado = (cod: string) => (tamsPorCodigo.get(cod)?.size ?? 0) > 1;
+
+  const linhas = itensPed.map((it) => {
+    const cod = String(it.codigo ?? "").trim();
+    const tam = String(it.tamanho ?? "").trim();
+    // Casa por código; se o código é compartilhado entre tamanhos, exige o tamanho na descrição.
+    const cand = nfItens.filter((n) => !n.usado && n.cProd === cod && (!compartilhado(cod) || !tam || tokenPresente(n.descNorm, tam)));
+    let qtdNf = 0, valorNf = 0, unitSoma = 0, unitN = 0;
+    for (const n of cand) { n.usado = true; qtdNf += n.qtd; valorNf += n.valor; if (n.unit > 0) { unitSoma += n.unit; unitN++; } }
     const qtdPed = Number(it.qtd ?? 0) || 0;
-    const qtdNf = nf?.qtd ?? 0;
     const dif = Math.round((qtdNf - qtdPed) * 1000) / 1000;
     const status = qtdNf === 0 ? "nao_entregue" : dif < -0.001 ? "parcial" : dif > 0.001 ? "sobra" : "ok";
     return {
       codigo: cod, nome: String(it.nome ?? ""), cor: (it.cor as string) ?? null, tamanho: (it.tamanho as string) ?? null,
       qtdPedido: qtdPed, valorUnitPedido: Number(it.valorUnit ?? 0) || 0, valorTotalPedido: Number(it.valorTotal ?? 0) || 0,
-      qtdNf, valorUnitNf: nf && nf.unitN ? Math.round((nf.unitSoma / nf.unitN) * 100) / 100 : 0, valorTotalNf: Math.round((nf?.valor ?? 0) * 100) / 100,
+      qtdNf, valorUnitNf: unitN ? Math.round((unitSoma / unitN) * 100) / 100 : 0, valorTotalNf: Math.round(valorNf * 100) / 100,
       dif, status,
     };
   });
-  // Itens que vieram na NF e NÃO estavam no pedido (extras / a mais).
-  const extras = [...nfPorCodigo.entries()].filter(([cod]) => cod && !usados.has(cod)).map(([cod, g]) => ({
+  // Itens que vieram na NF e NÃO casaram com o pedido (extras / a mais) — agrega por código.
+  const extrasMap = new Map<string, { nome: string; qtd: number; valor: number; unitSoma: number; unitN: number }>();
+  for (const n of nfItens) {
+    if (n.usado) continue;
+    const g = extrasMap.get(n.cProd) ?? { nome: n.nome, qtd: 0, valor: 0, unitSoma: 0, unitN: 0 };
+    g.qtd += n.qtd; g.valor += n.valor; if (n.unit > 0) { g.unitSoma += n.unit; g.unitN++; }
+    extrasMap.set(n.cProd, g);
+  }
+  const extras = [...extrasMap.entries()].map(([cod, g]) => ({
     codigo: cod, nome: g.nome, qtdNf: g.qtd, valorTotalNf: Math.round(g.valor * 100) / 100,
     valorUnitNf: g.unitN ? Math.round((g.unitSoma / g.unitN) * 100) / 100 : 0,
   }));
