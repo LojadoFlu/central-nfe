@@ -295,11 +295,14 @@ export default function PedidoDetalhePage() {
       <Card>
         <CardContent className="py-3">
           <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">Itens do pedido</h2>
+          {(pedido.itens ?? []).length > 0 && (pedido.itens ?? []).every((it) => (it.qtd ?? 0) <= 0) ? (
+            <p className="mb-2 rounded-md bg-warning/10 p-2 text-[11px] text-warning">Todos os itens estão com quantidade 0 — este pedido foi importado com o cabeçalho na linha errada. Exclua e reimporte escolhendo a &quot;Linha do cabeçalho&quot; correta.</p>
+          ) : null}
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="text-muted-foreground"><tr><th className="p-1.5 text-left">Código</th><th className="p-1.5 text-left">Nome</th><th className="p-1.5 text-left">Cor</th><th className="p-1.5 text-left">Tam.</th><th className="p-1.5 text-right">Qtd</th><th className="p-1.5 text-right">Unit</th><th className="p-1.5 text-right">Total</th></tr></thead>
               <tbody>
-                {(pedido.itens ?? []).map((it, i) => (
+                {(pedido.itens ?? []).filter((it) => (it.qtd ?? 0) > 0).map((it, i) => (
                   <tr key={i} className="border-t border-border">
                     <td className="p-1.5 font-mono">{it.codigo}</td><td className="p-1.5">{it.nome}</td><td className="p-1.5">{it.cor}</td><td className="p-1.5">{it.tamanho}</td>
                     <td className="p-1.5 text-right tnum">{it.qtd}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorUnit)}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorTotal)}</td>
