@@ -21,7 +21,7 @@ import {
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
-import { formatBRL, formatarData, normalizar } from "@/lib/utils";
+import { formatBRL, formatarData, normalizar, diasAte } from "@/lib/utils";
 import { ShoppingCart, Upload, Plus, X } from "lucide-react";
 
 type Campo = "codigo" | "nome" | "cor" | "tamanho" | "qtd" | "valorUnit" | "valorTotal";
@@ -124,6 +124,12 @@ function chaveFornecedor(cnpj: string, nome: string): string {
   const c = cnpj.replace(/\D/g, "");
   return c || normalizar(nome).replace(/\s+/g, "-").slice(0, 60) || "sem-fornecedor";
 }
+/** Pedido atrasado: sem NF associada (não entregue) e +7 dias além da entrega prevista. */
+function estaAtrasado(p: PedidoCompra): boolean {
+  if (p.nfs?.length) return false;
+  const d = diasAte(p.dataEntrega);
+  return d !== null && d < -7;
+}
 /** Palpita a empresa a partir do valor de loja (por nome). */
 function acharEmpresa(valor: string, empresas: Company[]): string {
   const v = normalizar(valor).trim();
@@ -143,10 +149,12 @@ export default function PedidosPage() {
   const [pedidos, setPedidos] = useState<PedidoCompra[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [erro, setErro] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
   // filtros da lista
   const [fForn, setFForn] = useState("");
   const [fLoja, setFLoja] = useState("");
   const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
+  const [soAtrasados, setSoAtrasados] = useState(false);
 
   // novo pedido
   const [aberto, setAberto] = useState(false);
@@ -228,9 +236,10 @@ export default function PedidosPage() {
 
   const fornecedores = useMemo(() => [...new Set((pedidos ?? []).map((p) => p.fornecedorNome).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [pedidos]);
   const lojasPed = useMemo(() => [...new Set((pedidos ?? []).map((p) => p.empresaId).filter(Boolean))], [pedidos]);
+  const qtdAtrasados = useMemo(() => (pedidos ?? []).filter(estaAtrasado).length, [pedidos]);
   const visiveis = useMemo(() => (pedidos ?? []).filter(
-    (p) => (!fForn || p.fornecedorNome === fForn) && (!fLoja || p.empresaId === fLoja) && noPeriodo(p.data, periodo),
-  ), [pedidos, fForn, fLoja, periodo]);
+    (p) => (!fForn || p.fornecedorNome === fForn) && (!fLoja || p.empresaId === fLoja) && noPeriodo(p.data, periodo) && (!soAtrasados || estaAtrasado(p)),
+  ), [pedidos, fForn, fLoja, periodo, soAtrasados]);
 
   // Acha a linha do cabeçalho: a que mais bate com palavras-chave dos campos.
   function acharCab(rows: unknown[][]): number {
@@ -343,7 +352,8 @@ export default function PedidosPage() {
   // No horizontal, qtd/tamanho vêm da grade — obrigatórios são só código, nome e valor unitário.
   const reqKeys: Campo[] = formato === "horizontal" ? ["codigo", "nome", "valorUnit"] : CAMPOS.filter((c) => c.req).map((c) => c.key);
   const faltaMap = CAMPOS.filter((c) => reqKeys.includes(c.key) && map[c.key] < 0);
-  const semEmpresa = grupos.filter((g) => !g.empresaId);
+  // Pedidos de verdade (com itens) sem empresa vinculada — não serão salvos.
+  const semEmpresa = grupos.filter((g) => g.itens.length > 0 && !g.empresaId);
   const totalGeral = grupos.reduce((s, g) => s + g.total, 0);
 
   // Ignora o mapa salvo do fornecedor e re-detecta tudo do zero a partir do arquivo.
@@ -365,11 +375,15 @@ export default function PedidosPage() {
   }
 
   async function salvar() {
+    setAviso(null);
     if (!fornecedor.trim()) return setErro("Informe o fornecedor.");
     if (grupos.length === 0 || grupos.every((g) => g.itens.length === 0)) return setErro("Nenhum item para importar.");
     if (faltaMap.length) return setErro("Mapeie: " + faltaMap.map((c) => c.label).join(", "));
     if (formato === "horizontal" && tamAtivos.length === 0) return setErro("Marque ao menos uma coluna de tamanho (grade).");
-    if (semEmpresa.length) return setErro("Vincule a empresa das lojas: " + semEmpresa.map((g) => g.loja).join(", "));
+    // Só salva pedidos com loja vinculada; os sem empresa são pulados (não salvos).
+    const validos = grupos.filter((g) => g.itens.length > 0 && g.empresaId);
+    const pulados = grupos.filter((g) => g.itens.length > 0 && !g.empresaId);
+    if (validos.length === 0) return setErro("Vincule a empresa das lojas antes de salvar: " + pulados.map((g) => g.loja).join(", "));
     setSalvando(true);
     setErro(null);
     try {
@@ -377,8 +391,7 @@ export default function PedidosPage() {
       for (const c of CAMPOS) if (map[c.key] >= 0) mapNomes[c.key] = String(map[c.key]); // índice da coluna (robusto p/ cabeçalhos vazios/duplicados)
       await salvarMapaFornecedor(chaveFornecedor(cnpjForn, fornecedor), fornecedor.trim(), mapNomes).catch(() => {});
       let ultimoId = "";
-      for (const g of grupos) {
-        if (g.itens.length === 0) continue;
+      for (const g of validos) {
         const r = await salvarPedido({
           empresaId: g.empresaId, fornecedorNome: fornecedor.trim(), cnpjFornecedor: cnpjForn.replace(/\D/g, "") || undefined, data, dataEntrega: dataEntrega || undefined,
           itens: g.itens.map((it) => ({ codigo: it.codigo, nome: it.nome, cor: it.cor || undefined, tamanho: it.tamanho || undefined, qtd: it.qtd, valorUnit: it.valorUnit, valorTotal: it.valorTotal })),
@@ -387,7 +400,12 @@ export default function PedidosPage() {
       }
       limparNovo();
       await carregar();
-      if (grupos.length === 1 && ultimoId && typeof window !== "undefined") window.location.href = `/pedidos/${ultimoId}`;
+      if (pulados.length) {
+        // Avisa quais lojas não foram salvas (sem empresa) — não redireciona pra o aviso aparecer.
+        setAviso(`${validos.length} pedido(s) salvos. Não salvos por falta de loja vinculada: ${pulados.map((g) => g.loja).join(", ")}.`);
+      } else if (validos.length === 1 && ultimoId && typeof window !== "undefined") {
+        window.location.href = `/pedidos/${ultimoId}`;
+      }
     } catch (e) { setErro((e as Error).message); }
     finally { setSalvando(false); }
   }
@@ -401,6 +419,7 @@ export default function PedidosPage() {
       />
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
+      {aviso ? <p className="mb-4 rounded-md bg-warning/10 p-3 text-sm text-warning">{aviso}</p> : null}
 
       {aberto ? (
         <Card className="mb-4 border-primary/30">
@@ -615,7 +634,16 @@ export default function PedidosPage() {
             </label>
           </div>
           <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
-          <p className="mb-2 px-1 text-[11px] text-muted-foreground">Período pela data do pedido.</p>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2 px-1">
+            <p className="text-[11px] text-muted-foreground">Período pela data do pedido.</p>
+            <button
+              onClick={() => setSoAtrasados((v) => !v)}
+              className={`rounded-full px-3 py-1 text-xs font-medium ${soAtrasados ? "bg-destructive text-destructive-foreground" : "bg-muted text-muted-foreground"}`}
+            >
+              {soAtrasados ? "✓ " : ""}Só atrasados{qtdAtrasados ? ` (${qtdAtrasados})` : ""}
+            </button>
+          </div>
+          {soAtrasados ? <p className="mb-2 px-1 text-[11px] text-muted-foreground">Atrasado = sem NF associada e +7 dias além da entrega prevista.</p> : null}
         </>
       ) : null}
 
@@ -637,11 +665,11 @@ export default function PedidosPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate font-medium">{p.fornecedorNome}</p>
-                      <p className="text-xs text-muted-foreground">{formatarData(p.data)} · {nomeEmp(p.empresaId)} · {p.itens?.length ?? 0} itens</p>
+                      <p className="text-xs text-muted-foreground">{formatarData(p.data)} · {nomeEmp(p.empresaId)} · {p.itens?.length ?? 0} itens{p.dataEntrega ? ` · entrega prev. ${formatarData(p.dataEntrega)}` : ""}</p>
                     </div>
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       <p className="font-bold tnum">{formatBRL(p.totalValor)}</p>
-                      <Badge variant={p.nfs?.length ? "success" : "neutral"}>{p.nfs?.length ? `${p.nfs.length} NF` : "sem NF"}</Badge>
+                      {estaAtrasado(p) ? <Badge variant="destructive">Atrasado</Badge> : <Badge variant={p.nfs?.length ? "success" : "neutral"}>{p.nfs?.length ? `${p.nfs.length} NF` : "sem NF"}</Badge>}
                     </div>
                   </div>
                 </CardContent>
