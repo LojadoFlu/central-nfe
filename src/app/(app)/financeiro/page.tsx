@@ -308,16 +308,19 @@ export default function FinanceiroPage() {
   );
 
   const totais = useMemo(() => {
+    const hoje = hojeISO();
     let aVencer = 0;
     let vencido = 0;
     let pago = 0;
+    let hojeValor = 0; // a pagar HOJE (vence hoje, ainda não pago)
     for (const p of base) {
       const { s } = situacao(p);
       if (s === "a_vencer") aVencer += p.valor ?? 0;
       else if (s === "vencida") vencido += p.valor ?? 0;
       else if (s === "paga") pago += p.valorPago ?? p.valor ?? 0;
+      if ((s === "a_vencer" || s === "vencida") && (p.vencimento ?? "").slice(0, 10) === hoje) hojeValor += p.valor ?? 0;
     }
-    return { aVencer, vencido, pago };
+    return { aVencer, vencido, pago, hoje: hojeValor };
   }, [base]);
 
   // Pagamentos por mês (pela data de pagamento), respeitando o fornecedor.
@@ -412,11 +415,11 @@ export default function FinanceiroPage() {
       <p className="mb-3 px-1 text-[11px] text-muted-foreground">Período pela data de vencimento das parcelas.</p>
 
       <Hero
-        eyebrow="A pagar em aberto"
-        value={parcelas === null ? "…" : formatBRL(totais.aVencer + totais.vencido)}
-        valueTone={totais.vencido > 0 ? "destructive" : "default"}
-        tone={totais.vencido > 0 ? "destructive" : "warning"}
-        subtitle="Parcelas de fornecedores por vencimento no período"
+        eyebrow="A pagar hoje"
+        value={parcelas === null ? "…" : formatBRL(totais.hoje)}
+        valueTone={totais.hoje > 0 ? "destructive" : "default"}
+        tone={totais.hoje > 0 ? "destructive" : "warning"}
+        subtitle="Contas que vencem hoje, ainda não pagas"
         metrics={[
           { label: "A vencer", value: parcelas === null ? "…" : formatBRL(totais.aVencer), tone: "warning" },
           { label: "Vencidas", value: parcelas === null ? "…" : formatBRL(totais.vencido), tone: "destructive" },
