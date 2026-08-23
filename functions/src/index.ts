@@ -3155,14 +3155,16 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     for (const n of cand) { n.usado = true; qtdNf += n.qtd; valorNf += n.valor; if (n.unit > 0) { unitSoma += n.unit; unitN++; } }
     const qtdPed = Number(it.qtd ?? 0) || 0;
     const dif = Math.round((qtdNf - qtdPed) * 1000) / 1000;
-    const status = qtdNf === 0 ? "nao_entregue" : dif < -0.001 ? "parcial" : dif > 0.001 ? "sobra" : "ok";
+    // pedido 0 + NF > 0 = excesso; NF 0 = não entregue; senão parcial/sobra/ok.
+    const status = (qtdPed === 0 && qtdNf > 0) ? "excesso"
+      : qtdNf === 0 ? "nao_entregue" : dif < -0.001 ? "parcial" : dif > 0.001 ? "sobra" : "ok";
     return {
       codigo: cod, nome: String(it.nome ?? ""), cor: (it.cor as string) ?? null, tamanho: (it.tamanho as string) ?? null,
       qtdPedido: qtdPed, valorUnitPedido: Number(it.valorUnit ?? 0) || 0, valorTotalPedido: Number(it.valorTotal ?? 0) || 0,
       qtdNf, valorUnitNf: unitN ? Math.round((unitSoma / unitN) * 100) / 100 : 0, valorTotalNf: Math.round(valorNf * 100) / 100,
       dif, status,
     };
-  });
+  }).filter((l) => !(l.qtdPedido === 0 && l.qtdNf === 0)); // esconde linhas zeradas dos dois lados
   // Itens que vieram na NF e NÃO casaram com o pedido (extras / a mais) — agrega por código.
   const extrasMap = new Map<string, { nome: string; qtd: number; valor: number; unitSoma: number; unitN: number }>();
   for (const n of nfItens) {
@@ -3181,11 +3183,12 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     ok: linhas.filter((l) => l.status === "ok").length,
     parcial: linhas.filter((l) => l.status === "parcial").length,
     sobra: linhas.filter((l) => l.status === "sobra").length,
+    excesso: linhas.filter((l) => l.status === "excesso").length,
     naoEntregue: linhas.filter((l) => l.status === "nao_entregue").length,
     extras: extras.length,
     totalPedido: Math.round(totalPedido * 100) / 100,
     totalNf: Math.round(nfValorTotal * 100) / 100,
-    atendidoIntegral: linhas.length > 0 && linhas.every((l) => l.status === "ok" || l.status === "sobra"),
+    atendidoIntegral: linhas.length > 0 && linhas.every((l) => l.status === "ok" || l.status === "sobra" || l.status === "excesso"),
   };
   return { ok: true, linhas, extras, resumo, nfs: chaves };
 });

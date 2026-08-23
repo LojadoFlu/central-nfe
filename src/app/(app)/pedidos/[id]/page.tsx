@@ -27,6 +27,7 @@ import { ArrowLeft, Plus, X, Scale, Trash2 } from "lucide-react";
 const STATUS = {
   ok: { variant: "success" as const, label: "Atendido" },
   sobra: { variant: "warning" as const, label: "Sobra" },
+  excesso: { variant: "warning" as const, label: "Excesso" },
   parcial: { variant: "destructive" as const, label: "Faltou" },
   nao_entregue: { variant: "neutral" as const, label: "Não entregue" },
 };
@@ -168,6 +169,7 @@ export default function PedidoDetalhePage() {
                 <span className="text-success">Atendidos: <b>{concil.resumo.ok}</b></span>
                 <span className="text-destructive">Faltou: <b>{concil.resumo.parcial}</b></span>
                 <span className="text-warning">Sobra: <b>{concil.resumo.sobra}</b></span>
+                <span className="text-warning">Excesso: <b>{concil.resumo.excesso}</b></span>
                 <span className="text-muted-foreground">Não entregue: <b>{concil.resumo.naoEntregue}</b></span>
                 <span className="text-muted-foreground">Extras na NF: <b>{concil.resumo.extras}</b></span>
               </div>
