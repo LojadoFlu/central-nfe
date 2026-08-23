@@ -3203,9 +3203,11 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     // pedido 0 + NF > 0 = excesso; NF 0 = não entregue; senão parcial/sobra/ok.
     const status = (qtdPed === 0 && qtdNf > 0) ? "excesso"
       : qtdNf === 0 ? "nao_entregue" : dif < -0.001 ? "parcial" : dif > 0.001 ? "sobra" : "ok";
-    const vuPed = Number(it.valorUnit ?? 0) || 0;
-    const vuNf = p.unitN ? Math.round((p.unitSoma / p.unitN) * 100) / 100 : 0;
     const vtPed = Number(it.valorTotal ?? 0) || 0;
+    // Unitário do pedido = total ÷ qtd (mais confiável que a coluna de unitário,
+    // que em alguns fornecedores vem errada); só cai no valorUnit se não houver total.
+    const vuPed = (vtPed > 0 && qtdPed > 0) ? Math.round((vtPed / qtdPed) * 100) / 100 : (Number(it.valorUnit ?? 0) || 0);
+    const vuNf = p.unitN ? Math.round((p.unitSoma / p.unitN) * 100) / 100 : 0;
     const vtNf = Math.round(p.valorNf * 100) / 100;
     // Divergência de valor, quando há valor dos dois lados (a NF entregou algo).
     const unitDiverge = vuPed > 0 && qtdNf > 0 && Math.abs(vuNf - vuPed) > 0.01;

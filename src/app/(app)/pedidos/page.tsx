@@ -200,8 +200,10 @@ export default function PedidosPage() {
   function parseItem(row: unknown[]): ItemPrev {
     const g = (c: Campo) => (map[c] >= 0 ? row[map[c]] : "");
     const qtd = parseNum(g("qtd"));
-    const valorUnit = parseNum(g("valorUnit"));
-    const valorTotal = map.valorTotal >= 0 ? parseNum(g("valorTotal")) : Math.round(qtd * valorUnit * 100) / 100;
+    const vuRaw = parseNum(g("valorUnit"));
+    const valorTotal = map.valorTotal >= 0 ? parseNum(g("valorTotal")) : Math.round(qtd * vuRaw * 100) / 100;
+    // Unitário = total ÷ qtd quando há total (mais confiável); senão a coluna de unitário.
+    const valorUnit = (map.valorTotal >= 0 && qtd > 0) ? Math.round((valorTotal / qtd) * 100) / 100 : vuRaw;
     return { codigo: String(g("codigo") ?? "").trim(), nome: String(g("nome") ?? "").trim(), cor: String(g("cor") ?? "").trim(), tamanho: String(g("tamanho") ?? "").trim(), qtd, valorUnit, valorTotal };
   }
 
@@ -368,6 +370,24 @@ export default function PedidosPage() {
                   </div>
                   <p className="mt-2 text-[11px] text-muted-foreground">Mapeamento salvo por fornecedor — no próximo import já vem preenchido.</p>
                 </div>
+
+                {/* Amostra do mapeamento — confira se as colunas caíram certo */}
+                {abas[0]?.linhas.length ? (
+                  <div className="overflow-x-auto rounded-md border border-border">
+                    <div className="border-b border-border bg-muted/40 px-3 py-1.5 text-[11px] font-medium text-muted-foreground">Amostra (confira se as colunas estão certas)</div>
+                    <table className="w-full text-xs">
+                      <thead className="text-muted-foreground"><tr><th className="p-1.5 text-left">Código</th><th className="p-1.5 text-left">Nome</th><th className="p-1.5 text-left">Cor</th><th className="p-1.5 text-left">Tam.</th><th className="p-1.5 text-right">Qtd</th><th className="p-1.5 text-right">Unit</th><th className="p-1.5 text-right">Total</th></tr></thead>
+                      <tbody>
+                        {abas[0].linhas.slice(0, 5).map(parseItem).map((it, i) => (
+                          <tr key={i} className="border-t border-border">
+                            <td className="p-1.5 font-mono">{it.codigo}</td><td className="p-1.5">{it.nome}</td><td className="p-1.5">{it.cor}</td><td className="p-1.5">{it.tamanho}</td>
+                            <td className="p-1.5 text-right tnum">{it.qtd}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorUnit)}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorTotal)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
 
                 {/* Grupos por loja + vínculo com empresa */}
                 {grupos.length ? (
