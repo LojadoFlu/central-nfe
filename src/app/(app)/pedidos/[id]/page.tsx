@@ -22,8 +22,9 @@ import {
   type NfeDocumento,
 } from "@/lib/nfe/repo";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { gerarPdfPedido } from "@/lib/nfe/pedido-pdf";
 import { formatBRL, formatarData } from "@/lib/utils";
-import { ArrowLeft, Plus, X, Scale, Trash2 } from "lucide-react";
+import { ArrowLeft, Plus, X, Scale, Trash2, FileDown } from "lucide-react";
 
 const STATUS = {
   ok: { variant: "success" as const, label: "Atendido" },
@@ -170,6 +171,11 @@ export default function PedidoDetalhePage() {
 
       {concil ? (
         <>
+          <div className="mb-3">
+            <Button size="sm" variant="outline" onClick={() => gerarPdfPedido(pedido, concil, empresas[pedido.empresaId] ?? pedido.empresaId)}>
+              <FileDown className="size-4" /> Gerar PDF (NF + divergências)
+            </Button>
+          </div>
           {/* Resumo */}
           <Card className={`mb-3 ${concil.resumo.atendidoIntegral ? "border-success/40" : "border-warning/40"}`}>
             <CardContent className="py-4">
