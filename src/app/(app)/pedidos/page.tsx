@@ -36,6 +36,7 @@ const CAMPOS: { key: Campo; label: string; req: boolean }[] = [
 ];
 const MAP_VAZIO: Record<Campo, number> = { codigo: -1, nome: -1, cor: -1, tamanho: -1, qtd: -1, valorUnit: -1, valorTotal: -1 };
 type ModoLoja = "unica" | "coluna" | "aba";
+type Formato = "vertical" | "horizontal"; // vertical = 1 linha por tamanho; horizontal = colunas por tamanho (grade)
 interface Aba { nome: string; headers: string[]; linhas: unknown[][] }
 interface ItemPrev { codigo: string; nome: string; cor: string; tamanho: string; qtd: number; valorUnit: number; valorTotal: number }
 interface Grupo { loja: string; empresaId: string; itens: ItemPrev[]; total: number }
@@ -76,6 +77,28 @@ function colLetra(i: number): string {
   do { s = String.fromCharCode(65 + (n % 26)) + s; n = Math.floor(n / 26) - 1; } while (n >= 0);
   return s;
 }
+/** Uma célula parece um rótulo de tamanho? (P/M/G/GG/XG… ou número de grade 2–70) */
+function ehTam(v: unknown): boolean {
+  const s = String(v ?? "").trim();
+  if (!s || s.length > 4) return false;
+  if (/^(pp|p|m|g|gg|xg|xxg|xxxg|eg|egg|u|un|uni)$/i.test(s)) return true;
+  if (/^\d{1,3}$/.test(s)) { const n = Number(s); return n >= 2 && n <= 70; }
+  return false;
+}
+/** Acha a linha que carrega os rótulos de tamanho (grade), abaixo do cabeçalho e acima dos dados. */
+function acharLinhaTam(rows: unknown[][], cab: number): { linha: number; count: number } {
+  let best = cab, bestC = 0;
+  for (let i = cab + 1; i < Math.min(rows.length, cab + 9); i++) {
+    const r = (rows[i] ?? []) as unknown[];
+    let c = 0, longo = false;
+    for (const cell of r) {
+      if (String(cell ?? "").trim().length > 8) longo = true; // descrição de produto = linha de dados, não de grade
+      if (ehTam(cell)) c++;
+    }
+    if (!longo && c > bestC) { bestC = c; best = i; }
+  }
+  return { linha: best, count: bestC };
+}
 function chaveFornecedor(cnpj: string, nome: string): string {
   const c = cnpj.replace(/\D/g, "");
   return c || normalizar(nome).replace(/\s+/g, "-").slice(0, 60) || "sem-fornecedor";
@@ -113,6 +136,9 @@ export default function PedidosPage() {
   const [dataEntrega, setDataEntrega] = useState("");
   const [abasRaw, setAbasRaw] = useState<{ nome: string; rows: unknown[][] }[]>([]);
   const [linhaCab, setLinhaCab] = useState(0); // índice da linha do cabeçalho
+  const [formato, setFormato] = useState<Formato>("vertical");
+  const [linhaTam, setLinhaTam] = useState(0);  // linha com os rótulos de tamanho (grade)
+  const [tamOff, setTamOff] = useState<number[]>([]); // colunas de tamanho desmarcadas pelo usuário
   const [salvoMap, setSalvoMap] = useState<Record<string, string>>({});
   const [map, setMap] = useState<Record<Campo, number>>(MAP_VAZIO);
   const [modoLoja, setModoLoja] = useState<ModoLoja>("unica");
@@ -127,6 +153,23 @@ export default function PedidosPage() {
     const linhas = a.rows.slice(linhaCab + 1).filter((r) => (r as unknown[]).some((c) => String(c ?? "").trim() !== ""));
     return { nome: a.nome, headers, linhas };
   }), [abasRaw, linhaCab]);
+
+  // Colunas de tamanho (grade): rótulo na "linha dos tamanhos", fora das colunas já
+  // mapeadas para código/nome/cor/valor. Usadas só no formato horizontal.
+  const tamCandidatos = useMemo<{ idx: number; label: string }[]>(() => {
+    if (formato !== "horizontal" || !abasRaw.length) return [];
+    const linha = (abasRaw[0].rows[linhaTam] ?? []) as unknown[];
+    const mapeadas = new Set([map.codigo, map.nome, map.cor, map.valorUnit].filter((i) => i >= 0));
+    const total = Math.max(linha.length, abas[0]?.headers.length ?? 0);
+    const out: { idx: number; label: string }[] = [];
+    for (let i = 0; i < total; i++) {
+      const label = String(linha[i] ?? "").trim();
+      if (!label || mapeadas.has(i)) continue;
+      out.push({ idx: i, label });
+    }
+    return out;
+  }, [formato, abasRaw, linhaTam, map, abas]);
+  const tamAtivos = useMemo(() => tamCandidatos.filter((t) => !tamOff.includes(t.idx)), [tamCandidatos, tamOff]);
 
   // Re-mapeia colunas quando o cabeçalho muda (mapa salvo do fornecedor, senão palpite).
   useEffect(() => {
@@ -196,6 +239,14 @@ export default function PedidosPage() {
       setSalvoMap(salvo?.map ?? {});
       setAbasRaw(raws);
       setLinhaCab(cab);
+      // formato (vertical/horizontal) + linha dos tamanhos: do mapa salvo, senão detecta.
+      const det = acharLinhaTam(raws[0].rows, cab);
+      const fmtSalvo = salvo?.map?._formato;
+      const fmt: Formato = fmtSalvo === "horizontal" ? "horizontal" : fmtSalvo === "vertical" ? "vertical" : (det.count >= 4 ? "horizontal" : "vertical");
+      const tamSalvo = salvo?.map?._linhaTam != null ? Number(salvo.map._linhaTam) : NaN;
+      setFormato(fmt);
+      setLinhaTam(Number.isInteger(tamSalvo) && tamSalvo >= 0 ? tamSalvo : det.linha);
+      setTamOff([]);
       // modo da loja (o efeito recalcula o mapa/colLoja)
       const hs = ((raws[0].rows[cab] ?? []) as unknown[]).map((h) => String(h ?? "").trim());
       const colL = palpitar(hs, "loja");
@@ -208,7 +259,8 @@ export default function PedidosPage() {
     }
   }
 
-  function parseItem(row: unknown[]): ItemPrev {
+  // Formato vertical: cada linha da planilha é 1 item.
+  function parseVert(row: unknown[]): ItemPrev {
     const g = (c: Campo) => (map[c] >= 0 ? row[map[c]] : "");
     const qtd = parseNum(g("qtd"));
     const vuRaw = parseNum(g("valorUnit"));
@@ -217,51 +269,72 @@ export default function PedidosPage() {
     const valorUnit = (map.valorTotal >= 0 && qtd > 0) ? Math.round((valorTotal / qtd) * 100) / 100 : vuRaw;
     return { codigo: String(g("codigo") ?? "").trim(), nome: String(g("nome") ?? "").trim(), cor: String(g("cor") ?? "").trim(), tamanho: String(g("tamanho") ?? "").trim(), qtd, valorUnit, valorTotal };
   }
+  // Uma linha vira N itens: vertical → 1; horizontal → 1 por coluna de tamanho com qtd > 0.
+  function expandir(row: unknown[]): ItemPrev[] {
+    if (formato !== "horizontal") return [parseVert(row)];
+    const codigo = String((map.codigo >= 0 ? row[map.codigo] : "") ?? "").trim();
+    const nome = String((map.nome >= 0 ? row[map.nome] : "") ?? "").trim();
+    const cor = String((map.cor >= 0 ? row[map.cor] : "") ?? "").trim();
+    const unit = parseNum(map.valorUnit >= 0 ? row[map.valorUnit] : ""); // preço vale pra linha toda
+    const out: ItemPrev[] = [];
+    for (const t of tamAtivos) {
+      const qtd = parseNum(row[t.idx]);
+      if (qtd <= 0) continue;
+      out.push({ codigo, nome, cor, tamanho: t.label, qtd, valorUnit: unit, valorTotal: Math.round(qtd * unit * 100) / 100 });
+    }
+    return out;
+  }
 
   // Agrupa por loja conforme o modo escolhido.
   const grupos = useMemo<Grupo[]>(() => {
     if (!abas.length) return [];
+    const ok = (it: ItemPrev) => (it.codigo || it.nome) && it.qtd > 0;
     const mk = (loja: string, itens: ItemPrev[]): Grupo => ({
       loja, empresaId: modoLoja === "unica" ? empresaId : (lojaEmp[loja] ?? acharEmpresa(loja, empresas)),
       itens, total: itens.reduce((s, it) => s + it.valorTotal, 0),
     });
     if (modoLoja === "aba") {
-      return abas.map((a) => mk(a.nome, a.linhas.map(parseItem).filter((it) => (it.codigo || it.nome) && it.qtd > 0)));
+      return abas.map((a) => mk(a.nome, a.linhas.flatMap(expandir).filter(ok)));
     }
     if (modoLoja === "coluna" && colLoja >= 0) {
       const porLoja = new Map<string, ItemPrev[]>();
       for (const a of abas) for (const r of a.linhas) {
         const loja = String(r[colLoja] ?? "").trim() || "(sem loja)";
-        const it = parseItem(r);
-        if ((!it.codigo && !it.nome) || it.qtd <= 0) continue;
-        (porLoja.get(loja) ?? porLoja.set(loja, []).get(loja)!).push(it);
+        for (const it of expandir(r)) {
+          if (!ok(it)) continue;
+          (porLoja.get(loja) ?? porLoja.set(loja, []).get(loja)!).push(it);
+        }
       }
       return [...porLoja.entries()].map(([loja, itens]) => mk(loja, itens));
     }
     // única
-    const itens = abas.flatMap((a) => a.linhas.map(parseItem)).filter((it) => (it.codigo || it.nome) && it.qtd > 0);
+    const itens = abas.flatMap((a) => a.linhas.flatMap(expandir)).filter(ok);
     return [mk(nomeEmp(empresaId), itens)];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [abas, map, modoLoja, colLoja, lojaEmp, empresaId, empresas]);
+  }, [abas, map, modoLoja, colLoja, lojaEmp, empresaId, empresas, formato, tamAtivos]);
 
-  const faltaMap = CAMPOS.filter((c) => c.req && map[c.key] < 0);
+  // No horizontal, qtd/tamanho vêm da grade — obrigatórios são só código, nome e valor unitário.
+  const reqKeys: Campo[] = formato === "horizontal" ? ["codigo", "nome", "valorUnit"] : CAMPOS.filter((c) => c.req).map((c) => c.key);
+  const faltaMap = CAMPOS.filter((c) => reqKeys.includes(c.key) && map[c.key] < 0);
   const semEmpresa = grupos.filter((g) => !g.empresaId);
   const totalGeral = grupos.reduce((s, g) => s + g.total, 0);
 
   function limparNovo() {
     setAberto(false); setFornecedor(""); setCnpjForn(""); setData(hojeISO()); setDataEntrega("");
     setAbasRaw([]); setLinhaCab(0); setSalvoMap({}); setMap({ ...MAP_VAZIO }); setModoLoja("unica"); setColLoja(-1); setLojaEmp({});
+    setFormato("vertical"); setLinhaTam(0); setTamOff([]);
   }
 
   async function salvar() {
     if (!fornecedor.trim()) return setErro("Informe o fornecedor.");
     if (grupos.length === 0 || grupos.every((g) => g.itens.length === 0)) return setErro("Nenhum item para importar.");
     if (faltaMap.length) return setErro("Mapeie: " + faltaMap.map((c) => c.label).join(", "));
+    if (formato === "horizontal" && tamAtivos.length === 0) return setErro("Marque ao menos uma coluna de tamanho (grade).");
     if (semEmpresa.length) return setErro("Vincule a empresa das lojas: " + semEmpresa.map((g) => g.loja).join(", "));
     setSalvando(true);
     setErro(null);
     try {
-      const mapNomes: Record<string, string> = { _linhaCab: String(linhaCab) };
+      const mapNomes: Record<string, string> = { _linhaCab: String(linhaCab), _formato: formato, _linhaTam: String(linhaTam) };
       for (const c of CAMPOS) if (map[c.key] >= 0) mapNomes[c.key] = abas[0].headers[map[c.key]] ?? "";
       await salvarMapaFornecedor(chaveFornecedor(cnpjForn, fornecedor), fornecedor.trim(), mapNomes).catch(() => {});
       let ultimoId = "";
@@ -325,14 +398,35 @@ export default function PedidosPage() {
             </div>
 
             {abasRaw.length ? (
-              <label className="block space-y-1">
-                <span className="text-[11px] text-muted-foreground">Linha do cabeçalho</span>
-                <select value={linhaCab} onChange={(e) => setLinhaCab(Number(e.target.value))} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
-                  {(abasRaw[0].rows.slice(0, 15)).map((r, i) => (
-                    <option key={i} value={i}>Linha {i + 1}: {(r as unknown[]).slice(0, 5).map((c) => String(c ?? "")).filter(Boolean).join(" | ").slice(0, 60) || "(vazia)"}</option>
-                  ))}
-                </select>
-              </label>
+              <div className="space-y-2">
+                {/* Formato da planilha */}
+                <div>
+                  <p className="mb-1 text-[11px] text-muted-foreground">Formato da planilha</p>
+                  <div className="flex flex-wrap gap-2 text-sm">
+                    {([["vertical", "Vertical (uma linha por tamanho)"], ["horizontal", "Horizontal / grade (colunas por tamanho)"]] as const).map(([k, lb]) => (
+                      <button key={k} onClick={() => setFormato(k)} className={`rounded-full px-3 py-1 font-medium ${formato === k ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{lb}</button>
+                    ))}
+                  </div>
+                </div>
+                <label className="block space-y-1">
+                  <span className="text-[11px] text-muted-foreground">Linha do cabeçalho</span>
+                  <select value={linhaCab} onChange={(e) => setLinhaCab(Number(e.target.value))} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+                    {(abasRaw[0].rows.slice(0, 15)).map((r, i) => (
+                      <option key={i} value={i}>Linha {i + 1}: {(r as unknown[]).slice(0, 8).map((c) => String(c ?? "")).filter(Boolean).join(" | ").slice(0, 60) || "(vazia)"}</option>
+                    ))}
+                  </select>
+                </label>
+                {formato === "horizontal" ? (
+                  <label className="block space-y-1">
+                    <span className="text-[11px] text-muted-foreground">Linha dos tamanhos (grade)</span>
+                    <select value={linhaTam} onChange={(e) => { setLinhaTam(Number(e.target.value)); setTamOff([]); }} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+                      {(abasRaw[0].rows.slice(0, 15)).map((r, i) => (
+                        <option key={i} value={i}>Linha {i + 1}: {(r as unknown[]).map((c) => String(c ?? "").trim()).filter(Boolean).slice(0, 10).join(" | ").slice(0, 60) || "(vazia)"}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
             ) : null}
 
             {abas.length ? (
@@ -369,9 +463,9 @@ export default function PedidosPage() {
                 <div className="rounded-md border border-border p-3">
                   <p className="mb-2 text-xs font-medium text-muted-foreground">Aponte cada coluna da planilha:</p>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    {CAMPOS.map((c) => (
+                    {CAMPOS.filter((c) => formato !== "horizontal" || ["codigo", "nome", "cor", "valorUnit"].includes(c.key)).map((c) => (
                       <label key={c.key} className="flex items-center justify-between gap-2 text-sm">
-                        <span className="text-muted-foreground">{c.label}{c.req ? " *" : ""}</span>
+                        <span className="text-muted-foreground">{c.key === "valorUnit" && formato === "horizontal" ? "Valor unitário (vale a linha toda)" : c.label}{reqKeys.includes(c.key) ? " *" : ""}</span>
                         <select value={map[c.key]} onChange={(e) => setMap((m) => ({ ...m, [c.key]: Number(e.target.value) }))} className="h-9 w-40 rounded-md border border-input bg-background px-2 text-sm">
                           <option value={-1}>—</option>
                           {abas[0].headers.map((h, i) => <option key={i} value={i}>{colLetra(i)}{h ? ` · ${h}` : ""}</option>)}
@@ -382,6 +476,29 @@ export default function PedidosPage() {
                   <p className="mt-2 text-[11px] text-muted-foreground">Mapeamento salvo por fornecedor — no próximo import já vem preenchido.</p>
                 </div>
 
+                {/* Colunas de tamanho (grade) — só no formato horizontal */}
+                {formato === "horizontal" ? (
+                  <div className="rounded-md border border-border p-3">
+                    <p className="mb-2 text-xs font-medium text-muted-foreground">Colunas de tamanho (a quantidade está em cada coluna):</p>
+                    {tamCandidatos.length ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {tamCandidatos.map((t) => {
+                          const on = !tamOff.includes(t.idx);
+                          return (
+                            <button key={t.idx} onClick={() => setTamOff((o) => o.includes(t.idx) ? o.filter((x) => x !== t.idx) : [...o, t.idx])}
+                              className={`rounded-md border px-2 py-1 text-xs font-medium ${on ? "border-primary bg-primary/10 text-foreground" : "border-border bg-muted text-muted-foreground line-through"}`}>
+                              {colLetra(t.idx)} · {t.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-warning">Nenhuma coluna de tamanho encontrada nessa linha. Ajuste a &ldquo;Linha dos tamanhos&rdquo; acima.</p>
+                    )}
+                    <p className="mt-2 text-[11px] text-muted-foreground">Clique para incluir/excluir. O nome do tamanho vem do cabeçalho da coluna. {tamAtivos.length} tamanho(s) ativos.</p>
+                  </div>
+                ) : null}
+
                 {/* Amostra do mapeamento — confira se as colunas caíram certo */}
                 {abas[0]?.linhas.length ? (
                   <div className="overflow-x-auto rounded-md border border-border">
@@ -389,7 +506,7 @@ export default function PedidosPage() {
                     <table className="w-full text-xs">
                       <thead className="text-muted-foreground"><tr><th className="p-1.5 text-left">Código</th><th className="p-1.5 text-left">Nome</th><th className="p-1.5 text-left">Cor</th><th className="p-1.5 text-left">Tam.</th><th className="p-1.5 text-right">Qtd</th><th className="p-1.5 text-right">Unit</th><th className="p-1.5 text-right">Total</th></tr></thead>
                       <tbody>
-                        {abas[0].linhas.slice(0, 5).map(parseItem).map((it, i) => (
+                        {abas[0].linhas.flatMap(expandir).slice(0, 6).map((it, i) => (
                           <tr key={i} className="border-t border-border">
                             <td className="p-1.5 font-mono">{it.codigo}</td><td className="p-1.5">{it.nome}</td><td className="p-1.5">{it.cor}</td><td className="p-1.5">{it.tamanho}</td>
                             <td className="p-1.5 text-right tnum">{it.qtd}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorUnit)}</td><td className="p-1.5 text-right tnum">{formatBRL(it.valorTotal)}</td>
