@@ -1450,6 +1450,7 @@ export interface LinhaConcilPedido {
   qtdPedido: number; valorUnitPedido: number; valorTotalPedido: number;
   qtdNf: number; valorUnitNf: number; valorTotalNf: number;
   dif: number; status: "ok" | "parcial" | "sobra" | "excesso" | "nao_entregue";
+  unitDiverge: boolean; totalDiverge: boolean;
 }
 export interface ExtraNf { codigo: string; nome: string; qtdNf: number; valorUnitNf: number; valorTotalNf: number }
 export interface ConcilPedido {
@@ -1457,7 +1458,7 @@ export interface ConcilPedido {
   linhas: LinhaConcilPedido[];
   extras: ExtraNf[];
   resumo: {
-    itensPedido: number; ok: number; parcial: number; sobra: number; excesso: number; naoEntregue: number; extras: number;
+    itensPedido: number; ok: number; parcial: number; sobra: number; excesso: number; naoEntregue: number; valorDivergente: number; extras: number;
     totalPedido: number; totalNf: number; atendidoIntegral: boolean;
   };
   nfs: string[];

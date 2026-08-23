@@ -180,20 +180,20 @@ export default function PedidosPage() {
       itens, total: itens.reduce((s, it) => s + it.valorTotal, 0),
     });
     if (modoLoja === "aba") {
-      return abas.map((a) => mk(a.nome, a.linhas.map(parseItem).filter((it) => it.codigo || it.nome)));
+      return abas.map((a) => mk(a.nome, a.linhas.map(parseItem).filter((it) => (it.codigo || it.nome) && it.qtd > 0)));
     }
     if (modoLoja === "coluna" && colLoja >= 0) {
       const porLoja = new Map<string, ItemPrev[]>();
       for (const a of abas) for (const r of a.linhas) {
         const loja = String(r[colLoja] ?? "").trim() || "(sem loja)";
         const it = parseItem(r);
-        if (!it.codigo && !it.nome) continue;
+        if ((!it.codigo && !it.nome) || it.qtd <= 0) continue;
         (porLoja.get(loja) ?? porLoja.set(loja, []).get(loja)!).push(it);
       }
       return [...porLoja.entries()].map(([loja, itens]) => mk(loja, itens));
     }
     // única
-    const itens = abas.flatMap((a) => a.linhas.map(parseItem)).filter((it) => it.codigo || it.nome);
+    const itens = abas.flatMap((a) => a.linhas.map(parseItem)).filter((it) => (it.codigo || it.nome) && it.qtd > 0);
     return [mk(nomeEmp(empresaId), itens)];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abas, map, modoLoja, colLoja, lojaEmp, empresaId, empresas]);

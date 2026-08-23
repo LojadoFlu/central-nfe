@@ -3057,7 +3057,7 @@ export const salvarPedidoCompra = onCall({ ...opcoes, memory: "512MiB" }, async 
       tamanho: String(it.tamanho ?? "").trim().slice(0, 40) || null,
       qtd, valorUnit: Math.round(valorUnit * 100) / 100, valorTotal: Math.round(valorTotal * 100) / 100,
     };
-  }).filter((it) => it.codigo || it.nome);
+  }).filter((it) => (it.codigo || it.nome) && it.qtd > 0); // ignora itens com quantidade zero
   const totalQtd = Math.round(itens.reduce((s, it) => s + it.qtd, 0) * 1000) / 1000;
   const totalValor = Math.round(itens.reduce((s, it) => s + it.valorTotal, 0) * 100) / 100;
   const emp = await resolverEmpresa(empresaId);
@@ -3199,11 +3199,18 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     // pedido 0 + NF > 0 = excesso; NF 0 = não entregue; senão parcial/sobra/ok.
     const status = (qtdPed === 0 && qtdNf > 0) ? "excesso"
       : qtdNf === 0 ? "nao_entregue" : dif < -0.001 ? "parcial" : dif > 0.001 ? "sobra" : "ok";
+    const vuPed = Number(it.valorUnit ?? 0) || 0;
+    const vuNf = p.unitN ? Math.round((p.unitSoma / p.unitN) * 100) / 100 : 0;
+    const vtPed = Number(it.valorTotal ?? 0) || 0;
+    const vtNf = Math.round(p.valorNf * 100) / 100;
+    // Divergência de valor, quando há valor dos dois lados (a NF entregou algo).
+    const unitDiverge = vuPed > 0 && qtdNf > 0 && Math.abs(vuNf - vuPed) > 0.01;
+    const totalDiverge = vtPed > 0 && qtdNf > 0 && Math.abs(vtNf - vtPed) > 0.01;
     return {
       codigo: String(it.codigo ?? "").trim(), nome: String(it.nome ?? ""), cor: (it.cor as string) ?? null, tamanho: (it.tamanho as string) ?? null,
-      qtdPedido: qtdPed, valorUnitPedido: Number(it.valorUnit ?? 0) || 0, valorTotalPedido: Number(it.valorTotal ?? 0) || 0,
-      qtdNf, valorUnitNf: p.unitN ? Math.round((p.unitSoma / p.unitN) * 100) / 100 : 0, valorTotalNf: Math.round(p.valorNf * 100) / 100,
-      dif, status,
+      qtdPedido: qtdPed, valorUnitPedido: vuPed, valorTotalPedido: vtPed,
+      qtdNf, valorUnitNf: vuNf, valorTotalNf: vtNf,
+      dif, status, unitDiverge, totalDiverge,
     };
   }).filter((l) => !(l.qtdPedido === 0 && l.qtdNf === 0)); // esconde linhas zeradas dos dois lados
   // Itens que vieram na NF e NÃO casaram com o pedido (extras / a mais) — agrega por código.
@@ -3226,6 +3233,7 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     sobra: linhas.filter((l) => l.status === "sobra").length,
     excesso: linhas.filter((l) => l.status === "excesso").length,
     naoEntregue: linhas.filter((l) => l.status === "nao_entregue").length,
+    valorDivergente: linhas.filter((l) => l.unitDiverge || l.totalDiverge).length,
     extras: extras.length,
     totalPedido: Math.round(totalPedido * 100) / 100,
     totalNf: Math.round(nfValorTotal * 100) / 100,

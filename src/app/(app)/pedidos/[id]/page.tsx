@@ -185,7 +185,8 @@ export default function PedidoDetalhePage() {
                 <span className="text-warning">Sobra: <b>{concil.resumo.sobra}</b></span>
                 <span className="text-warning">Excesso: <b>{concil.resumo.excesso}</b></span>
                 <span className="text-muted-foreground">Não entregue: <b>{concil.resumo.naoEntregue}</b></span>
-                <span className="text-muted-foreground">Extras na NF: <b>{concil.resumo.extras}</b></span>
+                <span className="text-destructive">Valor difere: <b>{concil.resumo.valorDivergente}</b></span>
+                <span className="text-muted-foreground">Não casaram: <b>{concil.resumo.extras}</b></span>
               </div>
             </CardContent>
           </Card>
@@ -196,16 +197,22 @@ export default function PedidoDetalhePage() {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className="text-muted-foreground">
-                    <tr><th className="p-1.5 text-left">Código / nome</th><th className="p-1.5 text-right">Pedido</th><th className="p-1.5 text-right">NF</th><th className="p-1.5 text-right">Dif</th><th className="p-1.5 text-right">Unit ped/NF</th><th className="p-1.5 text-center">Status</th></tr>
+                    <tr><th className="p-1.5 text-left">Código / nome</th><th className="p-1.5 text-right">Qtd ped→NF</th><th className="p-1.5 text-right">Unit ped/NF</th><th className="p-1.5 text-right">Total ped/NF</th><th className="p-1.5 text-center">Status</th></tr>
                   </thead>
                   <tbody>
                     {concil.linhas.map((l, i) => (
                       <tr key={i} className="border-t border-border">
                         <td className="p-1.5"><span className="font-mono">{l.codigo}</span> <span className="text-muted-foreground">{l.nome}{l.cor ? ` · ${l.cor}` : ""}{l.tamanho ? ` · ${l.tamanho}` : ""}</span></td>
-                        <td className="p-1.5 text-right tnum">{l.qtdPedido}</td>
-                        <td className="p-1.5 text-right tnum">{l.qtdNf}</td>
-                        <td className={`p-1.5 text-right tnum ${l.dif < 0 ? "text-destructive" : l.dif > 0 ? "text-warning" : ""}`}>{l.dif > 0 ? "+" : ""}{l.dif}</td>
-                        <td className="p-1.5 text-right tnum text-muted-foreground">{formatBRL(l.valorUnitPedido)}/{formatBRL(l.valorUnitNf)}</td>
+                        <td className="p-1.5 text-right tnum">
+                          {l.qtdPedido}→{l.qtdNf}
+                          {l.dif !== 0 ? <span className={l.dif < 0 ? "text-destructive" : "text-warning"}> ({l.dif > 0 ? "+" : ""}{l.dif})</span> : null}
+                        </td>
+                        <td className="p-1.5 text-right tnum">
+                          <span className="text-muted-foreground">{formatBRL(l.valorUnitPedido)}/</span><span className={l.unitDiverge ? "font-medium text-destructive" : "text-muted-foreground"}>{formatBRL(l.valorUnitNf)}</span>
+                        </td>
+                        <td className="p-1.5 text-right tnum">
+                          <span className="text-muted-foreground">{formatBRL(l.valorTotalPedido)}/</span><span className={l.totalDiverge ? "font-medium text-destructive" : "text-muted-foreground"}>{formatBRL(l.valorTotalNf)}</span>
+                        </td>
                         <td className="p-1.5 text-center"><Badge variant={STATUS[l.status].variant}>{STATUS[l.status].label}</Badge></td>
                       </tr>
                     ))}
