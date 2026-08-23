@@ -56,8 +56,9 @@ function parseNum(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 const KEYS: Record<Campo | "loja", string[]> = {
-  codigo: ["codigo", "cod", "ref", "sku", "item"],
-  nome: ["nome", "descri", "produto", "material"],
+  // "produto"/"prod"/"ref"/"modelo" costumam rotular a coluna do CÓDIGO (ex.: Foxton "PRODUTO").
+  codigo: ["codigo", "cod", "ref", "sku", "item", "produto", "prod", "modelo", "estilo", "style", "artigo"],
+  nome: ["descri", "nome", "produto", "material", "mercadoria"],
   cor: ["cor", "color"],
   tamanho: ["tamanho", "tam", "size", "grade", "numer"],
   qtd: ["qtd", "quant", "qty", "pecas", "pares"],
@@ -67,6 +68,15 @@ const KEYS: Record<Campo | "loja", string[]> = {
 };
 function palpitar(headers: string[], campo: Campo | "loja"): number {
   for (let i = 0; i < headers.length; i++) {
+    const h = normalizar(headers[i] ?? "");
+    if (KEYS[campo].some((k) => h.includes(k))) return i;
+  }
+  return -1;
+}
+/** Igual a palpitar, mas ignora colunas já atribuídas a outro campo (atribuição gulosa/exclusiva). */
+function palpitarLivre(headers: string[], campo: Campo | "loja", usados: Set<number>): number {
+  for (let i = 0; i < headers.length; i++) {
+    if (usados.has(i)) continue;
     const h = normalizar(headers[i] ?? "");
     if (KEYS[campo].some((k) => h.includes(k))) return i;
   }
@@ -172,13 +182,19 @@ export default function PedidosPage() {
   const tamAtivos = useMemo(() => tamCandidatos.filter((t) => !tamOff.includes(t.idx)), [tamCandidatos, tamOff]);
 
   // Re-mapeia colunas quando o cabeçalho muda (mapa salvo do fornecedor, senão palpite).
+  // Atribuição GULOSA e exclusiva: campos específicos primeiro, "nome" por último (fica
+  // com a coluna de descrição que sobrar), evitando que "PRODUTO" (código) roube o nome.
   useEffect(() => {
     const hs = abas[0]?.headers ?? [];
     if (!hs.length) return;
     const novo: Record<Campo, number> = { ...MAP_VAZIO };
-    for (const c of CAMPOS) {
-      const idx = salvoMap[c.key] ? hs.indexOf(salvoMap[c.key]) : -1;
-      novo[c.key] = idx >= 0 ? idx : palpitar(hs, c.key);
+    const usados = new Set<number>();
+    const ordem: Campo[] = ["codigo", "valorTotal", "valorUnit", "qtd", "tamanho", "cor", "nome"];
+    for (const c of ordem) {
+      let idx = salvoMap[c] ? hs.indexOf(salvoMap[c]) : -1;
+      if (idx < 0) idx = palpitarLivre(hs, c, usados);
+      novo[c] = idx;
+      if (idx >= 0) usados.add(idx);
     }
     setMap(novo);
     setColLoja(palpitar(hs, "loja"));
