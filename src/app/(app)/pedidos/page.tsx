@@ -20,6 +20,7 @@ import {
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatarData, normalizar } from "@/lib/utils";
 import { ShoppingCart, Upload, Plus, X } from "lucide-react";
 
@@ -98,6 +99,10 @@ export default function PedidosPage() {
   const [pedidos, setPedidos] = useState<PedidoCompra[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [erro, setErro] = useState<string | null>(null);
+  // filtros da lista
+  const [fForn, setFForn] = useState("");
+  const [fLoja, setFLoja] = useState("");
+  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
 
   // novo pedido
   const [aberto, setAberto] = useState(false);
@@ -150,6 +155,12 @@ export default function PedidosPage() {
   useEffect(() => { void carregar(); }, [carregar]);
 
   const nomeEmp = (id?: string) => empresas.find((e) => e.id === id)?.nomeFantasia || empresas.find((e) => e.id === id)?.razaoSocial || id || "—";
+
+  const fornecedores = useMemo(() => [...new Set((pedidos ?? []).map((p) => p.fornecedorNome).filter(Boolean))].sort((a, b) => a.localeCompare(b)), [pedidos]);
+  const lojasPed = useMemo(() => [...new Set((pedidos ?? []).map((p) => p.empresaId).filter(Boolean))], [pedidos]);
+  const visiveis = useMemo(() => (pedidos ?? []).filter(
+    (p) => (!fForn || p.fornecedorNome === fForn) && (!fLoja || p.empresaId === fLoja) && noPeriodo(p.data, periodo),
+  ), [pedidos, fForn, fLoja, periodo]);
 
   // Acha a linha do cabeçalho: a que mais bate com palavras-chave dos campos.
   function acharCab(rows: unknown[][]): number {
@@ -425,6 +436,30 @@ export default function PedidosPage() {
         </Card>
       ) : null}
 
+      {/* Filtros da lista */}
+      {pedidos && pedidos.length > 0 ? (
+        <>
+          <div className="mb-2 grid gap-2 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-muted-foreground">Fornecedor</span>
+              <select value={fForn} onChange={(e) => setFForn(e.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                <option value="">Todos os fornecedores</option>
+                {fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-[11px] font-medium text-muted-foreground">Loja destino</span>
+              <select value={fLoja} onChange={(e) => setFLoja(e.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
+                <option value="">Todas as lojas</option>
+                {lojasPed.map((id) => <option key={id} value={id}>{nomeEmp(id)}</option>)}
+              </select>
+            </label>
+          </div>
+          <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
+          <p className="mb-2 px-1 text-[11px] text-muted-foreground">Período pela data do pedido.</p>
+        </>
+      ) : null}
+
       {/* Lista */}
       {pedidos === null ? (
         <div className="space-y-2"><Skeleton className="h-20" /><Skeleton className="h-20" /></div>
@@ -432,9 +467,11 @@ export default function PedidosPage() {
         <ModulePlaceholder icon={ShoppingCart} title="Nenhum pedido" etapa="Pedidos de compra">
           Crie um pedido importando a planilha do fornecedor. Depois associe as NFs da entrega e concilie.
         </ModulePlaceholder>
+      ) : visiveis.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Nenhum pedido no filtro atual.</p>
       ) : (
         <div className="space-y-2">
-          {pedidos.map((p) => (
+          {visiveis.map((p) => (
             <Card key={p.id} className="transition-colors hover:bg-accent/50">
               <Link href={`/pedidos/${p.id}`} className="block">
                 <CardContent className="py-3">
