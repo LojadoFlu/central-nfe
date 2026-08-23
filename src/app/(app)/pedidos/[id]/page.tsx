@@ -173,11 +173,25 @@ export default function PedidoDetalhePage() {
           {/* Resumo */}
           <Card className={`mb-3 ${concil.resumo.atendidoIntegral ? "border-success/40" : "border-warning/40"}`}>
             <CardContent className="py-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="text-[0.95rem] font-semibold tracking-tight">
-                  {concil.resumo.atendidoIntegral ? "✓ Pedido atendido" : "⚠ Pedido incompleto"}
-                </h2>
-                <span className="text-xs text-muted-foreground">Pedido {formatBRL(concil.resumo.totalPedido)} · NF {formatBRL(concil.resumo.totalNf)}</span>
+              <h2 className="text-[0.95rem] font-semibold tracking-tight">
+                {concil.resumo.atendidoIntegral ? "✓ Pedido atendido" : "⚠ Pedido incompleto"}
+              </h2>
+              {/* Totais pedido → NF + diferença (unidades e valor) */}
+              <div className="mt-2 grid grid-cols-2 gap-2 text-center">
+                <div className="rounded-md border border-border p-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Unidades (ped → NF)</p>
+                  <p className="mt-0.5 text-sm font-bold tnum">{concil.resumo.totalQtdPedido} → {concil.resumo.totalQtdNf}</p>
+                  <p className={`text-[11px] tnum ${concil.resumo.difQtd < 0 ? "text-destructive" : concil.resumo.difQtd > 0 ? "text-warning" : "text-muted-foreground"}`}>
+                    dif {concil.resumo.difQtd > 0 ? "+" : ""}{concil.resumo.difQtd}
+                  </p>
+                </div>
+                <div className="rounded-md border border-border p-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Valor (ped → NF)</p>
+                  <p className="mt-0.5 text-sm font-bold tnum">{formatBRL(concil.resumo.totalPedido)} → {formatBRL(concil.resumo.totalNf)}</p>
+                  <p className={`text-[11px] tnum ${Math.abs(concil.resumo.difValor) >= 0.01 ? (concil.resumo.difValor < 0 ? "text-destructive" : "text-warning") : "text-muted-foreground"}`}>
+                    dif {concil.resumo.difValor > 0 ? "+" : ""}{formatBRL(concil.resumo.difValor)}
+                  </p>
+                </div>
               </div>
               <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
                 <span className="text-success">Atendidos: <b>{concil.resumo.ok}</b></span>

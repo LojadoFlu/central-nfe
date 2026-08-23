@@ -3226,6 +3226,10 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     valorUnitNf: g.unitN ? Math.round((g.unitSoma / g.unitN) * 100) / 100 : 0,
   }));
   const totalPedido = (pedido.itens ?? []).reduce((s, it) => s + (Number(it.valorTotal ?? 0) || 0), 0);
+  const totalQtdPedido = itensPed.reduce((s, it) => s + (Number(it.qtd ?? 0) || 0), 0);
+  const totalQtdNf = nfItens.reduce((s, n) => s + n.qtd, 0);
+  const totalNfR = Math.round(nfValorTotal * 100) / 100;
+  const totalPedR = Math.round(totalPedido * 100) / 100;
   const resumo = {
     itensPedido: linhas.length,
     ok: linhas.filter((l) => l.status === "ok").length,
@@ -3235,8 +3239,12 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     naoEntregue: linhas.filter((l) => l.status === "nao_entregue").length,
     valorDivergente: linhas.filter((l) => l.unitDiverge || l.totalDiverge).length,
     extras: extras.length,
-    totalPedido: Math.round(totalPedido * 100) / 100,
-    totalNf: Math.round(nfValorTotal * 100) / 100,
+    totalQtdPedido: Math.round(totalQtdPedido * 1000) / 1000,
+    totalQtdNf: Math.round(totalQtdNf * 1000) / 1000,
+    difQtd: Math.round((totalQtdNf - totalQtdPedido) * 1000) / 1000,
+    totalPedido: totalPedR,
+    totalNf: totalNfR,
+    difValor: Math.round((totalNfR - totalPedR) * 100) / 100,
     atendidoIntegral: linhas.length > 0 && linhas.every((l) => l.status === "ok" || l.status === "sobra" || l.status === "excesso"),
   };
   return { ok: true, linhas, extras, resumo, nfs: chaves, chaveFornecedor: chaveForn };
