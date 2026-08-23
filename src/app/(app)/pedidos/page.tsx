@@ -105,13 +105,36 @@ export default function PedidosPage() {
   const [fornecedor, setFornecedor] = useState("");
   const [cnpjForn, setCnpjForn] = useState("");
   const [data, setData] = useState(hojeISO());
-  const [abas, setAbas] = useState<Aba[]>([]);
+  const [abasRaw, setAbasRaw] = useState<{ nome: string; rows: unknown[][] }[]>([]);
+  const [linhaCab, setLinhaCab] = useState(0); // índice da linha do cabeçalho
+  const [salvoMap, setSalvoMap] = useState<Record<string, string>>({});
   const [map, setMap] = useState<Record<Campo, number>>(MAP_VAZIO);
   const [modoLoja, setModoLoja] = useState<ModoLoja>("unica");
   const [colLoja, setColLoja] = useState(-1);
   const [lojaEmp, setLojaEmp] = useState<Record<string, string>>({}); // valor da loja → empresaId
   const [salvando, setSalvando] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Abas derivadas: cabeçalho na linha escolhida, dados abaixo.
+  const abas = useMemo<Aba[]>(() => abasRaw.map((a) => {
+    const headers = ((a.rows[linhaCab] ?? []) as unknown[]).map((h) => String(h ?? "").trim());
+    const linhas = a.rows.slice(linhaCab + 1).filter((r) => (r as unknown[]).some((c) => String(c ?? "").trim() !== ""));
+    return { nome: a.nome, headers, linhas };
+  }), [abasRaw, linhaCab]);
+
+  // Re-mapeia colunas quando o cabeçalho muda (mapa salvo do fornecedor, senão palpite).
+  useEffect(() => {
+    const hs = abas[0]?.headers ?? [];
+    if (!hs.length) return;
+    const novo: Record<Campo, number> = { ...MAP_VAZIO };
+    for (const c of CAMPOS) {
+      const idx = salvoMap[c.key] ? hs.indexOf(salvoMap[c.key]) : -1;
+      novo[c.key] = idx >= 0 ? idx : palpitar(hs, c.key);
+    }
+    setMap(novo);
+    setColLoja(palpitar(hs, "loja"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abas, salvoMap]);
 
   const carregar = useCallback(async () => {
     setErro(null);
@@ -127,6 +150,20 @@ export default function PedidosPage() {
 
   const nomeEmp = (id?: string) => empresas.find((e) => e.id === id)?.nomeFantasia || empresas.find((e) => e.id === id)?.razaoSocial || id || "—";
 
+  // Acha a linha do cabeçalho: a que mais bate com palavras-chave dos campos.
+  function acharCab(rows: unknown[][]): number {
+    let best = 0, bestScore = -1;
+    for (let i = 0; i < Math.min(rows.length, 15); i++) {
+      const hs = (rows[i] as unknown[]).map((h) => normalizar(String(h ?? "")));
+      let score = 0;
+      for (const c of ["codigo", "nome", "qtd", "valorUnit", "valorTotal", "cor", "tamanho"] as const) {
+        if (KEYS[c].some((k) => hs.some((h) => h.includes(k)))) score++;
+      }
+      if (score > bestScore) { bestScore = score; best = i; }
+    }
+    return best;
+  }
+
   async function aoEscolherArquivo(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (fileRef.current) fileRef.current.value = "";
@@ -134,30 +171,25 @@ export default function PedidosPage() {
     setErro(null);
     try {
       const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
-      const as: Aba[] = [];
+      const raws: { nome: string; rows: unknown[][] }[] = [];
       for (const nome of wb.SheetNames) {
-        const raw = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[nome], { header: 1, blankrows: false, defval: "" });
-        if (raw.length < 2) continue;
-        const headers = (raw[0] as unknown[]).map((h) => String(h ?? "").trim());
-        const linhas = raw.slice(1).filter((r) => (r as unknown[]).some((c) => String(c ?? "").trim() !== ""));
-        as.push({ nome, headers, linhas });
+        const rows = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[nome], { header: 1, blankrows: false, defval: "" });
+        if (rows.length >= 1) raws.push({ nome, rows });
       }
-      if (as.length === 0) { setErro("Planilha sem linhas de dados."); return; }
-      setAbas(as);
-      const hs = as[0].headers;
-      // mapa salvo do fornecedor
+      if (raws.length === 0) { setErro("Planilha vazia."); return; }
+      // mapa salvo do fornecedor (colunas + linha do cabeçalho)
       const salvo = await obterMapaFornecedor(chaveFornecedor(cnpjForn, fornecedor)).catch(() => null);
-      const novo: Record<Campo, number> = { ...MAP_VAZIO };
-      for (const c of CAMPOS) {
-        const salvoIdx = salvo?.map?.[c.key] != null ? hs.indexOf(salvo.map[c.key]) : -1;
-        novo[c.key] = salvoIdx >= 0 ? salvoIdx : palpitar(hs, c.key);
-      }
-      setMap(novo);
-      // detecta modo da loja
+      const cabSalvo = salvo?.map?._linhaCab != null ? Number(salvo.map._linhaCab) : NaN;
+      const cab = Number.isInteger(cabSalvo) && cabSalvo >= 0 ? cabSalvo : acharCab(raws[0].rows);
+      setSalvoMap(salvo?.map ?? {});
+      setAbasRaw(raws);
+      setLinhaCab(cab);
+      // modo da loja (o efeito recalcula o mapa/colLoja)
+      const hs = ((raws[0].rows[cab] ?? []) as unknown[]).map((h) => String(h ?? "").trim());
       const colL = palpitar(hs, "loja");
-      if (colL >= 0) { setModoLoja("coluna"); setColLoja(colL); }
-      else if (as.length > 1) { setModoLoja("aba"); setColLoja(-1); }
-      else { setModoLoja("unica"); setColLoja(-1); }
+      if (colL >= 0) setModoLoja("coluna");
+      else if (raws.length > 1) setModoLoja("aba");
+      else setModoLoja("unica");
       setLojaEmp({});
     } catch (err) {
       setErro("Não foi possível ler a planilha: " + (err as Error).message);
@@ -204,7 +236,7 @@ export default function PedidosPage() {
 
   function limparNovo() {
     setAberto(false); setFornecedor(""); setCnpjForn(""); setData(hojeISO());
-    setAbas([]); setMap({ ...MAP_VAZIO }); setModoLoja("unica"); setColLoja(-1); setLojaEmp({});
+    setAbasRaw([]); setLinhaCab(0); setSalvoMap({}); setMap({ ...MAP_VAZIO }); setModoLoja("unica"); setColLoja(-1); setLojaEmp({});
   }
 
   async function salvar() {
@@ -215,7 +247,7 @@ export default function PedidosPage() {
     setSalvando(true);
     setErro(null);
     try {
-      const mapNomes: Record<string, string> = {};
+      const mapNomes: Record<string, string> = { _linhaCab: String(linhaCab) };
       for (const c of CAMPOS) if (map[c.key] >= 0) mapNomes[c.key] = abas[0].headers[map[c.key]] ?? "";
       await salvarMapaFornecedor(chaveFornecedor(cnpjForn, fornecedor), fornecedor.trim(), mapNomes).catch(() => {});
       let ultimoId = "";
@@ -273,6 +305,17 @@ export default function PedidosPage() {
               </Button>
               {abas.length ? <span className="ml-2 text-xs text-muted-foreground">{abas.length} aba(s) · {abas.reduce((s, a) => s + a.linhas.length, 0)} linha(s)</span> : null}
             </div>
+
+            {abasRaw.length ? (
+              <label className="block space-y-1">
+                <span className="text-[11px] text-muted-foreground">Linha do cabeçalho</span>
+                <select value={linhaCab} onChange={(e) => setLinhaCab(Number(e.target.value))} className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm">
+                  {(abasRaw[0].rows.slice(0, 15)).map((r, i) => (
+                    <option key={i} value={i}>Linha {i + 1}: {(r as unknown[]).slice(0, 5).map((c) => String(c ?? "")).filter(Boolean).join(" | ").slice(0, 60) || "(vazia)"}</option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
 
             {abas.length ? (
               <>
