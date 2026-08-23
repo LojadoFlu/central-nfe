@@ -3030,6 +3030,154 @@ export const excluirDespesaManual = onCall(opcoes, async (req) => {
   return { ok: true };
 });
 
+// ============ PEDIDOS DE COMPRA ============
+
+/** Cria/atualiza um pedido de compra (loja + fornecedor + data + itens). Admin/financeiro/fiscal. */
+export const salvarPedidoCompra = onCall({ ...opcoes, memory: "512MiB" }, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro", "fiscal"]);
+  const d = req.data ?? {};
+  const empresaId = String(d.empresaId ?? "").trim();
+  const fornecedorNome = String(d.fornecedorNome ?? "").trim().slice(0, 160);
+  const cnpjFornecedor = String(d.cnpjFornecedor ?? "").replace(/\D/g, "") || null;
+  const data = String(d.data ?? "").slice(0, 10);
+  if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
+  if (!fornecedorNome) throw new HttpsError("invalid-argument", "Informe o fornecedor.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new HttpsError("invalid-argument", "Data inválida.");
+  const itensIn = Array.isArray(d.itens) ? (d.itens as Array<Record<string, unknown>>) : [];
+  if (itensIn.length === 0) throw new HttpsError("invalid-argument", "Inclua ao menos um item.");
+  if (itensIn.length > 5000) throw new HttpsError("invalid-argument", "Máximo de 5000 itens.");
+  const itens = itensIn.map((it) => {
+    const qtd = Number(it.qtd) || 0;
+    const valorUnit = Number(it.valorUnit) || 0;
+    const valorTotal = Number(it.valorTotal) || Math.round(qtd * valorUnit * 100) / 100;
+    return {
+      codigo: String(it.codigo ?? "").trim().slice(0, 60),
+      nome: String(it.nome ?? "").trim().slice(0, 200),
+      cor: String(it.cor ?? "").trim().slice(0, 60) || null,
+      qtd, valorUnit: Math.round(valorUnit * 100) / 100, valorTotal: Math.round(valorTotal * 100) / 100,
+    };
+  }).filter((it) => it.codigo || it.nome);
+  const totalQtd = Math.round(itens.reduce((s, it) => s + it.qtd, 0) * 1000) / 1000;
+  const totalValor = Math.round(itens.reduce((s, it) => s + it.valorTotal, 0) * 100) / 100;
+  const emp = await resolverEmpresa(empresaId);
+  const now = agoraISO();
+  const id = String(d.id ?? "").trim();
+  const ref = id ? db.collection("purchase_orders").doc(id) : db.collection("purchase_orders").doc();
+  const existe = id ? (await ref.get()).exists : false;
+  await ref.set({
+    id: ref.id, empresaId, empresaNome: emp?.nome ?? null, fornecedorNome, cnpjFornecedor,
+    data, itens, totalQtd, totalValor, updatedAt: now,
+    ...(existe ? {} : { nfs: [], createdAt: now, createdBy: uid }),
+  }, { merge: true });
+  await auditar(uid, existe ? "pedido.atualizar" : "pedido.criar", { id: ref.id, fornecedorNome, itens: itens.length });
+  return { ok: true, id: ref.id };
+});
+
+/** Exclui um pedido de compra. */
+export const excluirPedidoCompra = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro", "fiscal"]);
+  const id = String(req.data?.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  await db.collection("purchase_orders").doc(id).delete();
+  await auditar(uid, "pedido.excluir", { id });
+  return { ok: true };
+});
+
+/** Associa/desassocia uma NF (chave) a um pedido de compra. */
+export const associarNfPedido = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro", "fiscal"]);
+  const d = req.data ?? {};
+  const id = String(d.pedidoId ?? "").trim();
+  const chNFe = String(d.chNFe ?? "").replace(/\D/g, "");
+  const add = d.add !== false;
+  if (!id) throw new HttpsError("invalid-argument", "pedidoId obrigatório.");
+  if (chNFe.length !== 44) throw new HttpsError("invalid-argument", "Chave inválida (44 dígitos).");
+  await db.collection("purchase_orders").doc(id).set(
+    { nfs: add ? FieldValue.arrayUnion(chNFe) : FieldValue.arrayRemove(chNFe), updatedAt: agoraISO() },
+    { merge: true },
+  );
+  await auditar(uid, add ? "pedido.associarNf" : "pedido.desassociarNf", { id, chNFe });
+  return { ok: true };
+});
+
+/** Concilia um pedido: itens do pedido × itens das NFs associadas (casa por código = cProd). */
+export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeoutSeconds: 120 }, async (req) => {
+  await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro", "fiscal"]);
+  const id = String(req.data?.pedidoId ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "pedidoId obrigatório.");
+  const snap = await db.collection("purchase_orders").doc(id).get();
+  if (!snap.exists) throw new HttpsError("not-found", "Pedido não encontrado.");
+  const pedido = snap.data() as { itens?: Array<Record<string, unknown>>; nfs?: string[] };
+  const chaves = Array.isArray(pedido.nfs) ? pedido.nfs : [];
+
+  // Agrega itens das NFs por código (cProd).
+  const nfPorCodigo = new Map<string, { qtd: number; valor: number; nome: string; unitSoma: number; unitN: number }>();
+  let nfValorTotal = 0;
+  for (const ch of chaves) {
+    const its = await db.collection("nfe_items").where("chNFe", "==", ch).get();
+    for (const doc of its.docs) {
+      const it = doc.data();
+      const cod = String(it.cProd ?? "").trim();
+      const q = Number(it.quantidade ?? 0) || 0;
+      const v = Number(it.valorTotal ?? 0) || 0;
+      const u = Number(it.valorUnitario ?? 0) || 0;
+      nfValorTotal += v;
+      const g = nfPorCodigo.get(cod) ?? { qtd: 0, valor: 0, nome: String(it.descricao ?? ""), unitSoma: 0, unitN: 0 };
+      g.qtd += q; g.valor += v; if (u > 0) { g.unitSoma += u; g.unitN++; }
+      nfPorCodigo.set(cod, g);
+    }
+  }
+
+  const usados = new Set<string>();
+  const linhas = (pedido.itens ?? []).map((it) => {
+    const cod = String(it.codigo ?? "").trim();
+    const nf = cod ? nfPorCodigo.get(cod) : undefined;
+    if (nf) usados.add(cod);
+    const qtdPed = Number(it.qtd ?? 0) || 0;
+    const qtdNf = nf?.qtd ?? 0;
+    const dif = Math.round((qtdNf - qtdPed) * 1000) / 1000;
+    const status = qtdNf === 0 ? "nao_entregue" : dif < -0.001 ? "parcial" : dif > 0.001 ? "sobra" : "ok";
+    return {
+      codigo: cod, nome: String(it.nome ?? ""), cor: (it.cor as string) ?? null,
+      qtdPedido: qtdPed, valorUnitPedido: Number(it.valorUnit ?? 0) || 0, valorTotalPedido: Number(it.valorTotal ?? 0) || 0,
+      qtdNf, valorUnitNf: nf && nf.unitN ? Math.round((nf.unitSoma / nf.unitN) * 100) / 100 : 0, valorTotalNf: Math.round((nf?.valor ?? 0) * 100) / 100,
+      dif, status,
+    };
+  });
+  // Itens que vieram na NF e NÃO estavam no pedido (extras / a mais).
+  const extras = [...nfPorCodigo.entries()].filter(([cod]) => cod && !usados.has(cod)).map(([cod, g]) => ({
+    codigo: cod, nome: g.nome, qtdNf: g.qtd, valorTotalNf: Math.round(g.valor * 100) / 100,
+    valorUnitNf: g.unitN ? Math.round((g.unitSoma / g.unitN) * 100) / 100 : 0,
+  }));
+  const totalPedido = (pedido.itens ?? []).reduce((s, it) => s + (Number(it.valorTotal ?? 0) || 0), 0);
+  const resumo = {
+    itensPedido: linhas.length,
+    ok: linhas.filter((l) => l.status === "ok").length,
+    parcial: linhas.filter((l) => l.status === "parcial").length,
+    sobra: linhas.filter((l) => l.status === "sobra").length,
+    naoEntregue: linhas.filter((l) => l.status === "nao_entregue").length,
+    extras: extras.length,
+    totalPedido: Math.round(totalPedido * 100) / 100,
+    totalNf: Math.round(nfValorTotal * 100) / 100,
+    atendidoIntegral: linhas.length > 0 && linhas.every((l) => l.status === "ok" || l.status === "sobra"),
+  };
+  return { ok: true, linhas, extras, resumo, nfs: chaves };
+});
+
+/** Salva o mapeamento de colunas de um fornecedor (reuso no próximo import). */
+export const salvarMapaFornecedor = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro", "fiscal"]);
+  const d = req.data ?? {};
+  const chave = String(d.chave ?? "").trim().slice(0, 120);
+  if (!chave) throw new HttpsError("invalid-argument", "chave do fornecedor obrigatória.");
+  const map = (d.map && typeof d.map === "object") ? d.map : {};
+  await db.collection("supplier_maps").doc(chave).set(
+    { chave, fornecedorNome: String(d.fornecedorNome ?? "").slice(0, 160), map, atualizadoEm: agoraISO(), atualizadoPor: uid },
+    { merge: true },
+  );
+  return { ok: true };
+});
+
 // ============ GESTÃO DE USUÁRIOS E PERFIS (RBAC) ============
 
 /**

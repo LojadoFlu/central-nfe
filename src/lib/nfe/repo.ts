@@ -1380,3 +1380,106 @@ export function arquivoParaBase64(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
+
+// ---- Pedidos de compra ----
+
+export interface ItemPedido {
+  codigo: string;
+  nome: string;
+  cor?: string | null;
+  qtd: number;
+  valorUnit: number;
+  valorTotal: number;
+}
+export interface PedidoCompra {
+  id: string;
+  empresaId: string;
+  empresaNome?: string | null;
+  fornecedorNome: string;
+  cnpjFornecedor?: string | null;
+  data: string; // YYYY-MM-DD
+  itens: ItemPedido[];
+  totalQtd?: number;
+  totalValor?: number;
+  nfs?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/** Lista os pedidos de compra (mais recentes primeiro). */
+export async function listarPedidos(): Promise<PedidoCompra[]> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, "purchase_orders"));
+  const arr = snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as PedidoCompra[];
+  return arr.sort((a, b) => (b.data ?? "").localeCompare(a.data ?? ""));
+}
+/** Um pedido pelo id. */
+export async function obterPedido(id: string): Promise<PedidoCompra | null> {
+  const { db } = fb();
+  const s = await getDoc(doc(db, "purchase_orders", id));
+  return s.exists() ? ({ id: s.id, ...(s.data() as object) } as PedidoCompra) : null;
+}
+/** Cria/atualiza um pedido de compra. */
+export async function salvarPedido(input: {
+  id?: string; empresaId: string; fornecedorNome: string; cnpjFornecedor?: string; data: string;
+  itens: Array<{ codigo: string; nome: string; cor?: string; qtd: number; valorUnit: number; valorTotal?: number }>;
+}): Promise<{ ok: boolean; id: string }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "salvarPedidoCompra");
+  const res = await fn(input);
+  return res.data as { ok: boolean; id: string };
+}
+/** Exclui um pedido. */
+export async function excluirPedido(id: string): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "excluirPedidoCompra");
+  const res = await fn({ id });
+  return res.data as { ok: boolean };
+}
+/** Associa/desassocia uma NF (chave) a um pedido. */
+export async function associarNf(pedidoId: string, chNFe: string, add: boolean): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "associarNfPedido");
+  const res = await fn({ pedidoId, chNFe, add });
+  return res.data as { ok: boolean };
+}
+
+export interface LinhaConcilPedido {
+  codigo: string; nome: string; cor?: string | null;
+  qtdPedido: number; valorUnitPedido: number; valorTotalPedido: number;
+  qtdNf: number; valorUnitNf: number; valorTotalNf: number;
+  dif: number; status: "ok" | "parcial" | "sobra" | "nao_entregue";
+}
+export interface ExtraNf { codigo: string; nome: string; qtdNf: number; valorUnitNf: number; valorTotalNf: number }
+export interface ConcilPedido {
+  ok: boolean;
+  linhas: LinhaConcilPedido[];
+  extras: ExtraNf[];
+  resumo: {
+    itensPedido: number; ok: number; parcial: number; sobra: number; naoEntregue: number; extras: number;
+    totalPedido: number; totalNf: number; atendidoIntegral: boolean;
+  };
+  nfs: string[];
+}
+/** Concilia o pedido com as NFs associadas. */
+export async function conciliarPedido(pedidoId: string): Promise<ConcilPedido> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "conciliarPedidoCompra");
+  const res = await fn({ pedidoId });
+  return res.data as ConcilPedido;
+}
+
+export interface MapaFornecedor { chave: string; fornecedorNome?: string; map: Record<string, string> }
+/** Lê o mapeamento de colunas salvo de um fornecedor. */
+export async function obterMapaFornecedor(chave: string): Promise<MapaFornecedor | null> {
+  const { db } = fb();
+  const s = await getDoc(doc(db, "supplier_maps", chave));
+  return s.exists() ? (s.data() as MapaFornecedor) : null;
+}
+/** Salva o mapeamento de colunas de um fornecedor. */
+export async function salvarMapaFornecedor(chave: string, fornecedorNome: string, map: Record<string, string>): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "salvarMapaFornecedor");
+  const res = await fn({ chave, fornecedorNome, map });
+  return res.data as { ok: boolean };
+}

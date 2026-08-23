@@ -113,6 +113,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Pedidos de compra e mapeamentos de coluna por fornecedor — leitura por
+    // autenticado; escrita só backend (via callable).
+    match /purchase_orders/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+    match /supplier_maps/{id} {
+      allow read: if isAuth();
+      allow write: if false;
+    }
+
     // CT-e (fretes) — documentos, eventos, estado/logs de sync. Leitura por
     // autenticado (estado/logs restritos a fiscal/admin); escrita só backend.
     match /cte_documents/{id} {

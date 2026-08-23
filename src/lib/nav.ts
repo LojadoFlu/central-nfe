@@ -53,6 +53,7 @@ export const PRIMARY_NAV: NavItem[] = [
 export const SECONDARY_NAV: NavItem[] = [
   { label: "Financeiro", href: "/financeiro", icon: Wallet, modulo: "financeiro" },
   { label: "Fornecedores", href: "/fornecedores", icon: Truck, modulo: "fornecedores" },
+  { label: "Pedidos de compra", href: "/pedidos", icon: ShoppingCart, modulo: "financeiro" },
   { label: "Recebimento de compras", href: "/recebimento", icon: PackageCheck, modulo: "notas" },
   { label: "Pendências", href: "/pendencias", icon: ClipboardCheck, modulo: "financeiro" },
   { label: "Fluxo de caixa", href: "/fluxo", icon: LineChart, modulo: "financeiro" },
