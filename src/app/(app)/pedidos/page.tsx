@@ -105,6 +105,7 @@ export default function PedidosPage() {
   const [fornecedor, setFornecedor] = useState("");
   const [cnpjForn, setCnpjForn] = useState("");
   const [data, setData] = useState(hojeISO());
+  const [dataEntrega, setDataEntrega] = useState("");
   const [abasRaw, setAbasRaw] = useState<{ nome: string; rows: unknown[][] }[]>([]);
   const [linhaCab, setLinhaCab] = useState(0); // índice da linha do cabeçalho
   const [salvoMap, setSalvoMap] = useState<Record<string, string>>({});
@@ -235,7 +236,7 @@ export default function PedidosPage() {
   const totalGeral = grupos.reduce((s, g) => s + g.total, 0);
 
   function limparNovo() {
-    setAberto(false); setFornecedor(""); setCnpjForn(""); setData(hojeISO());
+    setAberto(false); setFornecedor(""); setCnpjForn(""); setData(hojeISO()); setDataEntrega("");
     setAbasRaw([]); setLinhaCab(0); setSalvoMap({}); setMap({ ...MAP_VAZIO }); setModoLoja("unica"); setColLoja(-1); setLojaEmp({});
   }
 
@@ -254,7 +255,7 @@ export default function PedidosPage() {
       for (const g of grupos) {
         if (g.itens.length === 0) continue;
         const r = await salvarPedido({
-          empresaId: g.empresaId, fornecedorNome: fornecedor.trim(), cnpjFornecedor: cnpjForn.replace(/\D/g, "") || undefined, data,
+          empresaId: g.empresaId, fornecedorNome: fornecedor.trim(), cnpjFornecedor: cnpjForn.replace(/\D/g, "") || undefined, data, dataEntrega: dataEntrega || undefined,
           itens: g.itens.map((it) => ({ codigo: it.codigo, nome: it.nome, cor: it.cor || undefined, tamanho: it.tamanho || undefined, qtd: it.qtd, valorUnit: it.valorUnit, valorTotal: it.valorTotal })),
         });
         ultimoId = r.id;
@@ -295,6 +296,10 @@ export default function PedidosPage() {
               <label className="space-y-1">
                 <span className="block text-[11px] text-muted-foreground">Data do pedido</span>
                 <Input type="date" value={data} onChange={(e) => setData(e.target.value)} className="h-9" />
+              </label>
+              <label className="space-y-1">
+                <span className="block text-[11px] text-muted-foreground">Data prevista de entrega</span>
+                <Input type="date" value={dataEntrega} onChange={(e) => setDataEntrega(e.target.value)} className="h-9" />
               </label>
             </div>
 

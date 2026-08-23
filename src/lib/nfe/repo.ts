@@ -1399,6 +1399,7 @@ export interface PedidoCompra {
   fornecedorNome: string;
   cnpjFornecedor?: string | null;
   data: string; // YYYY-MM-DD
+  dataEntrega?: string | null;
   itens: ItemPedido[];
   totalQtd?: number;
   totalValor?: number;
@@ -1422,7 +1423,7 @@ export async function obterPedido(id: string): Promise<PedidoCompra | null> {
 }
 /** Cria/atualiza um pedido de compra. */
 export async function salvarPedido(input: {
-  id?: string; empresaId: string; fornecedorNome: string; cnpjFornecedor?: string; data: string;
+  id?: string; empresaId: string; fornecedorNome: string; cnpjFornecedor?: string; data: string; dataEntrega?: string;
   itens: Array<{ codigo: string; nome: string; cor?: string; tamanho?: string; qtd: number; valorUnit: number; valorTotal?: number }>;
 }): Promise<{ ok: boolean; id: string }> {
   const { functions } = fb();
@@ -1464,6 +1465,7 @@ export interface ConcilPedido {
   };
   nfs: string[];
   chaveFornecedor: string;
+  entrega: { prevista: string; realizada: string; difDias: number; status: "adiantado" | "no_prazo" | "atrasado" } | null;
 }
 /** Concilia o pedido com as NFs associadas. */
 export async function conciliarPedido(pedidoId: string): Promise<ConcilPedido> {

@@ -3040,6 +3040,7 @@ export const salvarPedidoCompra = onCall({ ...opcoes, memory: "512MiB" }, async 
   const fornecedorNome = String(d.fornecedorNome ?? "").trim().slice(0, 160);
   const cnpjFornecedor = String(d.cnpjFornecedor ?? "").replace(/\D/g, "") || null;
   const data = String(d.data ?? "").slice(0, 10);
+  const dataEntrega = /^\d{4}-\d{2}-\d{2}$/.test(String(d.dataEntrega ?? "")) ? String(d.dataEntrega) : null;
   if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
   if (!fornecedorNome) throw new HttpsError("invalid-argument", "Informe o fornecedor.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) throw new HttpsError("invalid-argument", "Data inválida.");
@@ -3067,7 +3068,7 @@ export const salvarPedidoCompra = onCall({ ...opcoes, memory: "512MiB" }, async 
   const existe = id ? (await ref.get()).exists : false;
   await ref.set({
     id: ref.id, empresaId, empresaNome: emp?.nome ?? null, fornecedorNome, cnpjFornecedor,
-    data, itens, totalQtd, totalValor, updatedAt: now,
+    data, dataEntrega, itens, totalQtd, totalValor, updatedAt: now,
     ...(existe ? {} : { nfs: [], createdAt: now, createdBy: uid }),
   }, { merge: true });
   await auditar(uid, existe ? "pedido.atualizar" : "pedido.criar", { id: ref.id, fornecedorNome, itens: itens.length });
@@ -3108,9 +3109,10 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
   if (!id) throw new HttpsError("invalid-argument", "pedidoId obrigatório.");
   const snap = await db.collection("purchase_orders").doc(id).get();
   if (!snap.exists) throw new HttpsError("not-found", "Pedido não encontrado.");
-  const pedido = snap.data() as { itens?: Array<Record<string, unknown>>; nfs?: string[]; fornecedorNome?: string; cnpjFornecedor?: string | null };
+  const pedido = snap.data() as { itens?: Array<Record<string, unknown>>; nfs?: string[]; fornecedorNome?: string; cnpjFornecedor?: string | null; dataEntrega?: string | null };
   const chaves = Array.isArray(pedido.nfs) ? pedido.nfs : [];
   const itensPed = pedido.itens ?? [];
+  let maxDhEmi = ""; // data mais recente entre as NFs (data efetiva de entrega)
 
   const norm = (s: unknown) => String(s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
   const normCod = (s: unknown) => norm(s).replace(/[^a-z0-9]/g, ""); // só alfanumérico
@@ -3135,6 +3137,8 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
       const it = doc.data();
       const v = Number(it.valorTotal ?? 0) || 0;
       nfValorTotal += v;
+      const dh = String(it.dhEmi ?? "").slice(0, 10);
+      if (dh && dh > maxDhEmi) maxDhEmi = dh;
       nfItens.push({
         cProd: String(it.cProd ?? "").trim(), cNorm: normCod(it.cProd), descNorm: norm(it.descricaoBusca ?? it.descricao),
         nome: String(it.descricao ?? ""), qtd: Number(it.quantidade ?? 0) || 0, valor: v, unit: Number(it.valorUnitario ?? 0) || 0, usado: false,
@@ -3247,7 +3251,15 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     difValor: Math.round((totalNfR - totalPedR) * 100) / 100,
     atendidoIntegral: linhas.length > 0 && linhas.every((l) => l.status === "ok" || l.status === "sobra" || l.status === "excesso"),
   };
-  return { ok: true, linhas, extras, resumo, nfs: chaves, chaveFornecedor: chaveForn };
+  // Comparação de prazo: data prevista de entrega × data da NF (mais recente).
+  // Até 7 dias de diferença = no prazo; antes = adiantado; depois = atrasado.
+  let entrega: { prevista: string; realizada: string; difDias: number; status: string } | null = null;
+  if (pedido.dataEntrega && maxDhEmi) {
+    const difDias = Math.round((new Date(`${maxDhEmi}T00:00:00`).getTime() - new Date(`${pedido.dataEntrega}T00:00:00`).getTime()) / 86_400_000);
+    const status = difDias < -7 ? "adiantado" : difDias > 7 ? "atrasado" : "no_prazo";
+    entrega = { prevista: pedido.dataEntrega, realizada: maxDhEmi, difDias, status };
+  }
+  return { ok: true, linhas, extras, resumo, entrega, nfs: chaves, chaveFornecedor: chaveForn };
 });
 
 /** Salva o mapeamento de colunas de um fornecedor (reuso no próximo import). */

@@ -111,7 +111,7 @@ export default function PedidoDetalhePage() {
       <Link href="/pedidos" className="mb-3 inline-flex items-center gap-1 text-sm text-primary"><ArrowLeft className="size-4" /> Pedidos</Link>
       <PageHeader
         title={pedido.fornecedorNome}
-        description={`${formatarData(pedido.data)} · ${empresas[pedido.empresaId] ?? pedido.empresaId} · ${pedido.itens?.length ?? 0} itens · ${formatBRL(pedido.totalValor)}`}
+        description={`${formatarData(pedido.data)} · ${empresas[pedido.empresaId] ?? pedido.empresaId} · ${pedido.itens?.length ?? 0} itens · ${formatBRL(pedido.totalValor)}${pedido.dataEntrega ? ` · entrega prev. ${formatarData(pedido.dataEntrega)}` : ""}`}
         action={podeEditar ? (
           ocupado === "del" ? <span className="text-xs text-muted-foreground">Excluindo…</span> : (
             <Button size="sm" variant="ghost" className="text-destructive" onClick={remover}><Trash2 className="size-4" /> Excluir</Button>
@@ -173,9 +173,22 @@ export default function PedidoDetalhePage() {
           {/* Resumo */}
           <Card className={`mb-3 ${concil.resumo.atendidoIntegral ? "border-success/40" : "border-warning/40"}`}>
             <CardContent className="py-4">
-              <h2 className="text-[0.95rem] font-semibold tracking-tight">
-                {concil.resumo.atendidoIntegral ? "✓ Pedido atendido" : "⚠ Pedido incompleto"}
-              </h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-[0.95rem] font-semibold tracking-tight">
+                  {concil.resumo.atendidoIntegral ? "✓ Pedido atendido" : "⚠ Pedido incompleto"}
+                </h2>
+                {concil.entrega ? (
+                  <Badge variant={concil.entrega.status === "no_prazo" ? "success" : concil.entrega.status === "atrasado" ? "destructive" : "warning"}>
+                    {concil.entrega.status === "no_prazo" ? "No prazo" : concil.entrega.status === "atrasado" ? `Atrasado ${concil.entrega.difDias}d` : `Adiantado ${-concil.entrega.difDias}d`}
+                  </Badge>
+                ) : null}
+              </div>
+              {concil.entrega ? (
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  Entrega prevista {formatarData(concil.entrega.prevista)} · NF {formatarData(concil.entrega.realizada)}
+                  {" "}({concil.entrega.difDias > 0 ? "+" : ""}{concil.entrega.difDias} dias)
+                </p>
+              ) : null}
               {/* Totais pedido → NF + diferença (unidades e valor) */}
               <div className="mt-2 grid grid-cols-2 gap-2 text-center">
                 <div className="rounded-md border border-border p-2">
