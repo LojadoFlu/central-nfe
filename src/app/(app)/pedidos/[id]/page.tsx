@@ -16,6 +16,7 @@ import {
   excluirPedido,
   documentosDoFornecedor,
   listarEmpresas,
+  salvarDePara,
   type PedidoCompra,
   type ConcilPedido,
   type NfeDocumento,
@@ -74,6 +75,19 @@ export default function PedidoDetalhePage() {
     setErro(null);
     try { setConcil(await conciliarPedido(id)); }
     catch (e) { setErro((e as Error).message); }
+    finally { setOcupado(null); }
+  }
+  // De-para: liga um item da NF (cProd) a um item do pedido e reconcilia.
+  async function vincular(nfCProd: string, idxPedido: number) {
+    if (!concil || idxPedido < 0) return;
+    const it = pedido?.itens?.[idxPedido];
+    if (!it) return;
+    setOcupado("dp:" + nfCProd);
+    setErro(null);
+    try {
+      await salvarDePara({ chave: concil.chaveFornecedor, nfCProd, codigo: it.codigo, tamanho: it.tamanho ?? "" });
+      setConcil(await conciliarPedido(id));
+    } catch (e) { setErro((e as Error).message); }
     finally { setOcupado(null); }
   }
   async function remover() {
@@ -201,20 +215,36 @@ export default function PedidoDetalhePage() {
             </CardContent>
           </Card>
 
-          {/* Extras (na NF, fora do pedido) */}
+          {/* Extras (na NF, não casaram) — com de-para manual */}
           {concil.extras.length ? (
             <Card className="mb-3 border-warning/40">
               <CardContent className="py-3">
-                <h3 className="mb-2 text-sm font-semibold">Vieram na NF fora do pedido ({concil.extras.length})</h3>
+                <h3 className="mb-1 text-sm font-semibold">Não casaram com o pedido ({concil.extras.length})</h3>
+                <p className="mb-2 text-[11px] text-muted-foreground">Se algum destes é um item do pedido que o app não reconheceu, use &quot;Vincular a&quot; — o de-para fica salvo para esse fornecedor.</p>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
-                    <thead className="text-muted-foreground"><tr><th className="p-1.5 text-left">Código / nome</th><th className="p-1.5 text-right">Qtd</th><th className="p-1.5 text-right">Total</th></tr></thead>
+                    <thead className="text-muted-foreground"><tr><th className="p-1.5 text-left">Código / nome</th><th className="p-1.5 text-right">Qtd</th><th className="p-1.5 text-right">Total</th>{podeEditar ? <th className="p-1.5 text-left">Vincular a</th> : null}</tr></thead>
                     <tbody>
                       {concil.extras.map((e, i) => (
                         <tr key={i} className="border-t border-border">
                           <td className="p-1.5"><span className="font-mono">{e.codigo}</span> <span className="text-muted-foreground">{e.nome}</span></td>
                           <td className="p-1.5 text-right tnum">{e.qtdNf}</td>
                           <td className="p-1.5 text-right tnum">{formatBRL(e.valorTotalNf)}</td>
+                          {podeEditar ? (
+                            <td className="p-1.5">
+                              <select
+                                defaultValue={-1}
+                                disabled={ocupado === "dp:" + e.codigo}
+                                onChange={(ev) => vincular(e.codigo, Number(ev.target.value))}
+                                className="h-8 w-56 rounded-md border border-input bg-background px-2 text-xs"
+                              >
+                                <option value={-1}>— escolher item do pedido —</option>
+                                {(pedido.itens ?? []).map((it, j) => (
+                                  <option key={j} value={j}>{it.codigo}{it.tamanho ? ` · ${it.tamanho}` : ""} — {it.nome}</option>
+                                ))}
+                              </select>
+                            </td>
+                          ) : null}
                         </tr>
                       ))}
                     </tbody>
@@ -226,7 +256,8 @@ export default function PedidoDetalhePage() {
         </>
       ) : null}
 
-      {/* Itens do pedido */}
+      {/* Itens do pedido — só antes de conciliar (a conciliação já mostra por item) */}
+      {concil ? null : (
       <Card>
         <CardContent className="py-3">
           <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">Itens do pedido</h2>
@@ -245,6 +276,7 @@ export default function PedidoDetalhePage() {
           </div>
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }

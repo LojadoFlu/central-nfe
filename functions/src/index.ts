@@ -3108,11 +3108,16 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
   if (!id) throw new HttpsError("invalid-argument", "pedidoId obrigatório.");
   const snap = await db.collection("purchase_orders").doc(id).get();
   if (!snap.exists) throw new HttpsError("not-found", "Pedido não encontrado.");
-  const pedido = snap.data() as { itens?: Array<Record<string, unknown>>; nfs?: string[] };
+  const pedido = snap.data() as { itens?: Array<Record<string, unknown>>; nfs?: string[]; fornecedorNome?: string; cnpjFornecedor?: string | null };
   const chaves = Array.isArray(pedido.nfs) ? pedido.nfs : [];
   const itensPed = pedido.itens ?? [];
 
   const norm = (s: unknown) => String(s ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const normCod = (s: unknown) => norm(s).replace(/[^a-z0-9]/g, ""); // só alfanumérico
+  // De-para manual salvo por fornecedor: cProd da NF (normalizado) → código+tamanho do pedido.
+  const chaveForn = String(pedido.cnpjFornecedor ?? "").replace(/\D/g, "") || norm(pedido.fornecedorNome).replace(/\s+/g, "-").slice(0, 60) || "sem-fornecedor";
+  const mapDoc = await db.collection("supplier_maps").doc(chaveForn).get();
+  const dePara = (mapDoc.exists ? ((mapDoc.data() as { dePara?: Record<string, { codigo?: string; tamanho?: string }> }).dePara ?? {}) : {});
   // Tamanho aparece como TOKEN isolado na descrição (evita "M" casar dentro de "HOME").
   const tokenPresente = (descNorm: string, tam: string) => {
     const t = norm(tam).trim();
@@ -3122,7 +3127,7 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
   };
 
   // Todos os itens das NFs associadas (para casar 1 a 1, marcando os usados).
-  const nfItens: Array<{ cProd: string; descNorm: string; nome: string; qtd: number; valor: number; unit: number; usado: boolean }> = [];
+  const nfItens: Array<{ cProd: string; cNorm: string; descNorm: string; nome: string; qtd: number; valor: number; unit: number; usado: boolean }> = [];
   let nfValorTotal = 0;
   for (const ch of chaves) {
     const its = await db.collection("nfe_items").where("chNFe", "==", ch).get();
@@ -3131,37 +3136,73 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
       const v = Number(it.valorTotal ?? 0) || 0;
       nfValorTotal += v;
       nfItens.push({
-        cProd: String(it.cProd ?? "").trim(), descNorm: norm(it.descricaoBusca ?? it.descricao),
+        cProd: String(it.cProd ?? "").trim(), cNorm: normCod(it.cProd), descNorm: norm(it.descricaoBusca ?? it.descricao),
         nome: String(it.descricao ?? ""), qtd: Number(it.quantidade ?? 0) || 0, valor: v, unit: Number(it.valorUnitario ?? 0) || 0, usado: false,
       });
     }
   }
-  // Um código é "compartilhado" quando aparece em >1 item do pedido com tamanhos diferentes.
-  const tamsPorCodigo = new Map<string, Set<string>>();
-  for (const it of itensPed) {
-    const cod = String(it.codigo ?? "").trim();
-    const set = tamsPorCodigo.get(cod) ?? new Set<string>();
-    set.add(String(it.tamanho ?? "").trim());
-    tamsPorCodigo.set(cod, set);
-  }
-  const compartilhado = (cod: string) => (tamsPorCodigo.get(cod)?.size ?? 0) > 1;
+  // Item do pedido normalizado + acumuladores da NF que casarem com ele.
+  const peds = itensPed.map((it) => ({
+    it,
+    pc: normCod(it.codigo),                 // código só alfanumérico ("12345")
+    pt: norm(it.tamanho ?? "").trim(),       // tamanho normalizado ("m")
+    palavras: norm(it.nome ?? "").split(/\s+/).filter((w) => w.length >= 3),
+    qtdNf: 0, valorNf: 0, unitSoma: 0, unitN: 0,
+  }));
 
-  const linhas = itensPed.map((it) => {
-    const cod = String(it.codigo ?? "").trim();
-    const tam = String(it.tamanho ?? "").trim();
-    // Casa por código; se o código é compartilhado entre tamanhos, exige o tamanho na descrição.
-    const cand = nfItens.filter((n) => !n.usado && n.cProd === cod && (!compartilhado(cod) || !tam || tokenPresente(n.descNorm, tam)));
-    let qtdNf = 0, valorNf = 0, unitSoma = 0, unitN = 0;
-    for (const n of cand) { n.usado = true; qtdNf += n.qtd; valorNf += n.valor; if (n.unit > 0) { unitSoma += n.unit; unitN++; } }
+  // Pontua o quão bem um item da NF casa com um item do pedido, combinando código,
+  // código+tamanho concatenado (caso Puma), prefixo, contido, e semelhança de NOME.
+  const pontuar = (p: typeof peds[number], n: typeof nfItens[number]): number => {
+    let s = 0;
+    const pct = p.pc + p.pt; // "12345" + "m" = "12345m"
+    if (p.pc && n.cNorm === p.pc) s += 100;                                   // código exato
+    else if (pct && n.cNorm === pct) s += 100;                                // código+tamanho concatenado == cProd
+    else if (p.pc && p.pt && n.cNorm.startsWith(p.pc) && n.cNorm.slice(p.pc.length).includes(p.pt)) s += 90; // prefixo código + tamanho no resto
+    else if (p.pc.length >= 3 && n.cNorm.includes(p.pc)) s += 60;             // cProd contém o código
+    else if (n.cNorm.length >= 3 && p.pc.includes(n.cNorm)) s += 55;          // código contém o cProd
+    // NOME: fração de palavras do pedido presentes na descrição da NF (até 60 —
+    // um match perfeito de nome, sozinho, já liga quando o código não bate).
+    if (p.palavras.length) {
+      const hits = p.palavras.filter((w) => n.descNorm.includes(w)).length;
+      s += Math.round((hits / p.palavras.length) * 60);
+    }
+    // tamanho como token na descrição — desempata a grade
+    if (p.pt && tokenPresente(n.descNorm, p.pt)) s += 15;
+    return s;
+  };
+
+  const acumula = (i: number, n: typeof nfItens[number]) => {
+    const p = peds[i]; p.qtdNf += n.qtd; p.valorNf += n.valor; if (n.unit > 0) { p.unitSoma += n.unit; p.unitN++; } n.usado = true;
+  };
+  const LIMIAR = 55; // pontuação mínima para considerar casado
+  for (const n of nfItens) {
+    // 1) de-para manual (prioridade máxima)
+    const dp = dePara[n.cNorm];
+    if (dp) {
+      const idx = peds.findIndex((p) => normCod(dp.codigo) === p.pc && norm(dp.tamanho ?? "").trim() === p.pt);
+      if (idx >= 0) { acumula(idx, n); continue; }
+    }
+    // 2) casamento automático por pontuação
+    let melhor = -1, melhorS = 0;
+    for (let i = 0; i < peds.length; i++) {
+      const sc = pontuar(peds[i], n);
+      if (sc > melhorS) { melhorS = sc; melhor = i; }
+    }
+    if (melhor >= 0 && melhorS >= LIMIAR) acumula(melhor, n);
+  }
+
+  const linhas = peds.map((p) => {
+    const it = p.it;
     const qtdPed = Number(it.qtd ?? 0) || 0;
+    const qtdNf = p.qtdNf;
     const dif = Math.round((qtdNf - qtdPed) * 1000) / 1000;
     // pedido 0 + NF > 0 = excesso; NF 0 = não entregue; senão parcial/sobra/ok.
     const status = (qtdPed === 0 && qtdNf > 0) ? "excesso"
       : qtdNf === 0 ? "nao_entregue" : dif < -0.001 ? "parcial" : dif > 0.001 ? "sobra" : "ok";
     return {
-      codigo: cod, nome: String(it.nome ?? ""), cor: (it.cor as string) ?? null, tamanho: (it.tamanho as string) ?? null,
+      codigo: String(it.codigo ?? "").trim(), nome: String(it.nome ?? ""), cor: (it.cor as string) ?? null, tamanho: (it.tamanho as string) ?? null,
       qtdPedido: qtdPed, valorUnitPedido: Number(it.valorUnit ?? 0) || 0, valorTotalPedido: Number(it.valorTotal ?? 0) || 0,
-      qtdNf, valorUnitNf: unitN ? Math.round((unitSoma / unitN) * 100) / 100 : 0, valorTotalNf: Math.round(valorNf * 100) / 100,
+      qtdNf, valorUnitNf: p.unitN ? Math.round((p.unitSoma / p.unitN) * 100) / 100 : 0, valorTotalNf: Math.round(p.valorNf * 100) / 100,
       dif, status,
     };
   }).filter((l) => !(l.qtdPedido === 0 && l.qtdNf === 0)); // esconde linhas zeradas dos dois lados
@@ -3190,7 +3231,7 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     totalNf: Math.round(nfValorTotal * 100) / 100,
     atendidoIntegral: linhas.length > 0 && linhas.every((l) => l.status === "ok" || l.status === "sobra" || l.status === "excesso"),
   };
-  return { ok: true, linhas, extras, resumo, nfs: chaves };
+  return { ok: true, linhas, extras, resumo, nfs: chaves, chaveFornecedor: chaveForn };
 });
 
 /** Salva o mapeamento de colunas de um fornecedor (reuso no próximo import). */
@@ -3204,6 +3245,33 @@ export const salvarMapaFornecedor = onCall(opcoes, async (req) => {
     { chave, fornecedorNome: String(d.fornecedorNome ?? "").slice(0, 160), map, atualizadoEm: agoraISO(), atualizadoPor: uid },
     { merge: true },
   );
+  return { ok: true };
+});
+
+/** De-para manual (por fornecedor): liga o cProd de um item da NF a um item do
+ * pedido (código + tamanho), quando o batimento automático não conseguiu. Reusado
+ * nas próximas conciliações do fornecedor. Admin/financeiro/fiscal. */
+export const salvarDeParaFornecedor = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro", "fiscal"]);
+  const d = req.data ?? {};
+  const chave = String(d.chave ?? "").trim().slice(0, 120);
+  const nfCProd = String(d.nfCProd ?? "").trim();
+  if (!chave || !nfCProd) throw new HttpsError("invalid-argument", "chave e nfCProd obrigatórios.");
+  const nfNorm = nfCProd.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]/g, "");
+  if (!nfNorm) throw new HttpsError("invalid-argument", "cProd inválido.");
+  const ref = db.collection("supplier_maps").doc(chave);
+  if (d.remover === true) {
+    await ref.set({ chave }, { merge: true });
+    await ref.update({ [`dePara.${nfNorm}`]: FieldValue.delete(), atualizadoEm: agoraISO() }).catch(() => {});
+  } else {
+    const codigo = String(d.codigo ?? "").trim();
+    if (!codigo) throw new HttpsError("invalid-argument", "código do pedido obrigatório.");
+    await ref.set(
+      { chave, dePara: { [nfNorm]: { codigo, tamanho: String(d.tamanho ?? "").trim() } }, atualizadoEm: agoraISO(), atualizadoPor: uid },
+      { merge: true },
+    );
+  }
+  await auditar(uid, "pedido.dePara", { chave, nfCProd });
   return { ok: true };
 });
 

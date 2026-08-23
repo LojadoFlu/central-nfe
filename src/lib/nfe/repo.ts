@@ -1461,6 +1461,7 @@ export interface ConcilPedido {
     totalPedido: number; totalNf: number; atendidoIntegral: boolean;
   };
   nfs: string[];
+  chaveFornecedor: string;
 }
 /** Concilia o pedido com as NFs associadas. */
 export async function conciliarPedido(pedidoId: string): Promise<ConcilPedido> {
@@ -1482,5 +1483,15 @@ export async function salvarMapaFornecedor(chave: string, fornecedorNome: string
   const { functions } = fb();
   const fn = httpsCallable(functions, "salvarMapaFornecedor");
   const res = await fn({ chave, fornecedorNome, map });
+  return res.data as { ok: boolean };
+}
+
+/** De-para manual (por fornecedor): liga o cProd da NF a um item do pedido. */
+export async function salvarDePara(input: {
+  chave: string; nfCProd: string; codigo?: string; tamanho?: string; remover?: boolean;
+}): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "salvarDeParaFornecedor");
+  const res = await fn(input);
   return res.data as { ok: boolean };
 }
