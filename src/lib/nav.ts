@@ -35,8 +35,8 @@ export interface NavItem {
   label: string;
   href: string;
   icon: LucideIcon;
-  /** Chave do módulo (permissoes.ts). Vazio = sempre visível para autenticado. */
-  modulo?: string;
+  /** Chave(s) do módulo (permissoes.ts). Array = visível se tiver QUALQUER um. Vazio = sempre visível. */
+  modulo?: string | string[];
   /** Só administradores enxergam. */
   adminOnly?: boolean;
 }
@@ -53,7 +53,7 @@ export const PRIMARY_NAV: NavItem[] = [
 export const SECONDARY_NAV: NavItem[] = [
   { label: "Financeiro", href: "/financeiro", icon: Wallet, modulo: "financeiro" },
   { label: "Fornecedores", href: "/fornecedores", icon: Truck, modulo: "fornecedores" },
-  { label: "Pedidos de compra", href: "/pedidos", icon: ShoppingCart, modulo: "financeiro" },
+  { label: "Pedidos de compra", href: "/pedidos", icon: ShoppingCart, modulo: ["financeiro", "compras"] },
   { label: "Recebimento de compras", href: "/recebimento", icon: PackageCheck, modulo: "notas" },
   { label: "Pendências", href: "/pendencias", icon: ClipboardCheck, modulo: "financeiro" },
   { label: "Fluxo de caixa", href: "/fluxo", icon: LineChart, modulo: "financeiro" },
@@ -68,7 +68,7 @@ export const SECONDARY_NAV: NavItem[] = [
   { label: "Serviços (NFS-e)", href: "/nfses", icon: Wrench, modulo: "nfses" },
   { label: "Acordos", href: "/acordos", icon: Handshake, modulo: "acordos" },
   { label: "Despesas fixas", href: "/despesas", icon: Receipt, modulo: "despesas" },
-  { label: "Despesas manuais", href: "/despesas-manuais", icon: Coins, modulo: "despesas" },
+  { label: "Despesas manuais", href: "/despesas-manuais", icon: Coins, modulo: ["despesas", "despesas-manuais"] },
   { label: "Relatórios", href: "/relatorios", icon: BarChart3, modulo: "relatorios" },
   { label: "Alertas", href: "/alertas", icon: Bell, modulo: "alertas" },
   { label: "Integrações", href: "/integracoes", icon: Plug, modulo: "integracoes" },
@@ -94,6 +94,7 @@ export function filtrarPorPermissao(itens: NavItem[], ctx: PermCtx): NavItem[] {
   return itens.filter((i) => {
     if (i.adminOnly) return ctx.isAdmin;
     if (!i.modulo) return true; // Início e afins
-    return ctx.podeModulo(i.modulo);
+    const mods = Array.isArray(i.modulo) ? i.modulo : [i.modulo];
+    return mods.some((m) => ctx.podeModulo(m));
   });
 }

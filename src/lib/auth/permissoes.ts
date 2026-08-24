@@ -10,12 +10,14 @@ export interface ModuloDef {
 /** Módulos (telas) que um perfil pode liberar. "Início" é sempre visível. */
 export const MODULOS: ModuloDef[] = [
   { key: "vendas", label: "Vendas (PDV)", href: "/vendas" },
-  { key: "notas", label: "Notas (NF-e)", href: "/notas" },
+  { key: "notas", label: "Notas + Recebimento de compras", href: "/notas" },
   { key: "ctes", label: "Fretes (CT-e)", href: "/ctes" },
   { key: "nfses", label: "Serviços (NFS-e)", href: "/nfses" },
   { key: "financeiro", label: "Financeiro", href: "/financeiro" },
+  { key: "compras", label: "Pedidos de compra", href: "/pedidos" },
   { key: "acordos", label: "Acordos", href: "/acordos" },
   { key: "despesas", label: "Despesas fixas", href: "/despesas" },
+  { key: "despesas-manuais", label: "Despesas manuais", href: "/despesas-manuais" },
   { key: "fornecedores", label: "Fornecedores", href: "/fornecedores" },
   { key: "relatorios", label: "Relatórios", href: "/relatorios" },
   { key: "alertas", label: "Alertas", href: "/alertas" },
