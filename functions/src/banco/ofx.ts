@@ -11,6 +11,10 @@ export interface TxOFX {
   valor: number; // sinal: crédito +, débito −
   memo: string;
   categoria: string;
+  refnum: string | null;   // REFNUM — alguns bancos põem o NSU aqui
+  checknum: string | null; // CHECKNUM
+  nome: string | null;     // NAME (contraparte/bandeira)
+  extra: Record<string, string> | null; // qualquer outra tag do STMTTRN (diagnóstico p/ achar NSU/bruto/bandeira)
 }
 export interface ExtratoOFX {
   org: string | null;
@@ -66,6 +70,14 @@ export function parseOFX(texto: string): ExtratoOFX {
     const conteudo = `${data}|${valor.toFixed(2)}|${memo.trim().toLowerCase()}`;
     const hash = crypto.createHash("sha1").update(conteudo).digest("hex").slice(0, 16);
     const i = ocorr.get(hash) ?? 0; ocorr.set(hash, i + 1);
+    // Captura QUALQUER outra tag de folha do lançamento (p/ achar NSU/bruto/bandeira
+    // que a Stone possa trazer além dos campos padrão).
+    const CONHECIDAS = new Set(["TRNTYPE", "DTPOSTED", "DTUSER", "DTAVAIL", "TRNAMT", "FITID", "MEMO", "REFNUM", "CHECKNUM", "NAME", "CORRECTFITID", "CORRECTACTION"]);
+    const extra: Record<string, string> = {};
+    for (const mm of b.matchAll(/<([A-Z0-9.]+)>([^<\r\n]+)/g)) {
+      const tag = mm[1], val = mm[2].trim();
+      if (val && !CONHECIDAS.has(tag)) extra[tag] = val.slice(0, 120);
+    }
     transacoes.push({
       fitid,
       chave: i ? `${hash}_${i}` : hash,
@@ -74,6 +86,10 @@ export function parseOFX(texto: string): ExtratoOFX {
       valor,
       memo,
       categoria: categoriaMemo(memo),
+      refnum: leaf(b, "REFNUM") || null,
+      checknum: leaf(b, "CHECKNUM") || null,
+      nome: leaf(b, "NAME") || null,
+      extra: Object.keys(extra).length ? extra : null,
     });
   }
   // Identidade da CONTA (várias contas por loja): BANKID + ACCTID do bloco *ACCTFROM.
