@@ -1187,30 +1187,6 @@ export async function importarCartoesPDV(empresaId: string): Promise<{ ok: boole
   return (await fn({ empresaId })).data as { ok: boolean; importados: number };
 }
 
-export interface DivergenciaTaxa {
-  dia: string;
-  cartao: string;
-  parcelas: number;
-  cobrada: number;
-  esperada: number;
-  diff: number;
-  valor: number;
-  impacto: number;
-}
-export interface Conferencia {
-  ok: boolean;
-  de: string;
-  ate: string;
-  empresaId: string;
-  resumo: { conferidos: number; taxaOk: number; divergentes: number; semCadastro: number; impactoTotal: number };
-  divergencias: DivergenciaTaxa[];
-}
-export async function conferirRecebiveis(empresaId: string, de: string, ate: string): Promise<Conferencia> {
-  const { functions } = fb();
-  const fn = httpsCallable(functions, "conferirRecebiveis");
-  return (await fn({ empresaId, de, ate })).data as Conferencia;
-}
-
 // ——— Vendas manuais (lojas offline, ex.: Maracanã) ———
 export interface VendaManual {
   id: string;
