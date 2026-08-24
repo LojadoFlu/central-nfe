@@ -116,12 +116,14 @@ export default function InicioPage() {
     const comprasMes = doMes.reduce((s, d) => s + (d.vNF ?? 0), 0);
     let aVencer = 0;
     let vencido = 0;
+    const mesAtual = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}`;
     for (const p of parcelas) {
       if (empresaId && p.companyId !== empresaId) continue;
+      if (p.statusPagamento === "pago") continue; // já pagas não entram em vencidas/a vencer
       const dias = diasAte(p.vencimento);
       if (dias === null) continue;
-      if (dias < 0) vencido += p.valor ?? 0;
-      else aVencer += p.valor ?? 0;
+      if (dias < 0) vencido += p.valor ?? 0;                                   // vencidas (acumulado)
+      else if ((p.vencimento ?? "").slice(0, 7) === mesAtual) aVencer += p.valor ?? 0; // a vencer só deste mês
     }
     // Serviços (NFS-e) do mês — respeita o filtro de empresa.
     let servicosMes = 0;
@@ -212,8 +214,8 @@ export default function InicioPage() {
           <StatCard label="Serviços do mês" value={carregando ? "…" : formatBRL(resumo.servicosMes)} tone="success" />
         </Link>
         <StatCard label="Notas do mês" value={carregando ? "…" : String(resumo.notasMes)} />
-        <StatCard label="A vencer" value={carregando ? "…" : formatBRL(resumo.aVencer)} tone="warning" />
-        <StatCard label="Vencidas" value={carregando ? "…" : formatBRL(resumo.vencido)} tone="destructive" />
+        <StatCard label="A vencer no mês" value={carregando ? "…" : formatBRL(resumo.aVencer)} tone="warning" />
+        <StatCard label="Vencidas (em aberto)" value={carregando ? "…" : formatBRL(resumo.vencido)} tone="destructive" />
       </div>
 
       {/* Últimas notas (filtradas) */}

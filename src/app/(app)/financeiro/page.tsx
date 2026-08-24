@@ -14,7 +14,7 @@ import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, list
 import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
-import { FiltroPeriodo, noPeriodo, PERIODO_VAZIO, type Periodo } from "@/components/ui/filtro-periodo";
+import { FiltroPeriodo, noPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
 import { formatBRL, formatarData, diasAte } from "@/lib/utils";
 import { Wallet, Check, RotateCcw, CheckSquare, X } from "lucide-react";
 
@@ -102,7 +102,8 @@ export default function FinanceiroPage() {
   const [despesas, setDespesas] = useState<DespesaFixa[]>([]);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
-  const [periodo, setPeriodo] = useState<Periodo>(PERIODO_VAZIO);
+  // Padrão: a semana atual (domingo a sábado). Mudar o filtro recalcula tudo.
+  const [periodo, setPeriodo] = useState<Periodo>(() => { const { ini, fim } = semanaAtual(); return { de: ini, ate: fim }; });
   const [erro, setErro] = useState<string | null>(null);
   const [filtro, setFiltro] = useState<"todas" | "a_vencer" | "vencida" | "paga">("todas");
   const [forn, setForn] = useState(""); // cnpjEmit selecionado ("" = todos)
@@ -315,33 +316,32 @@ export default function FinanceiroPage() {
     [contas, forn, empresaId, periodo],
   );
 
-  // Base do destaque: respeita empresa + fornecedor, MAS ignora o filtro de período
-  // (o destaque é um retrato fixo — hoje / semana atual — não segue o período da lista).
+  // "A pagar hoje" é sempre HOJE (independe do filtro de período): base só por empresa+fornecedor.
   const baseDestaque = useMemo(
     () => contas.filter((p) => (!empresaId || (p.companyId ?? "") === empresaId) && (!forn || (p.cnpjEmit ?? "") === forn)),
     [contas, forn, empresaId],
   );
-  const semana = useMemo(() => semanaAtual(), []);
-  const totais = useMemo(() => {
+  const totalHoje = useMemo(() => {
     const hoje = hojeISO();
-    const { ini, fim } = semana;
-    let aVencer = 0;   // a vencer NA SEMANA (dom–sáb)
-    let vencido = 0;   // todas as vencidas (acumulado, sem janela)
-    let pago = 0;      // pago NA SEMANA (pela data de pagamento)
-    let hojeValor = 0; // a pagar HOJE (vence hoje, ainda não pago)
+    let v = 0;
     for (const p of baseDestaque) {
       const { s } = situacao(p);
-      const venc = (p.vencimento ?? "").slice(0, 10);
-      if (s === "a_vencer" && venc >= ini && venc <= fim) aVencer += p.valor ?? 0;
-      else if (s === "vencida") vencido += p.valor ?? 0;
-      else if (s === "paga") {
-        const dp = (p.dataPagamento ?? "").slice(0, 10);
-        if (dp >= ini && dp <= fim) pago += p.valorPago ?? p.valor ?? 0;
-      }
-      if ((s === "a_vencer" || s === "vencida") && venc === hoje) hojeValor += p.valor ?? 0;
+      if ((s === "a_vencer" || s === "vencida") && (p.vencimento ?? "").slice(0, 10) === hoje) v += p.valor ?? 0;
     }
-    return { aVencer, vencido, pago, hoje: hojeValor };
-  }, [baseDestaque, semana]);
+    return v;
+  }, [baseDestaque]);
+  // A vencer / vencidas / pagas seguem o PERÍODO do filtro (base já filtrada por período).
+  // Padrão do período = semana atual (dom–sáb); mudar o filtro recalcula os três.
+  const totais = useMemo(() => {
+    let aVencer = 0, vencido = 0, pago = 0;
+    for (const p of base) {
+      const { s } = situacao(p);
+      if (s === "a_vencer") aVencer += p.valor ?? 0;
+      else if (s === "vencida") vencido += p.valor ?? 0;
+      else if (s === "paga") pago += p.valorPago ?? p.valor ?? 0;
+    }
+    return { aVencer, vencido, pago, hoje: totalHoje };
+  }, [base, totalHoje]);
 
   // Pagamentos por mês (pela data de pagamento), respeitando o fornecedor.
   const mesAtual = hojeISO().slice(0, 7);
@@ -441,13 +441,13 @@ export default function FinanceiroPage() {
         tone={totais.hoje > 0 ? "destructive" : "warning"}
         subtitle="Contas que vencem hoje, ainda não pagas"
         metrics={[
-          { label: "A vencer (semana)", value: parcelas === null ? "…" : formatBRL(totais.aVencer), tone: "warning" },
+          { label: "A vencer", value: parcelas === null ? "…" : formatBRL(totais.aVencer), tone: "warning" },
           { label: "Vencidas", value: parcelas === null ? "…" : formatBRL(totais.vencido), tone: "destructive" },
-          { label: "Pagas (semana)", value: parcelas === null ? "…" : formatBRL(totais.pago), tone: "success" },
+          { label: "Pagas", value: parcelas === null ? "…" : formatBRL(totais.pago), tone: "success" },
         ]}
       />
       <p className="mb-1 mt-1 px-1 text-[11px] text-muted-foreground">
-        &ldquo;Semana&rdquo; = {formatarData(semana.ini)} a {formatarData(semana.fim)} (domingo a sábado). Vencidas = todo o acumulado em atraso.
+        A vencer / vencidas / pagas seguem o período do filtro (padrão: esta semana, domingo a sábado). &ldquo;A pagar hoje&rdquo; é sempre do dia.
       </p>
 
       {/* Resumo de pagamentos por mês */}
