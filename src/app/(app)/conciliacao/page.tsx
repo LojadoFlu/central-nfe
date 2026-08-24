@@ -101,8 +101,8 @@ export default function ConciliacaoPage() {
             <Card className="mt-4">
               <CardContent className="py-4">
                 <button type="button" onClick={() => setVerDia((v) => !v)} className="flex w-full items-center justify-between">
-                  <h2 className="text-[0.95rem] font-semibold tracking-tight">Detalhe por dia</h2>
-                  <span className="text-xs font-medium text-primary">{verDia ? "ocultar" : "ver onde diverge"}</span>
+                  <h2 className="text-[0.95rem] font-semibold tracking-tight">Detalhe por dia (acumulado)</h2>
+                  <span className="text-xs font-medium text-primary">{verDia ? "ocultar" : "ver"}</span>
                 </button>
                 {verDia ? (
                   <div className="mt-3 overflow-x-auto">
@@ -110,34 +110,39 @@ export default function ConciliacaoPage() {
                       <thead>
                         <tr className="border-b border-border text-[10px] uppercase text-muted-foreground">
                           <th className="py-1 pr-2 text-left font-medium">Dia</th>
-                          <th className="py-1 px-2 font-medium">Cart. banco</th>
-                          <th className="py-1 px-2 font-medium">Cart. prev.</th>
-                          <th className="py-1 px-2 font-medium">Cart. dif.</th>
-                          <th className="py-1 px-2 font-medium">PIX banco</th>
-                          <th className="py-1 px-2 font-medium">PIX prev.</th>
-                          <th className="py-1 pl-2 font-medium">PIX dif.</th>
+                          <th className="py-1 px-2 font-medium">Banco (dia)</th>
+                          <th className="py-1 px-2 font-medium">Previsto (dia)</th>
+                          <th className="py-1 px-2 font-medium">Banco acum.</th>
+                          <th className="py-1 px-2 font-medium">Previsto acum.</th>
+                          <th className="py-1 pl-2 font-medium">Dif. acum.</th>
                         </tr>
                       </thead>
                       <tbody className="tnum">
-                        {dados.porDia.map((d) => {
-                          const diverge = Math.abs(d.difCartao) + Math.abs(d.difPix) > 100;
-                          return (
-                            <tr key={d.dia} className={`border-b border-border/50 ${diverge ? "bg-warning/5" : ""}`}>
-                              <td className="py-1 pr-2 text-left font-medium">{formatarData(d.dia)}</td>
-                              <td className="py-1 px-2">{formatBRL(d.bancoCartao)}</td>
-                              <td className="py-1 px-2 text-muted-foreground">{formatBRL(d.previstoCartao)}</td>
-                              <td className={`py-1 px-2 ${Math.abs(d.difCartao) > 100 ? "font-semibold text-warning" : "text-muted-foreground"}`}>{formatBRL(d.difCartao)}</td>
-                              <td className="py-1 px-2">{formatBRL(d.bancoPix)}</td>
-                              <td className="py-1 px-2 text-muted-foreground">{formatBRL(d.previstoPix)}</td>
-                              <td className={`py-1 pl-2 ${Math.abs(d.difPix) > 100 ? "font-semibold text-warning" : "text-muted-foreground"}`}>{formatBRL(d.difPix)}</td>
-                            </tr>
-                          );
-                        })}
+                        {(() => {
+                          let accB = 0, accP = 0;
+                          return dados.porDia.map((d) => {
+                            const banco = d.bancoCartao + d.bancoPix;
+                            const prev = d.previstoCartao + d.previstoPix;
+                            accB += banco; accP += prev;
+                            const difAcum = accB - accP;
+                            return (
+                              <tr key={d.dia} className="border-b border-border/50">
+                                <td className="py-1 pr-2 text-left font-medium">{formatarData(d.dia)}</td>
+                                <td className="py-1 px-2 text-muted-foreground">{formatBRL(banco)}</td>
+                                <td className="py-1 px-2 text-muted-foreground">{formatBRL(prev)}</td>
+                                <td className="py-1 px-2">{formatBRL(accB)}</td>
+                                <td className="py-1 px-2">{formatBRL(accP)}</td>
+                                <td className={`py-1 pl-2 font-semibold ${Math.abs(difAcum) > Math.max(200, accP * 0.03) ? "text-warning" : "text-muted-foreground"}`}>{difAcum >= 0 ? "+" : "−"}{formatBRL(Math.abs(difAcum))}</td>
+                              </tr>
+                            );
+                          });
+                        })()}
                       </tbody>
                     </table>
-                    <p className="mt-2 text-[11px] text-muted-foreground">
-                      Cartões: banco e PDV pela data em que o dinheiro cai (crédito). Dias destacados = onde a diferença se concentra
-                      (ex.: fim do período, quando o recebível ainda não caiu).
+                    <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                      Cartão + PIX juntos. O <strong>dia isolado oscila</strong> porque o previsto usa a data de crédito estimada (D+1, fim de
+                      semana → segunda) e a Stone deposita em datas próprias — por isso olhe o <strong>acumulado</strong>, que converge para o
+                      total. A diferença acumulada no fim do período = o que ainda não caiu + venda fora do PDV (avulsas) + taxa.
                     </p>
                   </div>
                 ) : null}
