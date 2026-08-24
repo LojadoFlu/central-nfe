@@ -134,11 +134,19 @@ export default function InicioPage() {
     return { comprasMes, notasMes: doMes.length, total: filtrados.length, aVencer, vencido, servicosMes };
   }, [filtrados, parcelas, empresaId, nfses]);
 
-  // A pagar do GRUPO (todas as empresas, parcelas não pagas) — para o painel do dono.
-  const aPagarGrupo = useMemo(
-    () => parcelas.reduce((s, p) => s + (p.statusPagamento === "pago" ? 0 : p.valor ?? 0), 0),
-    [parcelas],
-  );
+  // A pagar do GRUPO (todas as empresas) — atrasadas em aberto + a vencer NESTE mês.
+  // (Antes somava todo o futuro dos parcelados, o que não batia com a visão mensal.)
+  const aPagarGrupo = useMemo(() => {
+    const ag = new Date();
+    const mesAtual = `${ag.getFullYear()}-${String(ag.getMonth() + 1).padStart(2, "0")}`;
+    return parcelas.reduce((s, p) => {
+      if (p.statusPagamento === "pago") return s;
+      const dias = diasAte(p.vencimento);
+      if (dias === null) return s;
+      const noMes = (p.vencimento ?? "").slice(0, 7) === mesAtual;
+      return (dias < 0 || noMes) ? s + (p.valor ?? 0) : s; // atrasada OU vence neste mês
+    }, 0);
+  }, [parcelas]);
   const pendCount = (pend?.resumo.criticas ?? 0) + (pend?.resumo.atencao ?? 0);
 
   const carregando = docs === null;
@@ -175,7 +183,7 @@ export default function InicioPage() {
             </Link>
             <div className="relative grid grid-cols-3 divide-x divide-border/60 border-t border-border/60">
               <HeroMetric href="/vendas" label="Cartão a receber" value={vendasMes ? formatBRL(vendasMes.cartaoAReceber ?? vendasMes.totalLiquido) : "…"} tone="warning" />
-              <HeroMetric href="/financeiro" label="A pagar" value={carregando ? "…" : formatBRL(aPagarGrupo)} tone="warning" />
+              <HeroMetric href="/financeiro" label="A pagar no mês" value={carregando ? "…" : formatBRL(aPagarGrupo)} tone="warning" />
               <HeroMetric href="/pendencias" label="Pendências" value={pend ? String(pendCount) : "…"} tone={pendCount > 0 ? "destructive" : "default"} />
             </div>
           </div>
