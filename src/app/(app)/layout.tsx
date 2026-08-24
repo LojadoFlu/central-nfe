@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { AppShell } from "@/components/layout/app-shell";
+import { podeVerRota } from "@/lib/nav";
 import { Button } from "@/components/ui/button";
-import { Clock, Ban } from "lucide-react";
+import { Clock, Ban, Lock } from "lucide-react";
 
 /** Portão da área logada: exige usuário autenticado E aprovado (status ativo). */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const { user, loading, status, signOutUser, recarregar } = useAuth();
+  const pathname = usePathname();
+  const { user, loading, status, isAdmin, podeModulo, signOutUser, recarregar } = useAuth();
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
@@ -55,6 +57,24 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </div>
+    );
+  }
+
+  // Guarda por rota: bloqueia telas fora do perfil, mesmo via URL direta.
+  if (!podeVerRota(pathname, { isAdmin, podeModulo })) {
+    return (
+      <AppShell>
+        <div className="grid place-items-center px-4 py-16">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-card p-8 text-center shadow-sm">
+            <div className="mx-auto grid size-12 place-items-center rounded-full bg-destructive/10 text-destructive">
+              <Lock className="size-6" />
+            </div>
+            <h1 className="mt-4 text-lg font-semibold">Sem acesso a esta tela</h1>
+            <p className="mt-2 text-sm text-muted-foreground">Seu perfil não inclui esta tela. Fale com um administrador se precisar de acesso.</p>
+            <Button variant="outline" size="sm" className="mt-6" onClick={() => router.push("/inicio")}>Voltar ao início</Button>
+          </div>
+        </div>
+      </AppShell>
     );
   }
 

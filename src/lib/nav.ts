@@ -90,11 +90,23 @@ export interface PermCtx {
 }
 
 /** Filtra itens conforme as permissões do usuário (módulo + adminOnly). */
+function itemPermite(i: NavItem, ctx: PermCtx): boolean {
+  if (i.adminOnly) return ctx.isAdmin;
+  if (!i.modulo) return true; // Início e afins
+  const mods = Array.isArray(i.modulo) ? i.modulo : [i.modulo];
+  return mods.some((m) => ctx.podeModulo(m));
+}
 export function filtrarPorPermissao(itens: NavItem[], ctx: PermCtx): NavItem[] {
-  return itens.filter((i) => {
-    if (i.adminOnly) return ctx.isAdmin;
-    if (!i.modulo) return true; // Início e afins
-    const mods = Array.isArray(i.modulo) ? i.modulo : [i.modulo];
-    return mods.some((m) => ctx.podeModulo(m));
-  });
+  return itens.filter((i) => itemPermite(i, ctx));
+}
+/**
+ * Guarda por ROTA: acha o item de menu que cobre o pathname (href exato ou prefixo,
+ * ex.: /pedidos/123 → /pedidos) e diz se o usuário pode. Rota sem item mapeado
+ * (Início, Mais, etc.) é liberada.
+ */
+export function podeVerRota(pathname: string, ctx: PermCtx): boolean {
+  const item = ALL_NAV
+    .filter((i) => pathname === i.href || pathname.startsWith(i.href + "/"))
+    .sort((a, b) => b.href.length - a.href.length)[0];
+  return item ? itemPermite(item, ctx) : true;
 }
