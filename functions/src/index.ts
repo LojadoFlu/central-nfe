@@ -3099,14 +3099,15 @@ export const associarNfPedido = onCall(opcoes, async (req) => {
     { merge: true },
   );
   await auditar(uid, add ? "pedido.associarNf" : "pedido.desassociarNf", { id, chNFe });
+  // Atualiza o resumo de conciliação (pro painel saber se ficou incompleto/atrasado).
+  await computarConciliacao(id).catch(() => {});
   return { ok: true };
 });
 
-/** Concilia um pedido: itens do pedido × itens das NFs associadas (casa por código = cProd). */
-export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeoutSeconds: 120 }, async (req) => {
-  await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro", "fiscal"]);
-  const id = String(req.data?.pedidoId ?? "").trim();
-  if (!id) throw new HttpsError("invalid-argument", "pedidoId obrigatório.");
+/** Núcleo da conciliação (reusado pela callable e ao associar/remover NF). Além de devolver
+ * o detalhamento, PERSISTE um resumo leve (`resumoConcil`) no pedido — o painel usa isso pra
+ * marcar atrasos sem reprocessar tudo. */
+async function computarConciliacao(id: string) {
   const snap = await db.collection("purchase_orders").doc(id).get();
   if (!snap.exists) throw new HttpsError("not-found", "Pedido não encontrado.");
   const pedido = snap.data() as { itens?: Array<Record<string, unknown>>; nfs?: string[]; fornecedorNome?: string; cnpjFornecedor?: string | null; dataEntrega?: string | null };
@@ -3274,7 +3275,27 @@ export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeo
     const status = difDias < -7 ? "adiantado" : difDias > 7 ? "atrasado" : "no_prazo";
     entrega = { prevista: pedido.dataEntrega, realizada: maxDhEmi, difDias, status };
   }
+  // Resumo leve no pedido, pro painel marcar atrasos sem reconciliar tudo de novo.
+  await snap.ref.update({
+    resumoConcil: {
+      atendidoIntegral: resumo.atendidoIntegral,
+      totalQtdPedido: resumo.totalQtdPedido,
+      totalQtdNf: resumo.totalQtdNf,
+      difQtd: resumo.difQtd,
+      entregaStatus: entrega ? entrega.status : null,
+      entregaRealizada: entrega ? entrega.realizada : null,
+      em: agoraISO(),
+    },
+  }).catch(() => {});
   return { ok: true, linhas, extras, resumo, entrega, nfs: chaves, chaveFornecedor: chaveForn };
+}
+
+/** Concilia um pedido: itens do pedido × itens das NFs associadas (casa por código = cProd). */
+export const conciliarPedidoCompra = onCall({ ...opcoes, memory: "512MiB", timeoutSeconds: 120 }, async (req) => {
+  await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro", "fiscal"]);
+  const id = String(req.data?.pedidoId ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "pedidoId obrigatório.");
+  return computarConciliacao(id);
 });
 
 /** Salva o mapeamento de colunas de um fornecedor (reuso no próximo import). */

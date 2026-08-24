@@ -124,11 +124,15 @@ function chaveFornecedor(cnpj: string, nome: string): string {
   const c = cnpj.replace(/\D/g, "");
   return c || normalizar(nome).replace(/\s+/g, "-").slice(0, 60) || "sem-fornecedor";
 }
-/** Pedido atrasado: sem NF associada (não entregue) e +7 dias além da entrega prevista. */
+/** Pedido atrasado: +7 dias além da entrega prevista E ainda não entregue por completo.
+ * Sem NF = não entregue; com NF, usa o resumo da conciliação (atendidoIntegral). Se ainda
+ * não foi conciliado, é conservador e marca como atrasado (para o usuário verificar). */
 function estaAtrasado(p: PedidoCompra): boolean {
-  if (p.nfs?.length) return false;
   const d = diasAte(p.dataEntrega);
-  return d !== null && d < -7;
+  if (d === null || d >= -7) return false; // sem previsão, adiantado ou dentro da tolerância
+  if (!p.nfs?.length) return true;         // vencido e sem nenhuma NF
+  if (p.resumoConcil) return !p.resumoConcil.atendidoIntegral; // vencido e entrega incompleta
+  return true;                             // tem NF mas nunca conciliado → verificar
 }
 /** Palpita a empresa a partir do valor de loja (por nome). */
 function acharEmpresa(valor: string, empresas: Company[]): string {

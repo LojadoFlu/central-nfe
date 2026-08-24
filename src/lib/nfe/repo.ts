@@ -1404,6 +1404,16 @@ export interface PedidoCompra {
   totalQtd?: number;
   totalValor?: number;
   nfs?: string[];
+  // Resumo leve da última conciliação (persistido pelo backend) — usado pelo painel.
+  resumoConcil?: {
+    atendidoIntegral: boolean;
+    totalQtdPedido?: number;
+    totalQtdNf?: number;
+    difQtd?: number;
+    entregaStatus?: string | null;
+    entregaRealizada?: string | null;
+    em?: string;
+  } | null;
   createdAt?: string;
   updatedAt?: string;
 }
