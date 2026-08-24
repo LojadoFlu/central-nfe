@@ -910,6 +910,43 @@ export const nfeResolverContestacao = onCall(opcoes, async (req) => {
 });
 
 /**
+ * Bloqueia o pagamento das NFs de um PEDIDO DE COMPRA quando a conciliação deu
+ * divergência: abre contestação em todas as parcelas (não pagas) das NFs associadas.
+ * O admin libera depois na aba Financeiro. admin/financeiro.
+ */
+export const contestarNfsPedido = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const pedidoId = String(req.data?.pedidoId ?? "").trim();
+  if (!pedidoId) throw new HttpsError("invalid-argument", "pedidoId obrigatório.");
+  const motivo = ["valor", "parcelas", "outro"].includes(String(req.data?.motivo)) ? String(req.data.motivo) : "valor";
+  const descricao = String(req.data?.descricao ?? "").trim().slice(0, 500) || "Divergência na conciliação do pedido de compra.";
+  const snap = await db.collection("purchase_orders").doc(pedidoId).get();
+  if (!snap.exists) throw new HttpsError("not-found", "Pedido não encontrado.");
+  const nfs = Array.isArray(snap.data()?.nfs) ? (snap.data()!.nfs as string[]) : [];
+  if (!nfs.length) throw new HttpsError("failed-precondition", "Pedido sem NF associada.");
+  const now = agoraISO();
+  const batch = db.batch();
+  let bloqueadas = 0, jaBloqueadas = 0, pagas = 0, semParcela = 0;
+  for (const ch of nfs) {
+    const parc = await db.collection("nfe_installments").where("chNFe", "==", ch).get();
+    if (parc.empty) { semParcela++; continue; }
+    for (const doc of parc.docs) {
+      const p = doc.data() as { statusPagamento?: string; contestacao?: { status?: string } };
+      if (p.statusPagamento === "pago") { pagas++; continue; }
+      if (p.contestacao && p.contestacao.status === "aberta") { jaBloqueadas++; continue; }
+      batch.set(doc.ref, {
+        contestacao: { status: "aberta", motivo, descricao, valorCorreto: null, parcelasCorreto: null, origem: "pedido", pedidoId, criadoPor: uid, criadoEm: now },
+        updatedAt: now,
+      }, { merge: true });
+      bloqueadas++;
+    }
+  }
+  if (bloqueadas) await batch.commit();
+  await auditar(uid, "financeiro.contestarNfsPedido", { pedidoId, nfs: nfs.length, bloqueadas });
+  return { ok: true, bloqueadas, jaBloqueadas, pagas, semParcela };
+});
+
+/**
  * Marca (ou desmarca) uma parcela de NF-e como MIGRADA PARA ACORDO. Só REGISTRO:
  * a dívida foi renegociada e passou a ser controlada por um acordo — NÃO é
  * pagamento e NÃO gera movimentação financeira (sai do "a pagar" em aberto, não

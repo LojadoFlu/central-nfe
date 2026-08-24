@@ -1520,6 +1520,12 @@ export async function conciliarPedido(pedidoId: string): Promise<ConcilPedido> {
   const res = await fn({ pedidoId });
   return res.data as ConcilPedido;
 }
+/** Bloqueia o pagamento das NFs do pedido (abre contestação nas parcelas). Admin libera no Financeiro. */
+export async function bloquearPagamentoPedido(input: { pedidoId: string; motivo: "valor" | "parcelas" | "outro"; descricao: string }): Promise<{ ok: boolean; bloqueadas: number; jaBloqueadas: number; pagas: number; semParcela: number }> {
+  const { functions } = fb();
+  const res = await httpsCallable(functions, "contestarNfsPedido")(input);
+  return res.data as { ok: boolean; bloqueadas: number; jaBloqueadas: number; pagas: number; semParcela: number };
+}
 
 export interface MapaFornecedor { chave: string; fornecedorNome?: string; map: Record<string, string> }
 /** Lê o mapeamento de colunas salvo de um fornecedor. */

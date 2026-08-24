@@ -13,6 +13,7 @@ import {
   obterPedido,
   associarNf,
   conciliarPedido,
+  bloquearPagamentoPedido,
   excluirPedido,
   documentosDoFornecedor,
   listarEmpresas,
@@ -24,7 +25,7 @@ import {
 import { useAuth } from "@/lib/auth/auth-provider";
 import { gerarPdfPedido } from "@/lib/nfe/pedido-pdf";
 import { formatBRL, formatarData } from "@/lib/utils";
-import { ArrowLeft, Plus, X, Scale, Trash2, FileDown } from "lucide-react";
+import { ArrowLeft, Plus, X, Scale, Trash2, FileDown, Lock } from "lucide-react";
 
 const STATUS = {
   ok: { variant: "success" as const, label: "Atendido" },
@@ -45,6 +46,8 @@ export default function PedidoDetalhePage() {
   const [concil, setConcil] = useState<ConcilPedido | null>(null);
   const [chave, setChave] = useState("");
   const [erro, setErro] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [confirmBloq, setConfirmBloq] = useState(false);
   const [ocupado, setOcupado] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
@@ -76,6 +79,25 @@ export default function PedidoDetalhePage() {
     setErro(null);
     try { setConcil(await conciliarPedido(id)); }
     catch (e) { setErro((e as Error).message); }
+    finally { setOcupado(null); }
+  }
+  async function bloquearPagamento() {
+    if (!concil || !pedido) return;
+    const r = concil.resumo;
+    const motivo = (Math.abs(r.difValor) >= 0.01 || r.valorDivergente > 0) ? "valor" : r.difQtd !== 0 ? "parcelas" : "outro";
+    const desc = `Divergência na conciliação do pedido: unidades ${r.totalQtdPedido}→${r.totalQtdNf} (dif ${r.difQtd > 0 ? "+" : ""}${r.difQtd}); valor ${formatBRL(r.totalPedido)}→${formatBRL(r.totalNf)} (dif ${r.difValor > 0 ? "+" : ""}${formatBRL(r.difValor)}).`;
+    setOcupado("bloq"); setErro(null); setMsg(null);
+    try {
+      const res = await bloquearPagamentoPedido({ pedidoId: id, motivo, descricao: desc });
+      setConfirmBloq(false);
+      setMsg(
+        `Pagamento bloqueado: ${res.bloqueadas} parcela(s) contestada(s).` +
+        (res.jaBloqueadas ? ` ${res.jaBloqueadas} já bloqueada(s).` : "") +
+        (res.pagas ? ` ${res.pagas} já paga(s) (não bloqueadas).` : "") +
+        (res.semParcela ? ` ${res.semParcela} NF(s) sem parcela cadastrada.` : "") +
+        " Um admin libera na aba Financeiro.",
+      );
+    } catch (e) { setErro((e as Error).message); }
     finally { setOcupado(null); }
   }
   // De-para: liga um item da NF (cProd) a um item do pedido e reconcilia.
@@ -171,11 +193,32 @@ export default function PedidoDetalhePage() {
 
       {concil ? (
         <>
-          <div className="mb-3">
-            <Button size="sm" variant="outline" onClick={() => gerarPdfPedido(pedido, concil, empresas[pedido.empresaId] ?? pedido.empresaId)}>
-              <FileDown className="size-4" /> Gerar PDF (NF + divergências)
-            </Button>
-          </div>
+          {(() => {
+            const r = concil.resumo;
+            const temDivergencia = !r.atendidoIntegral || r.valorDivergente > 0 || Math.abs(r.difValor) >= 0.01 || r.difQtd !== 0;
+            const temNf = (concil.nfs?.length ?? 0) > 0;
+            return (
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => gerarPdfPedido(pedido, concil, empresas[pedido.empresaId] ?? pedido.empresaId)}>
+                  <FileDown className="size-4" /> Gerar PDF (NF + divergências)
+                </Button>
+                {podeEditar && temDivergencia && temNf ? (
+                  confirmBloq ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/40 bg-destructive/5 px-2 py-1">
+                      <span className="text-xs text-destructive">Bloquear o pagamento das NFs até um admin aprovar a correção?</span>
+                      <Button size="sm" variant="destructive" disabled={ocupado === "bloq"} onClick={bloquearPagamento}>{ocupado === "bloq" ? "Bloqueando…" : "Confirmar"}</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setConfirmBloq(false)}>Cancelar</Button>
+                    </div>
+                  ) : (
+                    <Button size="sm" variant="outline" className="border-destructive/50 text-destructive" onClick={() => { setMsg(null); setConfirmBloq(true); }}>
+                      <Lock className="size-4" /> Bloquear pagamento (divergência)
+                    </Button>
+                  )
+                ) : null}
+              </div>
+            );
+          })()}
+          {msg ? <p className="mb-3 rounded-md bg-warning/10 p-3 text-sm text-warning">{msg}</p> : null}
           {/* Resumo */}
           <Card className={`mb-3 ${concil.resumo.atendidoIntegral ? "border-success/40" : "border-warning/40"}`}>
             <CardContent className="py-4">
