@@ -2902,10 +2902,10 @@ export const conciliacao = onCall(
 );
 
 /**
- * Conferência de TAXAS de cartão: por bandeira/forma, compara a taxa REAL que o
- * PDVnet já trouxe (bruto − líquido do recebível) com a taxa CADASTRADA no APP
- * (card_rates). Não altera nada e NÃO reaplica desconto — só evidencia se a taxa
- * cadastrada bate com a que a Stone efetivamente cobrou. Só leitura.
+ * Validação da TAXA DA STONE: o líquido ESPERADO (bruto do PDV × taxa cadastrada no
+ * APP, na data de crédito) × o que a Stone REALMENTE depositou (créditos de cartão no
+ * extrato) no período. Responde: "a Stone está aplicando a taxa que combinamos?".
+ * Recebido < esperado = a Stone reteve MAIS que a taxa cadastrada. Só leitura.
  */
 export const conciliacaoTaxas = onCall(
   { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
@@ -2918,43 +2918,64 @@ export const conciliacaoTaxas = onCall(
     if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
       throw new HttpsError("invalid-argument", "Período inválido.");
     }
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
     const taxasApp = await carregarTaxasApp();
     const L = taxasApp.get(empresaId);
     const temCadastro = !!L && (L.mediaDeb > 0 || L.mediaCr1 > 0 || L.parcMedia.size > 0);
+    const ant = await carregarAntecipacao();
+    const antOn = ant.get(empresaId) !== false;
 
-    // Recebíveis reais do PDV no período (por dia de venda), agrupados por BANDEIRA.
-    // taxaApp = a taxa cadastrada (USADA nos cálculos); taxaPdv = a que o PDVnet informou (referência).
-    interface Grp { qtd: number; bruto: number; liqApp: number; liqPdv: number; taxaAppSoma: number }
-    const grupos = new Map<string, Grp>();
-    const rec = await db.collection("card_receivables").where("dia", ">=", de).where("dia", "<=", ate).get();
-    for (const doc of rec.docs) {
-      const r = doc.data();
-      if (String(r.conciliaEmpresaId ?? r.empresaId ?? "") !== empresaId) continue;
-      const p = Number(r.parcela ?? 1) || 1;
+    // ESPERADO = bruto do PDV × taxa do APP, lançado na DATA DE CRÉDITO (D+1/fds→seg, ou vencimento).
+    const porDia = new Map<string, { esperado: number; recebido: number }>();
+    const bd = (dia: string) => { let x = porDia.get(dia); if (!x) { x = { esperado: 0, recebido: 0 }; porDia.set(dia, x); } return x; };
+    let brutoCredit = 0, esperado = 0;
+    const somaRec = (r: FirebaseFirestore.DocumentData, credito: string) => {
       const bruto = Number(r.valor ?? 0);
-      const label = String(r.descricaoCartao ?? "Outros").trim() || "Outros";
-      const taxaApp = taxaAppDe(L, r.descricaoCartao, p);
-      const g = grupos.get(label) ?? { qtd: 0, bruto: 0, liqApp: 0, liqPdv: 0, taxaAppSoma: 0 };
-      g.qtd++; g.bruto += bruto; g.liqApp += liquidoApp(bruto, taxaApp);
-      g.liqPdv += Number(r.liquido ?? bruto); g.taxaAppSoma += taxaApp * bruto; // média ponderada por bruto
-      grupos.set(label, g);
+      const liq = liquidoApp(bruto, taxaAppDe(L, r.descricaoCartao, Number(r.parcela ?? 1) || 1));
+      brutoCredit += bruto; esperado += liq; bd(credito).esperado += liq;
+    };
+    if (antOn) {
+      const q = await db.collection("card_receivables").where("dia", ">=", menosDiasISO(de, 4)).where("dia", "<=", ate).get();
+      for (const doc of q.docs) {
+        const r = doc.data();
+        if (String(r.conciliaEmpresaId ?? r.empresaId ?? "") !== empresaId) continue;
+        const credito = dataCreditoCartao(d10(r.dia));
+        if (!credito || credito < de || credito > ate) continue;
+        somaRec(r, credito);
+      }
+    } else {
+      const q = await db.collection("card_receivables").where("dataVencimento", ">=", de).where("dataVencimento", "<", maisDiasISO(ate, 1)).get();
+      for (const doc of q.docs) {
+        const r = doc.data();
+        if (String(r.conciliaEmpresaId ?? r.empresaId ?? "") !== empresaId) continue;
+        const credito = d10(r.dataVencimento);
+        if (!credito || credito < de || credito > ate) continue;
+        somaRec(r, credito);
+      }
     }
-    const r2 = (n: number) => Math.round(n * 100) / 100;
-    const linhas = [...grupos.entries()].map(([forma, g]) => {
-      const taxaApp = g.bruto > 0 ? g.taxaAppSoma / g.bruto : 0;
-      const taxaPdv = g.bruto > 0 ? (1 - g.liqPdv / g.bruto) * 100 : 0;
-      return {
-        forma, qtd: g.qtd, bruto: r2(g.bruto), liquido: r2(g.liqApp), liquidoPdv: r2(g.liqPdv),
-        taxaApp: r2(taxaApp), taxaPdv: r2(taxaPdv), difPP: r2(taxaApp - taxaPdv),
-      };
-    }).sort((a, b) => b.bruto - a.bruto);
-    const bruto = r2(linhas.reduce((s, l) => s + l.bruto, 0));
-    const liquido = r2(linhas.reduce((s, l) => s + l.liquido, 0));
-    const liquidoPdv = r2(linhas.reduce((s, l) => s + l.liquidoPdv, 0));
-    const qtd = linhas.reduce((s, l) => s + l.qtd, 0);
-    const taxaAppTotal = bruto > 0 ? r2((1 - liquido / bruto) * 100) : 0;
-    const taxaPdvTotal = bruto > 0 ? r2((1 - liquidoPdv / bruto) * 100) : 0;
-    return { ok: true, de, ate, empresaId, temCadastro, linhas, total: { qtd, bruto, liquido, liquidoPdv, taxas: r2(bruto - liquido), taxaApp: taxaAppTotal, taxaPdv: taxaPdvTotal } };
+
+    // RECEBIDO = créditos de cartão no extrato (o que a Stone realmente depositou) no período.
+    let recebido = 0;
+    const bt = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
+    for (const doc of bt.docs) {
+      const t = doc.data();
+      const dia = d10(t.dia);
+      if (dia < de || dia > ate) continue;
+      if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") {
+        const v = Number(t.valor ?? 0); recebido += v; bd(dia).recebido += v;
+      }
+    }
+
+    const taxaApp = brutoCredit > 0 ? r2((1 - esperado / brutoCredit) * 100) : 0;      // taxa cadastrada (efetiva)
+    const taxaStone = brutoCredit > 0 ? r2((1 - recebido / brutoCredit) * 100) : 0;    // taxa real da Stone
+    const linhasDia = [...porDia.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([dia, x]) => ({ dia, esperado: r2(x.esperado), recebido: r2(x.recebido), dif: r2(x.recebido - x.esperado) }));
+    return {
+      ok: true, de, ate, empresaId, temCadastro,
+      bruto: r2(brutoCredit), esperado: r2(esperado), recebido: r2(recebido), dif: r2(recebido - esperado),
+      taxaApp, taxaStone, porDia: linhasDia,
+    };
   },
 );
 

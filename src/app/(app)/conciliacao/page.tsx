@@ -74,10 +74,15 @@ export default function ConciliacaoPage() {
         ) : null}
         <FiltroPeriodo value={periodo} onChange={setPeriodo} allowClear={false} />
         <div className="flex gap-2 text-sm">
-          {([["receb", "Recebimentos"], ["taxas", "Taxas do cartão"]] as const).map(([k, lb]) => (
+          {([["receb", "Recebimentos"], ["taxas", "Taxa da Stone"]] as const).map(([k, lb]) => (
             <button key={k} onClick={() => setModo(k)} className={`rounded-full px-3 py-1 font-medium ${modo === k ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{lb}</button>
           ))}
         </div>
+        <p className="px-1 text-[11px] text-muted-foreground">
+          {modo === "receb"
+            ? "Recebimentos: tudo que o banco recebeu (cartão + PIX) × o que o PDV previa (líquido pela taxa do app)."
+            : "Taxa da Stone: o líquido esperado (bruto × taxa do app) × o que a Stone realmente depositou — confere se a taxa aplicada no repasse é a cadastrada."}
+        </p>
       </div>
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
@@ -228,73 +233,87 @@ function LinhaConc({ titulo, banco, previsto, dif, nota }: { titulo: string; ban
 
 const pct = (n: number) => `${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 function TaxasView({ taxas }: { taxas: ConcilTaxas }) {
-  const t = taxas.total;
+  const okStone = Math.abs(taxas.dif) <= Math.max(50, taxas.esperado * 0.005); // tolerância 0,5%
   return (
     <>
-      <Card className="mb-4">
+      <Card className={cn("mb-4 relative overflow-hidden", !okStone && "border-warning/50")}>
         <CardContent className="py-4">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Cartão no período · taxa pelo APP</p>
-          <div className="mt-2 grid grid-cols-3 gap-1 divide-x divide-border/50 text-center">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-[0.95rem] font-semibold tracking-tight">A Stone aplicou a taxa cadastrada?</h2>
+            {okStone ? (
+              <Badge variant="success"><CheckCircle2 className="mr-1 size-3.5" /> Bate</Badge>
+            ) : (
+              <Badge variant="warning"><AlertTriangle className="mr-1 size-3.5" /> Diverge</Badge>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-1 divide-x divide-border/50 text-center">
             <div className="px-1">
-              <p className="text-[10px] uppercase text-muted-foreground">Bruto</p>
-              <p className="mt-1 text-base font-bold tnum">{formatBRL(t.bruto)}</p>
+              <p className="text-[10px] uppercase text-muted-foreground">Esperado (taxa app)</p>
+              <p className="mt-1 text-base font-bold tnum">{formatBRL(taxas.esperado)}</p>
+              <p className="text-[11px] text-muted-foreground">{pct(taxas.taxaApp)}</p>
             </div>
             <div className="px-1">
-              <p className="text-[10px] uppercase text-muted-foreground">Líquido (APP)</p>
-              <p className="mt-1 text-base font-bold tnum text-success">{formatBRL(t.liquido)}</p>
+              <p className="text-[10px] uppercase text-muted-foreground">Stone depositou</p>
+              <p className="mt-1 text-base font-bold tnum">{formatBRL(taxas.recebido)}</p>
+              <p className="text-[11px] text-muted-foreground">{pct(taxas.taxaStone)}</p>
             </div>
             <div className="px-1">
-              <p className="text-[10px] uppercase text-muted-foreground">Taxa média</p>
-              <p className="mt-1 text-base font-bold tnum">{pct(t.taxaApp)}</p>
+              <p className="text-[10px] uppercase text-muted-foreground">Diferença</p>
+              <p className={cn("mt-1 text-base font-bold tnum", okStone ? "text-muted-foreground" : "text-warning")}>
+                {taxas.dif >= 0 ? "+" : "−"}{formatBRL(Math.abs(taxas.dif))}
+              </p>
+              <p className="text-[11px] text-muted-foreground">bruto {formatBRL(taxas.bruto)}</p>
             </div>
           </div>
-          <p className="mt-3 text-[11px] text-muted-foreground">
-            Cálculos do sistema usam a <strong>taxa do APP</strong> (R$ {formatBRL(t.taxas)} de taxa no período).
-            Referência do PDVnet: líquido {formatBRL(t.liquidoPdv)} · taxa {pct(t.taxaPdv)}.
+          <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
+            {taxas.dif < -0.5
+              ? <>A Stone depositou <strong>menos</strong> que o esperado — reteve ~{pct(taxas.taxaStone - taxas.taxaApp)} a mais que a taxa cadastrada. Vale contestar.</>
+              : taxas.dif > 0.5
+                ? <>A Stone depositou <strong>mais</strong> que o esperado (taxa efetiva menor que a cadastrada, ou vendas de fora do período).</>
+                : <>O repasse da Stone bate com a taxa cadastrada no APP.</>}
           </p>
         </CardContent>
       </Card>
 
       {!taxas.temCadastro ? (
         <p className="mb-4 rounded-md bg-warning/10 p-3 text-sm text-warning">
-          Esta loja não tem taxas cadastradas em <strong>Taxas</strong> — sem elas o líquido fica igual ao bruto. Cadastre as taxas por bandeira.
+          Esta loja não tem taxas cadastradas em <strong>Taxas</strong> — sem elas o esperado fica igual ao bruto. Cadastre as taxas por bandeira.
         </p>
       ) : null}
 
-      <div className="overflow-x-auto rounded-md border border-border">
-        <table className="w-full text-right text-xs">
-          <thead>
-            <tr className="border-b border-border text-[10px] uppercase text-muted-foreground">
-              <th className="py-2 pl-3 pr-2 text-left font-medium">Bandeira / forma</th>
-              <th className="py-2 px-2 font-medium">Qtd</th>
-              <th className="py-2 px-2 font-medium">Bruto</th>
-              <th className="py-2 px-2 font-medium">Taxa APP</th>
-              <th className="py-2 px-2 font-medium">Taxa PDV</th>
-              <th className="py-2 pl-2 pr-3 font-medium">Dif. (p.p.)</th>
-            </tr>
-          </thead>
-          <tbody className="tnum">
-            {taxas.linhas.map((l) => {
-              const diverge = Math.abs(l.difPP) >= 0.1;
-              return (
-                <tr key={l.forma} className={`border-b border-border/50 ${diverge ? "bg-warning/5" : ""}`}>
-                  <td className="py-1.5 pl-3 pr-2 text-left">{l.forma}</td>
-                  <td className="py-1.5 px-2 text-muted-foreground">{l.qtd}</td>
-                  <td className="py-1.5 px-2">{formatBRL(l.bruto)}</td>
-                  <td className="py-1.5 px-2 font-medium">{pct(l.taxaApp)}</td>
-                  <td className="py-1.5 px-2 text-muted-foreground">{pct(l.taxaPdv)}</td>
-                  <td className={`py-1.5 pl-2 pr-3 ${diverge ? "font-semibold text-warning" : "text-muted-foreground"}`}>
-                    {l.difPP >= 0 ? "+" : "−"}{pct(Math.abs(l.difPP))}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {taxas.porDia.length ? (
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="w-full text-right text-xs">
+            <thead>
+              <tr className="border-b border-border text-[10px] uppercase text-muted-foreground">
+                <th className="py-2 pl-3 pr-2 text-left font-medium">Dia (crédito)</th>
+                <th className="py-2 px-2 font-medium">Esperado</th>
+                <th className="py-2 px-2 font-medium">Stone depositou</th>
+                <th className="py-2 pl-2 pr-3 font-medium">Diferença</th>
+              </tr>
+            </thead>
+            <tbody className="tnum">
+              {taxas.porDia.map((d) => {
+                const diverge = Math.abs(d.dif) > 100;
+                return (
+                  <tr key={d.dia} className={`border-b border-border/50 ${diverge ? "bg-warning/5" : ""}`}>
+                    <td className="py-1.5 pl-3 pr-2 text-left font-medium">{formatarData(d.dia)}</td>
+                    <td className="py-1.5 px-2 text-muted-foreground">{formatBRL(d.esperado)}</td>
+                    <td className="py-1.5 px-2">{formatBRL(d.recebido)}</td>
+                    <td className={`py-1.5 pl-2 pr-3 ${diverge ? "font-semibold text-warning" : "text-muted-foreground"}`}>
+                      {d.dif >= 0 ? "+" : "−"}{formatBRL(Math.abs(d.dif))}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
       <p className="mt-3 text-xs text-muted-foreground">
-        <strong>Taxa APP</strong> = a cadastrada em Taxas (usada em tudo: líquido, a receber, conciliação, DRE).
-        <strong> Taxa PDV</strong> = a que o PDVnet informou, só como referência. Linhas destacadas = onde as duas mais divergem.
+        <strong>Esperado</strong> = bruto do PDV × taxa cadastrada no APP, na data de crédito (D+1 / fds→seg).
+        <strong> Stone depositou</strong> = créditos de cartão no extrato. Depende do período estar coberto dos dois lados
+        (vendas sincronizadas + extrato importado). O crédito da antecipação vem somado, então a leitura mais confiável é o total do período.
       </p>
     </>
   );

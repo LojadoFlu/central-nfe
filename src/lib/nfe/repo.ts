@@ -954,9 +954,13 @@ export interface ConcilTaxas {
   ok: boolean;
   de: string; ate: string; empresaId: string;
   temCadastro: boolean; // há taxa cadastrada no APP
-  // taxaApp = taxa do APP (USADA nos cálculos); taxaPdv = a que o PDVnet informou (referência)
-  linhas: Array<{ forma: string; qtd: number; bruto: number; liquido: number; liquidoPdv: number; taxaApp: number; taxaPdv: number; difPP: number }>;
-  total: { qtd: number; bruto: number; liquido: number; liquidoPdv: number; taxas: number; taxaApp: number; taxaPdv: number };
+  bruto: number;        // bruto do PDV cujo crédito cai no período
+  esperado: number;     // líquido esperado = bruto × taxa do APP
+  recebido: number;     // o que a Stone realmente depositou (extrato)
+  dif: number;          // recebido − esperado (negativo = Stone reteve mais que a taxa cadastrada)
+  taxaApp: number;      // taxa cadastrada (efetiva) %
+  taxaStone: number;    // taxa real da Stone %
+  porDia: Array<{ dia: string; esperado: number; recebido: number; dif: number }>;
 }
 export async function obterConciliacaoTaxas(empresaId: string, de: string, ate: string): Promise<ConcilTaxas> {
   const { functions } = fb();
