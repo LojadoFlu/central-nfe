@@ -185,13 +185,17 @@ export default function VendasPage() {
             value={formatBRL(resumo?.totalVendido)}
             subtitle="Vendas do PDV no período/loja selecionados"
             metrics={[
-              { label: "Cartões a receber", value: formatBRL(resumo?.totalRecebiveis), tone: "warning" },
-              { label: "Líquido previsto", value: formatBRL(resumo?.totalLiquido), tone: "success" },
+              { label: "Cartão a receber (em aberto)", value: formatBRL(resumo?.cartaoAReceber ?? resumo?.totalRecebiveis), tone: "warning" },
+              { label: "Já creditado", value: formatBRL(resumo?.cartaoCreditado), tone: "success" },
             ]}
           />
           <p className="mt-2 text-xs text-muted-foreground">
             {resumo?.count ?? 0} venda(s){grupo ? ` · ${grupo}` : " · todas as lojas"} · {formatarData(de)} a {formatarData(ate)}
             {carregandoResumo ? " · atualizando…" : ""}
+          </p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            Vendido no cartão (bruto): {formatBRL(resumo?.totalRecebiveis)} · líquido previsto {formatBRL(resumo?.totalLiquido)}.
+            {" "}&ldquo;Em aberto&rdquo; = crédito ainda não caiu na conta (considera a antecipação D+1 por loja).
           </p>
 
           {taxaCartao ? (

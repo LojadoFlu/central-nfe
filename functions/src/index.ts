@@ -1879,16 +1879,32 @@ export const pdvnetResumoVendas = onCall(
       if (!dentro(p.lojaId)) continue;
       porForma[p.forma] = (porForma[p.forma] || 0) + (p.valor || 0);
     }
+    // "A receber" real = recebíveis cuja DATA DE CRÉDITO ainda não chegou (hoje).
+    // Antecipação LIGADA: crédito D+1 (fds→seg). DESLIGADA: data de vencimento real.
+    const antMap = await carregarAntecipacao();
+    const hoje = agoraISO().slice(0, 10);
     let totalRecebiveis = 0, totalLiquido = 0, recebiveis = 0;
+    let cartaoAReceber = 0, liquidoAReceber = 0, cartaoCreditado = 0;
     const recSnap = await db.collection("card_receivables").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of recSnap.docs) {
       const r = doc.data();
       if (!dentro(r.lojaId)) continue;
-      totalRecebiveis += r.valor || 0;
-      totalLiquido += r.liquido ?? r.valor ?? 0;
+      const valor = r.valor || 0;
+      const liq = r.liquido ?? r.valor ?? 0;
+      totalRecebiveis += valor;      // bruto vendido no cartão no período
+      totalLiquido += liq;           // líquido previsto (bruto − taxa)
       recebiveis++;
+      const cid = String(r.conciliaEmpresaId ?? r.empresaId ?? ""); // loja onde o dinheiro cai
+      const antOn = antMap.get(cid) !== false; // default: antecipação ligada
+      const credito = antOn ? dataCreditoCartao(String(r.dia ?? "").slice(0, 10)) : String(r.dataVencimento ?? "").slice(0, 10);
+      if (credito && credito > hoje) { cartaoAReceber += valor; liquidoAReceber += liq; } // ainda não creditado
+      else cartaoCreditado += valor;                                                       // já caiu na conta
     }
-    return { ok: true, de, ate, grupo: grupoSel || null, grupos, count, totalVendido, porForma, totalRecebiveis, totalLiquido, recebiveis };
+    return {
+      ok: true, de, ate, grupo: grupoSel || null, grupos, count, totalVendido, porForma,
+      totalRecebiveis, totalLiquido, recebiveis,
+      cartaoAReceber, liquidoAReceber, cartaoCreditado, hoje,
+    };
   },
 );
 

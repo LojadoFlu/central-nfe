@@ -797,9 +797,13 @@ export interface ResumoVendasFiltrado {
   count: number;
   totalVendido: number;
   porForma: Record<string, number>;
-  totalRecebiveis: number;
-  totalLiquido: number;
+  totalRecebiveis: number;   // bruto vendido no cartão no período
+  totalLiquido: number;      // líquido previsto (bruto − taxa)
   recebiveis: number;
+  cartaoAReceber?: number;   // saldo em aberto (crédito ainda não chegou), respeitando antecipação
+  liquidoAReceber?: number;  // líquido do que está em aberto
+  cartaoCreditado?: number;  // bruto que já caiu na conta
+  hoje?: string;
 }
 
 export async function pdvnetResumoVendas(de: string, ate: string, grupo?: string): Promise<ResumoVendasFiltrado> {
