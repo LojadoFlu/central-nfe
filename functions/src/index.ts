@@ -2926,7 +2926,27 @@ export const conciliacaoTaxas = onCall(
     const ant = await carregarAntecipacao();
     const antOn = ant.get(empresaId) !== false;
 
-    // ESPERADO = bruto do PDV × taxa do APP, lançado na DATA DE CRÉDITO (D+1/fds→seg, ou vencimento).
+    // 1) RECEBIDO = créditos de cartão do extrato. Também descobre o período REALMENTE
+    //    coberto pelo extrato (para comparar só onde há extrato dos dois lados).
+    const bankCred: Array<{ dia: string; valor: number }> = [];
+    let minExt = "", maxExt = "";
+    const bt = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
+    for (const doc of bt.docs) {
+      const t = doc.data();
+      const dia = d10(t.dia);
+      if (dia < de || dia > ate) continue;
+      if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") {
+        bankCred.push({ dia, valor: Number(t.valor ?? 0) });
+        if (!minExt || dia < minExt) minExt = dia;
+        if (dia > maxExt) maxExt = dia;
+      }
+    }
+    // Clampa o período ao trecho coberto pelo extrato.
+    const deEff = minExt && minExt > de ? minExt : de;
+    const ateEff = maxExt && maxExt < ate ? maxExt : ate;
+    const clampado = deEff !== de || ateEff !== ate;
+
+    // 2) ESPERADO = bruto do PDV × taxa do APP, na DATA DE CRÉDITO, só dentro de [deEff, ateEff].
     const porDia = new Map<string, { esperado: number; recebido: number }>();
     const bd = (dia: string) => { let x = porDia.get(dia); if (!x) { x = { esperado: 0, recebido: 0 }; porDia.set(dia, x); } return x; };
     let brutoCredit = 0, esperado = 0;
@@ -2936,43 +2956,35 @@ export const conciliacaoTaxas = onCall(
       brutoCredit += bruto; esperado += liq; bd(credito).esperado += liq;
     };
     if (antOn) {
-      const q = await db.collection("card_receivables").where("dia", ">=", menosDiasISO(de, 4)).where("dia", "<=", ate).get();
+      const q = await db.collection("card_receivables").where("dia", ">=", menosDiasISO(deEff, 4)).where("dia", "<=", ateEff).get();
       for (const doc of q.docs) {
         const r = doc.data();
         if (String(r.conciliaEmpresaId ?? r.empresaId ?? "") !== empresaId) continue;
         const credito = dataCreditoCartao(d10(r.dia));
-        if (!credito || credito < de || credito > ate) continue;
+        if (!credito || credito < deEff || credito > ateEff) continue;
         somaRec(r, credito);
       }
     } else {
-      const q = await db.collection("card_receivables").where("dataVencimento", ">=", de).where("dataVencimento", "<", maisDiasISO(ate, 1)).get();
+      const q = await db.collection("card_receivables").where("dataVencimento", ">=", deEff).where("dataVencimento", "<", maisDiasISO(ateEff, 1)).get();
       for (const doc of q.docs) {
         const r = doc.data();
         if (String(r.conciliaEmpresaId ?? r.empresaId ?? "") !== empresaId) continue;
         const credito = d10(r.dataVencimento);
-        if (!credito || credito < de || credito > ate) continue;
+        if (!credito || credito < deEff || credito > ateEff) continue;
         somaRec(r, credito);
       }
     }
-
-    // RECEBIDO = créditos de cartão no extrato (o que a Stone realmente depositou) no período.
+    // 3) recebido dentro do período clampado
     let recebido = 0;
-    const bt = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
-    for (const doc of bt.docs) {
-      const t = doc.data();
-      const dia = d10(t.dia);
-      if (dia < de || dia > ate) continue;
-      if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") {
-        const v = Number(t.valor ?? 0); recebido += v; bd(dia).recebido += v;
-      }
-    }
+    for (const b of bankCred) { if (b.dia >= deEff && b.dia <= ateEff) { recebido += b.valor; bd(b.dia).recebido += b.valor; } }
 
     const taxaApp = brutoCredit > 0 ? r2((1 - esperado / brutoCredit) * 100) : 0;      // taxa cadastrada (efetiva)
     const taxaStone = brutoCredit > 0 ? r2((1 - recebido / brutoCredit) * 100) : 0;    // taxa real da Stone
     const linhasDia = [...porDia.entries()].sort((a, b) => a[0].localeCompare(b[0]))
       .map(([dia, x]) => ({ dia, esperado: r2(x.esperado), recebido: r2(x.recebido), dif: r2(x.recebido - x.esperado) }));
     return {
-      ok: true, de, ate, empresaId, temCadastro,
+      ok: true, de: deEff, ate: ateEff, pedidoDe: de, pedidoAte: ate, clampado,
+      periodoExtrato: { de: minExt || null, ate: maxExt || null }, empresaId, temCadastro,
       bruto: r2(brutoCredit), esperado: r2(esperado), recebido: r2(recebido), dif: r2(recebido - esperado),
       taxaApp, taxaStone, porDia: linhasDia,
     };

@@ -275,6 +275,13 @@ function TaxasView({ taxas }: { taxas: ConcilTaxas }) {
         </CardContent>
       </Card>
 
+      {taxas.clampado ? (
+        <p className="mb-4 rounded-md bg-muted px-3 py-2 text-[11px] text-muted-foreground">
+          Comparando só o período coberto pelo extrato: <strong>{formatarData(taxas.de)} a {formatarData(taxas.ate)}</strong>
+          {taxas.periodoExtrato?.de ? ` (extrato de ${formatarData(taxas.periodoExtrato.de)} a ${formatarData(taxas.periodoExtrato.ate ?? "")})` : ""}.
+        </p>
+      ) : null}
+
       {!taxas.temCadastro ? (
         <p className="mb-4 rounded-md bg-warning/10 p-3 text-sm text-warning">
           Esta loja não tem taxas cadastradas em <strong>Taxas</strong> — sem elas o esperado fica igual ao bruto. Cadastre as taxas por bandeira.

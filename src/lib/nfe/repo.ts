@@ -953,6 +953,8 @@ export async function obterConciliacao(empresaId: string, de: string, ate: strin
 export interface ConcilTaxas {
   ok: boolean;
   de: string; ate: string; empresaId: string;
+  pedidoDe?: string; pedidoAte?: string; clampado?: boolean; // período foi reduzido ao coberto pelo extrato
+  periodoExtrato?: { de: string | null; ate: string | null };
   temCadastro: boolean; // há taxa cadastrada no APP
   bruto: number;        // bruto do PDV cujo crédito cai no período
   esperado: number;     // líquido esperado = bruto × taxa do APP
