@@ -78,6 +78,14 @@ function hojeISO(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+const fmtDia = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+/** Semana atual: domingo (início) a sábado (fim), contendo hoje. */
+function semanaAtual(): { ini: string; fim: string } {
+  const d = new Date();
+  const ini = new Date(d); ini.setDate(d.getDate() - d.getDay());   // getDay(): 0=domingo
+  const fim = new Date(ini); fim.setDate(ini.getDate() + 6);        // sábado
+  return { ini: fmtDia(ini), fim: fmtDia(fim) };
+}
 
 const MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 /** "2026-08" → "Ago/2026". */
@@ -307,21 +315,33 @@ export default function FinanceiroPage() {
     [contas, forn, empresaId, periodo],
   );
 
+  // Base do destaque: respeita empresa + fornecedor, MAS ignora o filtro de período
+  // (o destaque é um retrato fixo — hoje / semana atual — não segue o período da lista).
+  const baseDestaque = useMemo(
+    () => contas.filter((p) => (!empresaId || (p.companyId ?? "") === empresaId) && (!forn || (p.cnpjEmit ?? "") === forn)),
+    [contas, forn, empresaId],
+  );
+  const semana = useMemo(() => semanaAtual(), []);
   const totais = useMemo(() => {
     const hoje = hojeISO();
-    let aVencer = 0;
-    let vencido = 0;
-    let pago = 0;
+    const { ini, fim } = semana;
+    let aVencer = 0;   // a vencer NA SEMANA (dom–sáb)
+    let vencido = 0;   // todas as vencidas (acumulado, sem janela)
+    let pago = 0;      // pago NA SEMANA (pela data de pagamento)
     let hojeValor = 0; // a pagar HOJE (vence hoje, ainda não pago)
-    for (const p of base) {
+    for (const p of baseDestaque) {
       const { s } = situacao(p);
-      if (s === "a_vencer") aVencer += p.valor ?? 0;
+      const venc = (p.vencimento ?? "").slice(0, 10);
+      if (s === "a_vencer" && venc >= ini && venc <= fim) aVencer += p.valor ?? 0;
       else if (s === "vencida") vencido += p.valor ?? 0;
-      else if (s === "paga") pago += p.valorPago ?? p.valor ?? 0;
-      if ((s === "a_vencer" || s === "vencida") && (p.vencimento ?? "").slice(0, 10) === hoje) hojeValor += p.valor ?? 0;
+      else if (s === "paga") {
+        const dp = (p.dataPagamento ?? "").slice(0, 10);
+        if (dp >= ini && dp <= fim) pago += p.valorPago ?? p.valor ?? 0;
+      }
+      if ((s === "a_vencer" || s === "vencida") && venc === hoje) hojeValor += p.valor ?? 0;
     }
     return { aVencer, vencido, pago, hoje: hojeValor };
-  }, [base]);
+  }, [baseDestaque, semana]);
 
   // Pagamentos por mês (pela data de pagamento), respeitando o fornecedor.
   const mesAtual = hojeISO().slice(0, 7);
@@ -421,11 +441,14 @@ export default function FinanceiroPage() {
         tone={totais.hoje > 0 ? "destructive" : "warning"}
         subtitle="Contas que vencem hoje, ainda não pagas"
         metrics={[
-          { label: "A vencer", value: parcelas === null ? "…" : formatBRL(totais.aVencer), tone: "warning" },
+          { label: "A vencer (semana)", value: parcelas === null ? "…" : formatBRL(totais.aVencer), tone: "warning" },
           { label: "Vencidas", value: parcelas === null ? "…" : formatBRL(totais.vencido), tone: "destructive" },
-          { label: "Pagas", value: parcelas === null ? "…" : formatBRL(totais.pago), tone: "success" },
+          { label: "Pagas (semana)", value: parcelas === null ? "…" : formatBRL(totais.pago), tone: "success" },
         ]}
       />
+      <p className="mb-1 mt-1 px-1 text-[11px] text-muted-foreground">
+        &ldquo;Semana&rdquo; = {formatarData(semana.ini)} a {formatarData(semana.fim)} (domingo a sábado). Vencidas = todo o acumulado em atraso.
+      </p>
 
       {/* Resumo de pagamentos por mês */}
       {porMes.length > 0 ? (
