@@ -802,6 +802,11 @@ export const nfeBaixarParcela = onCall(opcoes, async (req) => {
   const now = agoraISO();
 
   if (pago) {
+    // Trava: parcela em contestação (divergência de valor/parcelas) não pode ser paga.
+    const cont = snap.data()?.contestacao as { status?: string } | undefined;
+    if (cont && cont.status === "aberta") {
+      throw new HttpsError("failed-precondition", "Parcela em contestação — resolva a divergência antes de pagar.");
+    }
     const valorPago =
       d.valorPago != null && Number.isFinite(Number(d.valorPago)) ? Number(d.valorPago) : null;
     // dataPagamento em YYYY-MM-DD; default = hoje.
@@ -849,6 +854,59 @@ export const nfeBaixarParcela = onCall(opcoes, async (req) => {
     dataPagamento: pago ? String(d.dataPagamento ?? "") : null,
   });
   return { ok: true, statusPagamento: pago ? "pago" : "nao_informado" };
+});
+
+/**
+ * Abre uma CONTESTAÇÃO de divergência numa parcela de NF-e (valor cobrado errado,
+ * nº de parcelas errado, etc.). Enquanto ABERTA, a parcela não pode ser paga — precisa
+ * o fornecedor corrigir e um admin aprovar. admin/financeiro.
+ */
+export const nfeContestarParcela = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const parcelaId = String(d.parcelaId ?? "").trim();
+  if (!parcelaId) throw new HttpsError("invalid-argument", "parcelaId obrigatório.");
+  const motivo = ["valor", "parcelas", "outro"].includes(String(d.motivo)) ? String(d.motivo) : "outro";
+  const descricao = String(d.descricao ?? "").trim().slice(0, 500);
+  if (!descricao) throw new HttpsError("invalid-argument", "Descreva a divergência.");
+  const valorCorreto = d.valorCorreto != null && Number.isFinite(Number(d.valorCorreto)) ? Math.round(Number(d.valorCorreto) * 100) / 100 : null;
+  const parcelasCorreto = Number.isInteger(Number(d.parcelasCorreto)) && Number(d.parcelasCorreto) > 0 ? Number(d.parcelasCorreto) : null;
+  const ref = db.collection("nfe_installments").doc(parcelaId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError("not-found", "Parcela não encontrada.");
+  if (snap.data()?.statusPagamento === "pago") throw new HttpsError("failed-precondition", "Parcela já paga — reabra antes de contestar.");
+  const now = agoraISO();
+  await ref.set({
+    contestacao: { status: "aberta", motivo, descricao, valorCorreto, parcelasCorreto, criadoPor: uid, criadoEm: now },
+    updatedAt: now,
+  }, { merge: true });
+  await auditar(uid, "financeiro.contestarParcela", { parcelaId, motivo });
+  return { ok: true };
+});
+
+/**
+ * Resolve/APROVA a contestação de uma parcela → libera para pagamento (ou cancela).
+ * Só ADMIN aprova (a "aprovação da alteração"). resolucao: "aprovada" | "cancelada".
+ */
+export const nfeResolverContestacao = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin"]);
+  const d = req.data ?? {};
+  const parcelaId = String(d.parcelaId ?? "").trim();
+  if (!parcelaId) throw new HttpsError("invalid-argument", "parcelaId obrigatório.");
+  const resolucao = String(d.resolucao) === "cancelada" ? "cancelada" : "aprovada";
+  const obs = String(d.obs ?? "").trim().slice(0, 300) || null;
+  const ref = db.collection("nfe_installments").doc(parcelaId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError("not-found", "Parcela não encontrada.");
+  const cont = snap.data()?.contestacao as Record<string, unknown> | undefined;
+  if (!cont || cont.status !== "aberta") throw new HttpsError("failed-precondition", "Não há contestação aberta nesta parcela.");
+  const now = agoraISO();
+  await ref.set({
+    contestacao: { ...cont, status: "resolvida", resolucao, obsResolucao: obs, resolvidoPor: uid, resolvidoEm: now },
+    updatedAt: now,
+  }, { merge: true });
+  await auditar(uid, "financeiro.resolverContestacao", { parcelaId, resolucao });
+  return { ok: true };
 });
 
 /**
@@ -926,10 +984,11 @@ export const nfeBaixarParcelasLote = onCall(opcoes, async (req) => {
   const refs = ids.map((id) => db.collection("nfe_installments").doc(id));
   const snaps = await db.getAll(...refs);
   const batch = db.batch();
-  let total = 0;
+  let total = 0, contestadas = 0;
   for (const snap of snaps) {
     if (!snap.exists) continue;
-    const p = snap.data() as { valor?: number };
+    const p = snap.data() as { valor?: number; contestacao?: { status?: string } };
+    if (p.contestacao && p.contestacao.status === "aberta") { contestadas++; continue; } // não paga contestadas
     const valorPago = typeof p.valor === "number" ? p.valor : null;
     batch.set(
       snap.ref,
@@ -948,8 +1007,8 @@ export const nfeBaixarParcelasLote = onCall(opcoes, async (req) => {
     total++;
   }
   await batch.commit();
-  await auditar(uid, "financeiro.baixarLote", { total, dataPagamento });
-  return { ok: true, total };
+  await auditar(uid, "financeiro.baixarLote", { total, dataPagamento, contestadas });
+  return { ok: true, total, contestadas };
 });
 
 /**

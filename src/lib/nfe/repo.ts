@@ -200,6 +200,7 @@ export interface Parcela {
   migradoAcordo?: boolean;
   acordoId?: string | null;
   baixadoEm?: string | null;
+  contestacao?: Contestacao | null;
 }
 
 /** Marca/desmarca uma parcela como migrada para acordo (só registro, sem baixa). */
@@ -233,6 +234,33 @@ export async function baixarParcela(input: {
   const fn = httpsCallable(functions, "nfeBaixarParcela");
   const res = await fn(input);
   return res.data as { ok: boolean; statusPagamento: string };
+}
+
+export interface Contestacao {
+  status: "aberta" | "resolvida";
+  motivo: "valor" | "parcelas" | "outro";
+  descricao: string;
+  valorCorreto?: number | null;
+  parcelasCorreto?: number | null;
+  criadoPor?: string; criadoEm?: string;
+  resolucao?: "aprovada" | "cancelada";
+  obsResolucao?: string | null;
+  resolvidoPor?: string; resolvidoEm?: string;
+}
+/** Abre contestação de divergência na parcela (bloqueia o pagamento até resolver). */
+export async function contestarParcela(input: {
+  parcelaId: string; motivo: "valor" | "parcelas" | "outro"; descricao: string;
+  valorCorreto?: number; parcelasCorreto?: number;
+}): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  return (await httpsCallable(functions, "nfeContestarParcela")(input)).data as { ok: boolean };
+}
+/** Resolve/aprova (ou cancela) a contestação — libera o pagamento. Só admin. */
+export async function resolverContestacao(input: {
+  parcelaId: string; resolucao: "aprovada" | "cancelada"; obs?: string;
+}): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  return (await httpsCallable(functions, "nfeResolverContestacao")(input)).data as { ok: boolean };
 }
 
 // ---- CT-e (fretes) ----

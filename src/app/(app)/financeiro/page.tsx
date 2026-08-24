@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, listarDespesasFixas, pagarDespesaFixa, migrarParcelaAcordo, type Parcela, type Acordo, type ContaPagamento, type DespesaFixa } from "@/lib/nfe/repo";
+import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, listarDespesasFixas, pagarDespesaFixa, migrarParcelaAcordo, contestarParcela, resolverContestacao, type Parcela, type Acordo, type ContaPagamento, type DespesaFixa, type Contestacao } from "@/lib/nfe/repo";
 import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -62,6 +62,7 @@ interface Conta {
   migradoAcordo?: boolean;
   chNFe?: string | null;
   descricao?: string | null;
+  contestacao?: Contestacao | null;
 }
 
 /** Uma parcela paga sai da régua de vencimento — vira "paga". Migrada p/ acordo sai do fluxo. */
@@ -95,7 +96,7 @@ function mesLabel(ym: string): string {
 }
 
 export default function FinanceiroPage() {
-  const { podeAcao } = useAuth();
+  const { podeAcao, isAdmin } = useAuth();
   const podeBaixar = podeAcao("financeiro.baixar");
   const [parcelas, setParcelas] = useState<Parcela[] | null>(null);
   const [acordos, setAcordos] = useState<Acordo[]>([]);
@@ -117,6 +118,13 @@ export default function FinanceiroPage() {
   const [contasPg, setContasPg] = useState<ContaPagamento[]>([]);
   const [migrarChk, setMigrarChk] = useState(false);
   const [migrarAcordoId, setMigrarAcordoId] = useState("");
+
+  // Contestação (divergência que bloqueia o pagamento)
+  const [contestando, setContestando] = useState<string | null>(null);
+  const [cMotivo, setCMotivo] = useState<"valor" | "parcelas" | "outro">("valor");
+  const [cDescricao, setCDescricao] = useState("");
+  const [cValor, setCValor] = useState("");
+  const [cParcelas, setCParcelas] = useState("");
 
   // Baixa em lote (modo seleção)
   const [selMode, setSelMode] = useState(false);
@@ -146,7 +154,7 @@ export default function FinanceiroPage() {
       id: p.id, origem: "nfe", companyId: p.companyId, cnpjEmit: p.cnpjEmit, xNomeEmit: p.xNomeEmit,
       nDup: p.nDup, vencimento: p.vencimento, valor: p.valor, statusPagamento: p.statusPagamento,
       dataPagamento: p.dataPagamento, valorPago: p.valorPago, obsPagamento: p.obsPagamento, contasPagamento: p.contasPagamento,
-      migradoAcordo: p.migradoAcordo, acordoId: p.acordoId, chNFe: p.chNFe,
+      migradoAcordo: p.migradoAcordo, acordoId: p.acordoId, chNFe: p.chNFe, contestacao: p.contestacao,
     }));
     const ac: Conta[] = acordos.flatMap((a) =>
       (a.parcelas ?? []).map((pc, i) => ({
@@ -257,6 +265,31 @@ export default function FinanceiroPage() {
     } finally {
       setSalvando(null);
     }
+  }
+
+  function abrirContest(p: Conta) {
+    setPendente(null); setContestando(p.id);
+    setCMotivo("valor"); setCDescricao(""); setCValor(""); setCParcelas("");
+  }
+  async function enviarContest(p: Conta) {
+    if (!cDescricao.trim()) return setErro("Descreva a divergência.");
+    setSalvando(p.id); setErro(null);
+    try {
+      await contestarParcela({
+        parcelaId: p.id, motivo: cMotivo, descricao: cDescricao.trim(),
+        valorCorreto: cMotivo === "valor" && cValor ? Number(cValor) : undefined,
+        parcelasCorreto: cMotivo === "parcelas" && cParcelas ? Number(cParcelas) : undefined,
+      });
+      setContestando(null);
+      await carregar();
+    } catch (e) { setErro((e as Error).message); } finally { setSalvando(null); }
+  }
+  async function resolver(p: Conta, resolucao: "aprovada" | "cancelada") {
+    setSalvando(p.id); setErro(null);
+    try {
+      await resolverContestacao({ parcelaId: p.id, resolucao });
+      await carregar();
+    } catch (e) { setErro((e as Error).message); } finally { setSalvando(null); }
   }
 
   function toggleSel(id: string) {
@@ -518,7 +551,7 @@ export default function FinanceiroPage() {
             const abrindo = pendente === p.id;
             const ocupado = salvando === p.id;
             // Lote de baixa só cobre parcelas de NF-e; acordo/despesa baixa individualmente.
-            const selecionavel = selMode && s !== "paga" && p.origem === "nfe";
+            const selecionavel = selMode && s !== "paga" && p.origem === "nfe" && p.contestacao?.status !== "aberta";
             const marcada = sel.has(p.id);
 
             const info = (
@@ -535,6 +568,7 @@ export default function FinanceiroPage() {
                     ) : null}
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
+                    {p.contestacao?.status === "aberta" ? <Badge variant="destructive">Em contestação</Badge> : null}
                     {p.origem === "acordo" ? <Badge variant="neutral">Acordo</Badge> : null}
                     {p.origem === "despesa" ? <Badge variant="neutral">Despesa fixa</Badge> : null}
                     <Badge variant={cfg.variant}>{cfg.label}</Badge>
@@ -564,6 +598,13 @@ export default function FinanceiroPage() {
                 {s === "migrado" ? (
                   <p className="mt-1 text-xs text-muted-foreground">
                     Renegociada em acordo{p.acordoId ? ` · ${acordos.find((a) => a.id === p.acordoId)?.nomeFornecedor ?? "acordo"}` : ""} — sem movimentação financeira.
+                  </p>
+                ) : null}
+                {p.contestacao?.status === "aberta" ? (
+                  <p className="mt-1 rounded-md bg-destructive/10 px-2 py-1 text-xs text-destructive">
+                    <strong>{p.contestacao.motivo === "valor" ? "Valor divergente" : p.contestacao.motivo === "parcelas" ? "Nº de parcelas errado" : "Divergência"}:</strong> {p.contestacao.descricao}
+                    {p.contestacao.valorCorreto != null ? ` · correto: ${formatBRL(p.contestacao.valorCorreto)}` : ""}
+                    {p.contestacao.parcelasCorreto != null ? ` · ${p.contestacao.parcelasCorreto}x` : ""} — pagamento bloqueado até aprovação.
                   </p>
                 ) : null}
               </>
@@ -611,6 +652,49 @@ export default function FinanceiroPage() {
                               <RotateCcw className="size-4" />
                               {ocupado ? "Reabrindo…" : "Reabrir (marcar como não paga)"}
                             </Button>
+                          ) : p.contestacao?.status === "aberta" ? (
+                            <div className="space-y-2">
+                              <p className="text-xs text-destructive">⚠ Pagamento bloqueado por contestação.</p>
+                              {isAdmin ? (
+                                <div className="flex gap-2">
+                                  <Button size="sm" disabled={ocupado} onClick={() => resolver(p, "aprovada")}>{ocupado ? "…" : "Aprovar e liberar"}</Button>
+                                  <Button size="sm" variant="ghost" disabled={ocupado} onClick={() => resolver(p, "cancelada")}>Cancelar contestação</Button>
+                                </div>
+                              ) : <p className="text-[11px] text-muted-foreground">Aguardando um administrador aprovar a correção.</p>}
+                            </div>
+                          ) : contestando === p.id ? (
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap items-end gap-2">
+                                <div className="space-y-1">
+                                  <label className="block text-xs text-muted-foreground">Tipo de divergência</label>
+                                  <select value={cMotivo} onChange={(e) => setCMotivo(e.target.value as "valor" | "parcelas" | "outro")} className="h-9 w-48 rounded-md border border-input bg-background px-2 text-sm">
+                                    <option value="valor">Valor cobrado errado</option>
+                                    <option value="parcelas">Nº de parcelas errado</option>
+                                    <option value="outro">Outro</option>
+                                  </select>
+                                </div>
+                                {cMotivo === "valor" ? (
+                                  <div className="space-y-1">
+                                    <label className="block text-xs text-muted-foreground">Valor correto (R$)</label>
+                                    <Input type="number" step="0.01" inputMode="decimal" value={cValor} onChange={(e) => setCValor(e.target.value)} className="h-9 w-32" />
+                                  </div>
+                                ) : null}
+                                {cMotivo === "parcelas" ? (
+                                  <div className="space-y-1">
+                                    <label className="block text-xs text-muted-foreground">Parcelas correto</label>
+                                    <Input type="number" step="1" inputMode="numeric" value={cParcelas} onChange={(e) => setCParcelas(e.target.value)} className="h-9 w-24" />
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className="space-y-1">
+                                <label className="block text-xs text-muted-foreground">Descreva a divergência</label>
+                                <Input placeholder="Ex.: acordado R$ 1.000, cobrado R$ 1.200" value={cDescricao} onChange={(e) => setCDescricao(e.target.value)} maxLength={500} className="h-9" />
+                              </div>
+                              <div className="flex gap-2 pt-1">
+                                <Button size="sm" variant="destructive" disabled={ocupado} onClick={() => enviarContest(p)}>{ocupado ? "Salvando…" : "Marcar divergência (bloqueia)"}</Button>
+                                <Button size="sm" variant="ghost" disabled={ocupado} onClick={() => setContestando(null)}>Cancelar</Button>
+                              </div>
+                            </div>
                           ) : abrindo ? (
                             <div className="space-y-2">
                               {p.origem === "nfe" ? (
@@ -687,9 +771,14 @@ export default function FinanceiroPage() {
                               </div>
                             </div>
                           ) : (
-                            <Button size="sm" variant="outline" onClick={() => abrirSingle(p)}>
-                              <Check className="size-4" /> Marcar como pago
-                            </Button>
+                            <div className="flex flex-wrap gap-2">
+                              <Button size="sm" variant="outline" onClick={() => abrirSingle(p)}>
+                                <Check className="size-4" /> Marcar como pago
+                              </Button>
+                              {p.origem === "nfe" ? (
+                                <Button size="sm" variant="ghost" className="text-destructive" onClick={() => abrirContest(p)}>Contestar divergência</Button>
+                              ) : null}
+                            </div>
                           )}
                         </div>
                       ) : null}
