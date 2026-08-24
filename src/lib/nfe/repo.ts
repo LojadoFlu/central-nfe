@@ -864,6 +864,7 @@ export async function obterPendencias(empresaId?: string): Promise<Pendencias> {
 
 export interface TxBanco {
   fitid: string;
+  contaId?: string | null;
   tipo: string;
   data: string;
   valor: number;
@@ -873,17 +874,27 @@ export interface TxBanco {
 export interface ContaBanco {
   empresaId: string;
   org: string | null;
-  fid: string | null;
+  fid?: string | null;
   curdef: string | null;
   saldo: number | null;
   saldoData: string | null;
   dtStart: string | null;
   dtEnd: string | null;
   ultimoImport: string | null;
+  nContas?: number;
+}
+export interface ContaBancoItem {
+  contaId: string | null;
+  org: string | null;
+  acctId: string | null;
+  saldo: number;
+  saldoData: string | null;
+  ultimoImport: string | null;
 }
 export interface ExtratoBanco {
   ok: boolean;
   conta: ContaBanco | null;
+  contas?: ContaBancoItem[]; // contas individuais da loja (várias por loja)
   creditos: number;
   debitos: number;
   saldoMov: number;
@@ -891,11 +902,11 @@ export interface ExtratoBanco {
   total: number;
   transacoes: TxBanco[];
 }
-export async function importarExtrato(ofx: string, empresaId: string): Promise<{ ok: boolean; transacoes: number; saldo: number | null; saldoData: string | null; org: string | null; periodo: { de: string | null; ate: string | null } }> {
+export async function importarExtrato(ofx: string, empresaId: string): Promise<{ ok: boolean; transacoes: number; saldo: number | null; saldoData: string | null; org: string | null; contaId?: string; acctId?: string | null; periodo: { de: string | null; ate: string | null } }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "importarExtrato");
   const res = await fn({ ofx, empresaId });
-  return res.data as { ok: boolean; transacoes: number; saldo: number | null; saldoData: string | null; org: string | null; periodo: { de: string | null; ate: string | null } };
+  return res.data as { ok: boolean; transacoes: number; saldo: number | null; saldoData: string | null; org: string | null; contaId?: string; acctId?: string | null; periodo: { de: string | null; ate: string | null } };
 }
 export async function obterExtrato(empresaId: string, de?: string, ate?: string): Promise<ExtratoBanco> {
   const { functions } = fb();

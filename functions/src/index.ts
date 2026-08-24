@@ -2604,7 +2604,8 @@ export const importarContasPagar = onCall(
 
 /**
  * Importa um extrato bancário OFX (parse server-side) e persiste os lançamentos
- * em bank_transactions (dedup por FITID) + o saldo/período em bank_accounts.
+ * em bank_transactions (dedup por conteúdo) + o saldo/período por conta em bank_accounts.
+ * Uma loja pode ter várias contas (bank_accounts/{empresaId}_{contaId}).
  * A conta é identificada pela empresa. Nada é inventado — só o que vem no arquivo.
  */
 export const importarExtrato = onCall(
@@ -2621,24 +2622,28 @@ export const importarExtrato = onCall(
     let batch = db.batch();
     let ops = 0;
     const flush = async () => { if (ops) { await batch.commit(); batch = db.batch(); ops = 0; } };
+    const contaId = ext.contaId; // identifica a conta DENTRO da loja (permite várias por loja)
     for (const t of ext.transacoes) {
-      // Dedup por chave de CONTEÚDO (não FITID) — reimportar o mesmo período não duplica.
-      const ref = db.collection("bank_transactions").doc(`${empresaId}_${t.chave}`);
-      batch.set(ref, { ...t, empresaId, dia: t.data, origem: "ofx", org: ext.org, importadoEm: now }, { merge: true });
+      // Dedup por conta + chave de CONTEÚDO (não FITID) — reimportar o mesmo período não duplica,
+      // e contas diferentes da mesma loja não colidem mesmo com lançamentos idênticos.
+      const ref = db.collection("bank_transactions").doc(`${empresaId}_${contaId}_${t.chave}`);
+      batch.set(ref, { ...t, empresaId, contaId, dia: t.data, origem: "ofx", org: ext.org, importadoEm: now }, { merge: true });
       ops++;
       if (ops >= 400) await flush();
     }
     await flush();
-    await db.collection("bank_accounts").doc(empresaId).set(
+    // Uma conta por (loja, contaId) — várias contas por loja convivem em docs separados.
+    await db.collection("bank_accounts").doc(`${empresaId}_${contaId}`).set(
       {
-        empresaId, org: ext.org, fid: ext.fid, curdef: ext.curdef,
+        empresaId, contaId, org: ext.org, fid: ext.fid, curdef: ext.curdef,
+        bankId: ext.bankId, acctId: ext.acctId, acctType: ext.acctType,
         saldo: ext.saldo, saldoData: ext.saldoData, dtStart: ext.dtStart, dtEnd: ext.dtEnd,
         ultimoImport: now, ultimoImportPor: uid,
       },
       { merge: true },
     );
-    await auditar(uid, "banco.importarExtrato", { empresaId, transacoes: ext.transacoes.length, saldo: ext.saldo });
-    return { ok: true, transacoes: ext.transacoes.length, saldo: ext.saldo, saldoData: ext.saldoData, org: ext.org, periodo: { de: ext.dtStart, ate: ext.dtEnd } };
+    await auditar(uid, "banco.importarExtrato", { empresaId, contaId, transacoes: ext.transacoes.length, saldo: ext.saldo });
+    return { ok: true, transacoes: ext.transacoes.length, saldo: ext.saldo, saldoData: ext.saldoData, org: ext.org, contaId, acctId: ext.acctId, periodo: { de: ext.dtStart, ate: ext.dtEnd } };
   },
 );
 
@@ -2651,9 +2656,33 @@ export const extratoBanco = onCall(
     if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa (conta).");
     const de = String(req.data?.de ?? "").slice(0, 10);
     const ate = String(req.data?.ate ?? "").slice(0, 10);
-    const conta = (await db.collection("bank_accounts").doc(empresaId).get()).data() ?? null;
+    // Uma loja pode ter VÁRIAS contas — consolida o saldo/período de todas.
+    const contasSnap = await db.collection("bank_accounts").where("empresaId", "==", empresaId).get();
+    const contasArr = contasSnap.docs.map((d) => d.data());
+    let conta: Record<string, unknown> | null = null;
+    if (contasArr.length) {
+      const orgs = [...new Set(contasArr.map((a) => a.org).filter(Boolean))] as string[];
+      const pick = (campo: string, ultimo: boolean) => {
+        const vals = contasArr.map((a) => a[campo]).filter(Boolean).map(String).sort();
+        return (ultimo ? vals[vals.length - 1] : vals[0]) ?? null;
+      };
+      conta = {
+        empresaId,
+        saldo: contasArr.reduce((s, a) => s + (Number(a.saldo ?? 0) || 0), 0),
+        saldoData: pick("saldoData", true),
+        ultimoImport: pick("ultimoImport", true),
+        dtStart: pick("dtStart", false), dtEnd: pick("dtEnd", true),
+        curdef: (contasArr[0].curdef as string) ?? null,
+        org: contasArr.length > 1 ? `${orgs.join(" · ") || "Banco"} · ${contasArr.length} contas` : (orgs[0] ?? "Conta"),
+        nContas: contasArr.length,
+      };
+    }
+    const contas = contasArr.map((a) => ({
+      contaId: a.contaId ?? null, org: a.org ?? null, acctId: a.acctId ?? null,
+      saldo: Number(a.saldo ?? 0) || 0, saldoData: a.saldoData ?? null, ultimoImport: a.ultimoImport ?? null,
+    }));
     const snap = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
-    const txs: Array<{ fitid: string; tipo: string; data: string; valor: number; memo: string; categoria: string }> = [];
+    const txs: Array<{ fitid: string; contaId: string | null; tipo: string; data: string; valor: number; memo: string; categoria: string }> = [];
     let creditos = 0, debitos = 0;
     const porCategoria: Record<string, number> = {};
     for (const doc of snap.docs) {
@@ -2663,7 +2692,7 @@ export const extratoBanco = onCall(
       const valor = Number(t.valor ?? 0);
       if (valor >= 0) creditos += valor; else debitos += valor;
       porCategoria[t.categoria] = (porCategoria[t.categoria] ?? 0) + valor;
-      txs.push({ fitid: t.fitid, tipo: t.tipo, data: dia, valor, memo: t.memo, categoria: t.categoria });
+      txs.push({ fitid: t.fitid, contaId: t.contaId ?? null, tipo: t.tipo, data: dia, valor, memo: t.memo, categoria: t.categoria });
     }
 
     // LANÇAMENTOS VIRTUAIS — despesas manuais pagas por PIX desta conta. Aparecem no
@@ -2682,11 +2711,11 @@ export const extratoBanco = onCall(
       if (m) { m.usado = true; continue; } // já veio no OFX → não duplica
       debitos += v;
       porCategoria["pagamento"] = (porCategoria["pagamento"] ?? 0) + v;
-      txs.push({ fitid: `dm-${doc.id}`, tipo: "DEBIT", data: dia, valor: v, memo: `${String(x.descricao ?? "Despesa")} (despesa manual)`, categoria: "pagamento" });
+      txs.push({ fitid: `dm-${doc.id}`, contaId: null, tipo: "DEBIT", data: dia, valor: v, memo: `${String(x.descricao ?? "Despesa")} (despesa manual)`, categoria: "pagamento" });
     }
 
     txs.sort((a, b) => b.data.localeCompare(a.data));
-    return { ok: true, conta, creditos, debitos, saldoMov: creditos + debitos, porCategoria, total: txs.length, transacoes: txs.slice(0, 300) };
+    return { ok: true, conta, contas, creditos, debitos, saldoMov: creditos + debitos, porCategoria, total: txs.length, transacoes: txs.slice(0, 300) };
   },
 );
 

@@ -118,7 +118,7 @@ export default function BancoPage() {
         texto = new TextDecoder("windows-1252").decode(buf);
       }
       const r = await importarExtrato(texto, empresaId);
-      setMsg(`${r.transacoes} lançamento(s) importado(s) · saldo ${formatBRL(r.saldo ?? 0)}${r.org ? ` · ${r.org}` : ""}.`);
+      setMsg(`${r.transacoes} lançamento(s) importado(s) · ${r.org ?? "conta"}${r.acctId ? ` nº ${r.acctId}` : ""} · saldo ${formatBRL(r.saldo ?? 0)}. Pode importar outra conta desta loja — o saldo soma.`);
       await carregar();
     } catch (e) {
       setErro((e as Error).message);
@@ -197,6 +197,28 @@ export default function BancoPage() {
               </p>
             </div>
           </div>
+
+          {/* Contas da loja (várias por loja) — saldo consolidado acima, detalhe aqui */}
+          {(dados?.contas?.length ?? 0) > 1 ? (
+            <Card className="mb-4">
+              <CardContent className="py-3">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                  {dados!.contas!.length} contas nesta loja · saldo consolidado
+                </p>
+                <div className="divide-y divide-border">
+                  {dados!.contas!.map((ct, i) => (
+                    <div key={i} className="flex items-center justify-between gap-2 py-1.5 text-sm">
+                      <span className="min-w-0 truncate text-muted-foreground">
+                        {ct.org ?? "Conta"}{ct.acctId ? ` · nº ${ct.acctId}` : ""}
+                        {ct.saldoData ? ` · ${formatarData(ct.saldoData)}` : ""}
+                      </span>
+                      <span className="shrink-0 font-medium tnum">{formatBRL(ct.saldo)}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <FiltroPeriodo value={periodo} onChange={setPeriodo} className="mb-3" />
 

@@ -16,6 +16,10 @@ export interface ExtratoOFX {
   org: string | null;
   fid: string | null;
   curdef: string | null;
+  bankId: string | null;   // BANKID (banco)
+  acctId: string | null;   // ACCTID (número da conta) — identifica a CONTA dentro da loja
+  acctType: string | null; // ACCTTYPE
+  contaId: string;         // id estável da conta (bankId+acctId), p/ permitir várias contas por loja
   dtStart: string | null;
   dtEnd: string | null;
   saldo: number | null;
@@ -72,10 +76,19 @@ export function parseOFX(texto: string): ExtratoOFX {
       categoria: categoriaMemo(memo),
     });
   }
+  // Identidade da CONTA (várias contas por loja): BANKID + ACCTID do bloco *ACCTFROM.
+  const org = leaf(texto, "ORG") || null;
+  const fid = leaf(texto, "FID") || null;
+  const bankId = leaf(texto, "BANKID") || null;
+  const acctId = leaf(texto, "ACCTID") || null;
+  const acctType = leaf(texto, "ACCTTYPE") || null;
+  // contaId estável: prefere o nº da conta; se ausente, cai para org+fid; nunca vazio.
+  const semSimbolo = (s: string) => s.normalize("NFD").replace(new RegExp("[\\u0300-\\u036f]", "g"), "").replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
+  const contaBruta = acctId ? `${bankId ?? ""}${acctId}` : `${org ?? ""}${fid ?? ""}`;
+  const contaId = semSimbolo(contaBruta) || "principal";
   return {
-    org: leaf(texto, "ORG") || null,
-    fid: leaf(texto, "FID") || null,
-    curdef: leaf(texto, "CURDEF") || null,
+    org, fid, curdef: leaf(texto, "CURDEF") || null,
+    bankId, acctId, acctType, contaId,
     dtStart: dataOFX(leaf(texto, "DTSTART")) || null,
     dtEnd: dataOFX(leaf(texto, "DTEND")) || null,
     saldo: saldoStr ? Number(saldoStr) : null,
