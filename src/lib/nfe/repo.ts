@@ -1033,8 +1033,9 @@ export interface DRE {
   cmvPct: number;
   cmvBase: "gerencial" | "aquisicao";
   cmvOrigem: CmvOrigem;
-  receitaVendas: number;
+  receitaVendas: number; // líquida (já sem descontos)
   receitaManual: number;
+  descontos?: number;
   cmv: number;
   compras: number;
   cmvReal: number;

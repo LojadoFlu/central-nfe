@@ -124,8 +124,9 @@ export default function DrePage() {
             </div>
             <div className="relative grid grid-cols-2 divide-x divide-border/60 border-t border-border/60">
               <div className="p-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Receita de vendas</p>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Receita líquida</p>
                 <p className="mt-1 text-base font-bold tnum sm:text-lg">{formatBRL(dados.receitaVendas)}</p>
+                {(dados.descontos ?? 0) > 0 ? <p className="text-[11px] text-muted-foreground">já sem {formatBRL(dados.descontos)} de descontos</p> : null}
               </div>
               <div className="p-4">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Lucro bruto</p>
@@ -142,8 +143,11 @@ export default function DrePage() {
             <CardContent className="py-1.5">
               <table className="w-full text-sm">
                 <tbody className="tnum">
-                  <Linha titulo="Receita de vendas" valor={dados.receitaVendas} tom="pos" forte
-                    nota={dados.receitaManual > 0 ? `inclui ${formatBRL(dados.receitaManual)} de vendas manuais` : undefined} />
+                  <Linha titulo="Receita líquida de vendas" valor={dados.receitaVendas} tom="pos" forte
+                    nota={[
+                      (dados.descontos ?? 0) > 0 ? `já sem ${formatBRL(dados.descontos)} de descontos` : "",
+                      dados.receitaManual > 0 ? `inclui ${formatBRL(dados.receitaManual)} de vendas manuais` : "",
+                    ].filter(Boolean).join(" · ") || undefined} />
                   <Linha titulo={cmvTitulo(dados)} valor={-dados.cmv} tom="neg" nota={cmvNota(dados)} />
                   <Linha titulo="= Lucro bruto" valor={dados.lucroBruto} forte destaque
                     nota={`margem bruta ${fmtPct(dados.margemBruta)}`} />

@@ -123,6 +123,7 @@ export async function sincronizarVendas(
           valorTotal: v.ValorTotal ?? 0,
           valorProdutos: v.ValorProdutos ?? null,
           valorDesconto: v.ValorDesconto ?? null,
+          valorDescontoPromocional: v.ValorDescontoPromocional ?? null,
           cancelada,
           vendedorId: v.VendedorId ?? null,
           clienteCPF: v.ClienteCPF ?? null,

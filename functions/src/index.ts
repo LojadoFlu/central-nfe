@@ -2006,7 +2006,7 @@ export const pdvnetResumoVendas = onCall(
  */
 interface DREResultado {
   de: string; ate: string; empresaId: string | null; cmvPct: number; cmvBase: string; cmvOrigem: string;
-  receitaVendas: number; receitaManual: number; cmv: number; compras: number;
+  receitaVendas: number; receitaManual: number; descontos: number; cmv: number; compras: number;
   cmvReal: number; cmvRealAquisicao: number; cmvRealGerencial: number; custoCobertura: number;
   lucroBruto: number; margemBruta: number; taxasCartao: number; despesasFixas: number;
   despesasManuais: number; fretes: number; servicos: number; resultado: number; margemLiquida: number;
@@ -2019,13 +2019,16 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
   const cnpjPorId = new Map<string, string>();
   for (const e of emps.docs) cnpjPorId.set(e.id, somenteDigitos(String((e.data() as { cnpj?: string }).cnpj ?? "")));
 
-  // RECEITA — vendas PDV (competência = dia da venda) + CMV REAL (custo dos itens vendidos)
-  let receitaVendas = 0, cmvRealAquisicao = 0, cmvRealGerencial = 0, itensTot = 0, itensComCusto = 0;
+  // RECEITA LÍQUIDA — vendas PDV (competência = dia da venda). ValorTotal do PDVnet é o
+  // valor CHEIO (antes do desconto); a receita real = ValorTotal − descontos.
+  let receitaVendas = 0, descontos = 0, cmvRealAquisicao = 0, cmvRealGerencial = 0, itensTot = 0, itensComCusto = 0;
   const salesSnap = await db.collection("sales").where("dia", ">=", de).where("dia", "<=", ate).get();
   for (const doc of salesSnap.docs) {
     const s = doc.data();
     if (s.cancelada || !daEmpresa(s.empresaId)) continue;
-    receitaVendas += Number(s.valorTotal ?? 0);
+    const desc = Number(s.valorDesconto ?? 0) + Number(s.valorDescontoPromocional ?? 0);
+    descontos += desc;
+    receitaVendas += Number(s.valorTotal ?? 0) - desc; // líquido
     cmvRealAquisicao += Number(s.custoAquisicao ?? 0);
     cmvRealGerencial += Number(s.custoGerencial ?? 0);
     itensTot += Number(s.qtdItens ?? 0);
@@ -2138,7 +2141,7 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
 
   return {
     de, ate, empresaId: empresaId || null, cmvPct, cmvBase, cmvOrigem,
-    receitaVendas, receitaManual, cmv, compras,
+    receitaVendas, receitaManual, descontos: Math.round(descontos * 100) / 100, cmv, compras,
     cmvReal, cmvRealAquisicao, cmvRealGerencial, custoCobertura,
     lucroBruto, margemBruta: pct(lucroBruto),
     taxasCartao, despesasFixas, despesasManuais, fretes, servicos,
