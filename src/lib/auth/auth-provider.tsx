@@ -20,6 +20,7 @@ import { getFirebase } from "../firebase/client";
 import { isFirebaseConfigured } from "../firebase/config";
 import { parseRole, type Role } from "./roles";
 import type { Perfil, StatusUsuario } from "./permissoes";
+import { registrarUsuario } from "../nfe/repo";
 
 interface AuthState {
   user: User | null;
@@ -88,6 +89,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(u);
       if (u) {
         await lerClaims(u);
+        // Auto-cura: garante o registro PENDENTE p/ aprovação (caso o autocadastro tenha
+        // falhado no signup). Idempotente; só p/ quem ainda não é admin nem ativo.
+        try {
+          const tk = await u.getIdTokenResult();
+          if (tk.claims.role !== "admin" && tk.claims.status !== "ativo") {
+            await registrarUsuario(u.displayName ?? "");
+          }
+        } catch { /* best-effort */ }
       } else {
         setRole(null);
         setStatus(null);
