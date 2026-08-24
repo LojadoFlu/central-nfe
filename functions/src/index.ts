@@ -2614,10 +2614,14 @@ export const importarExtrato = onCall(
       // e contas diferentes da mesma loja não colidem mesmo com lançamentos idênticos.
       const ref = db.collection("bank_transactions").doc(`${empresaId}_${contaId}_${t.chave}`);
       batch.set(ref, { ...t, empresaId, contaId, dia: t.data, origem: "ofx", org: ext.org, importadoEm: now }, { merge: true });
-      ops++;
+      // Auto-cura: remove o gêmeo do esquema ANTIGO (id sem contaId), de antes do multi-conta.
+      batch.delete(db.collection("bank_transactions").doc(`${empresaId}_${t.chave}`));
+      ops += 2;
       if (ops >= 400) await flush();
     }
     await flush();
+    // Remove o doc de conta antigo (id == empresaId, uma conta por loja) — substituído pelo por-conta.
+    await db.collection("bank_accounts").doc(empresaId).delete().catch(() => {});
     // Uma conta por (loja, contaId) — várias contas por loja convivem em docs separados.
     await db.collection("bank_accounts").doc(`${empresaId}_${contaId}`).set(
       {
