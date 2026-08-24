@@ -2622,7 +2622,8 @@ export const importarExtrato = onCall(
     let ops = 0;
     const flush = async () => { if (ops) { await batch.commit(); batch = db.batch(); ops = 0; } };
     for (const t of ext.transacoes) {
-      const ref = db.collection("bank_transactions").doc(`${empresaId}_${t.fitid}`);
+      // Dedup por chave de CONTEÚDO (não FITID) — reimportar o mesmo período não duplica.
+      const ref = db.collection("bank_transactions").doc(`${empresaId}_${t.chave}`);
       batch.set(ref, { ...t, empresaId, dia: t.data, origem: "ofx", org: ext.org, importadoEm: now }, { merge: true });
       ops++;
       if (ops >= 400) await flush();

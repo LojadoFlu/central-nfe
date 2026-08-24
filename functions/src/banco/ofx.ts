@@ -1,9 +1,11 @@
 // Parser de extrato bancário OFX (SGML 1.x — ex.: Stone, charset Windows-1252).
 // Tolerante a tags de folha sem fechamento. Categoriza pela natureza do MEMO.
 // Validado contra extrato real da Stone (1164 lançamentos).
+import crypto from "node:crypto";
 
 export interface TxOFX {
   fitid: string;
+  chave: string; // dedup ESTÁVEL por conteúdo (data+valor+memo+ocorrência) — a Stone troca o FITID a cada exportação
   tipo: string; // CREDIT | DEBIT
   data: string; // YYYY-MM-DD
   valor: number; // sinal: crédito +, débito −
@@ -47,16 +49,25 @@ export function parseOFX(texto: string): ExtratoOFX {
   const saldoStr = leaf(balBloco, "BALAMT");
   const transacoes: TxOFX[] = [];
   const seen = new Set<string>();
+  const ocorr = new Map<string, number>(); // conteúdo → nº de ocorrências no arquivo
   for (const b of texto.split("<STMTTRN>").slice(1)) {
     const fitid = leaf(b, "FITID");
-    if (!fitid || seen.has(fitid)) continue;
-    seen.add(fitid);
+    if (fitid && seen.has(fitid)) continue; // dedup por FITID dentro do MESMO arquivo (quando existir)
+    if (fitid) seen.add(fitid);
     const memo = leaf(b, "MEMO");
+    const data = dataOFX(leaf(b, "DTPOSTED"));
+    const valor = Number(leaf(b, "TRNAMT")) || 0;
+    // Chave ESTÁVEL por conteúdo: sobrevive à troca de FITID entre exportações.
+    // Ocorrência (0,1,2…) preserva lançamentos legítimos idênticos no mesmo dia.
+    const conteudo = `${data}|${valor.toFixed(2)}|${memo.trim().toLowerCase()}`;
+    const hash = crypto.createHash("sha1").update(conteudo).digest("hex").slice(0, 16);
+    const i = ocorr.get(hash) ?? 0; ocorr.set(hash, i + 1);
     transacoes.push({
       fitid,
-      tipo: leaf(b, "TRNTYPE") || (Number(leaf(b, "TRNAMT")) < 0 ? "DEBIT" : "CREDIT"),
-      data: dataOFX(leaf(b, "DTPOSTED")),
-      valor: Number(leaf(b, "TRNAMT")) || 0,
+      chave: i ? `${hash}_${i}` : hash,
+      tipo: leaf(b, "TRNTYPE") || (valor < 0 ? "DEBIT" : "CREDIT"),
+      data,
+      valor,
       memo,
       categoria: categoriaMemo(memo),
     });
