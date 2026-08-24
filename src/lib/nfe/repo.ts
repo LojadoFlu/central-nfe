@@ -950,6 +950,21 @@ export async function obterConciliacao(empresaId: string, de: string, ate: strin
   return res.data as Conciliacao;
 }
 
+export interface ConcilTaxas {
+  ok: boolean;
+  de: string; ate: string; empresaId: string;
+  temCadastro: boolean; // há taxa cadastrada no APP
+  // taxaApp = taxa do APP (USADA nos cálculos); taxaPdv = a que o PDVnet informou (referência)
+  linhas: Array<{ forma: string; qtd: number; bruto: number; liquido: number; liquidoPdv: number; taxaApp: number; taxaPdv: number; difPP: number }>;
+  total: { qtd: number; bruto: number; liquido: number; liquidoPdv: number; taxas: number; taxaApp: number; taxaPdv: number };
+}
+export async function obterConciliacaoTaxas(empresaId: string, de: string, ate: string): Promise<ConcilTaxas> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "conciliacaoTaxas");
+  const res = await fn({ empresaId, de, ate });
+  return res.data as ConcilTaxas;
+}
+
 // ——— Recebimento de compras (SEFAZ × entrada na loja) ———
 export interface NotaCompra {
   chNFe: string;

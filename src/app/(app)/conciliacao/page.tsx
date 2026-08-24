@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
-import { obterConciliacao, listarEmpresas, type Conciliacao } from "@/lib/nfe/repo";
+import { obterConciliacao, obterConciliacaoTaxas, listarEmpresas, type Conciliacao, type ConcilTaxas } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { cn, formatBRL, formatarData } from "@/lib/utils";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
@@ -22,7 +22,9 @@ export default function ConciliacaoPage() {
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   const [periodo, setPeriodo] = useState<Periodo>(periodoEsteMes());
+  const [modo, setModo] = useState<"receb" | "taxas">("receb");
   const [dados, setDados] = useState<Conciliacao | null>(null);
+  const [taxas, setTaxas] = useState<ConcilTaxas | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [verDia, setVerDia] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -40,13 +42,14 @@ export default function ConciliacaoPage() {
     setCarregando(true);
     setErro(null);
     try {
-      setDados(await obterConciliacao(empresaId, periodo.de, periodo.ate));
+      if (modo === "taxas") setTaxas(await obterConciliacaoTaxas(empresaId, periodo.de, periodo.ate));
+      else setDados(await obterConciliacao(empresaId, periodo.de, periodo.ate));
     } catch (e) {
       setErro((e as Error).message);
     } finally {
       setCarregando(false);
     }
-  }, [empresaId, periodo]);
+  }, [empresaId, periodo, modo]);
 
   useEffect(() => { void carregar(); }, [carregar]);
 
@@ -70,11 +73,24 @@ export default function ConciliacaoPage() {
           </select>
         ) : null}
         <FiltroPeriodo value={periodo} onChange={setPeriodo} allowClear={false} />
+        <div className="flex gap-2 text-sm">
+          {([["receb", "Recebimentos"], ["taxas", "Taxas do cartão"]] as const).map(([k, lb]) => (
+            <button key={k} onClick={() => setModo(k)} className={`rounded-full px-3 py-1 font-medium ${modo === k ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{lb}</button>
+          ))}
+        </div>
       </div>
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
 
-      {carregando && !dados ? (
+      {modo === "taxas" ? (
+        carregando && !taxas ? (
+          <div className="space-y-3"><Skeleton className="h-40" /></div>
+        ) : taxas ? (
+          <TaxasView taxas={taxas} />
+        ) : (
+          <p className="text-sm text-muted-foreground">Selecione a empresa e o período.</p>
+        )
+      ) : carregando && !dados ? (
         <div className="space-y-3"><Skeleton className="h-40" /><Skeleton className="h-40" /></div>
       ) : dados ? (
         <>
@@ -207,5 +223,79 @@ function LinhaConc({ titulo, banco, previsto, dif, nota }: { titulo: string; ban
         <p className="mt-3 text-[11px] leading-snug text-muted-foreground">{nota}</p>
       </CardContent>
     </Card>
+  );
+}
+
+const pct = (n: number) => `${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+function TaxasView({ taxas }: { taxas: ConcilTaxas }) {
+  const t = taxas.total;
+  return (
+    <>
+      <Card className="mb-4">
+        <CardContent className="py-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Cartão no período · taxa pelo APP</p>
+          <div className="mt-2 grid grid-cols-3 gap-1 divide-x divide-border/50 text-center">
+            <div className="px-1">
+              <p className="text-[10px] uppercase text-muted-foreground">Bruto</p>
+              <p className="mt-1 text-base font-bold tnum">{formatBRL(t.bruto)}</p>
+            </div>
+            <div className="px-1">
+              <p className="text-[10px] uppercase text-muted-foreground">Líquido (APP)</p>
+              <p className="mt-1 text-base font-bold tnum text-success">{formatBRL(t.liquido)}</p>
+            </div>
+            <div className="px-1">
+              <p className="text-[10px] uppercase text-muted-foreground">Taxa média</p>
+              <p className="mt-1 text-base font-bold tnum">{pct(t.taxaApp)}</p>
+            </div>
+          </div>
+          <p className="mt-3 text-[11px] text-muted-foreground">
+            Cálculos do sistema usam a <strong>taxa do APP</strong> (R$ {formatBRL(t.taxas)} de taxa no período).
+            Referência do PDVnet: líquido {formatBRL(t.liquidoPdv)} · taxa {pct(t.taxaPdv)}.
+          </p>
+        </CardContent>
+      </Card>
+
+      {!taxas.temCadastro ? (
+        <p className="mb-4 rounded-md bg-warning/10 p-3 text-sm text-warning">
+          Esta loja não tem taxas cadastradas em <strong>Taxas</strong> — sem elas o líquido fica igual ao bruto. Cadastre as taxas por bandeira.
+        </p>
+      ) : null}
+
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full text-right text-xs">
+          <thead>
+            <tr className="border-b border-border text-[10px] uppercase text-muted-foreground">
+              <th className="py-2 pl-3 pr-2 text-left font-medium">Bandeira / forma</th>
+              <th className="py-2 px-2 font-medium">Qtd</th>
+              <th className="py-2 px-2 font-medium">Bruto</th>
+              <th className="py-2 px-2 font-medium">Taxa APP</th>
+              <th className="py-2 px-2 font-medium">Taxa PDV</th>
+              <th className="py-2 pl-2 pr-3 font-medium">Dif. (p.p.)</th>
+            </tr>
+          </thead>
+          <tbody className="tnum">
+            {taxas.linhas.map((l) => {
+              const diverge = Math.abs(l.difPP) >= 0.1;
+              return (
+                <tr key={l.forma} className={`border-b border-border/50 ${diverge ? "bg-warning/5" : ""}`}>
+                  <td className="py-1.5 pl-3 pr-2 text-left">{l.forma}</td>
+                  <td className="py-1.5 px-2 text-muted-foreground">{l.qtd}</td>
+                  <td className="py-1.5 px-2">{formatBRL(l.bruto)}</td>
+                  <td className="py-1.5 px-2 font-medium">{pct(l.taxaApp)}</td>
+                  <td className="py-1.5 px-2 text-muted-foreground">{pct(l.taxaPdv)}</td>
+                  <td className={`py-1.5 pl-2 pr-3 ${diverge ? "font-semibold text-warning" : "text-muted-foreground"}`}>
+                    {l.difPP >= 0 ? "+" : "−"}{pct(Math.abs(l.difPP))}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">
+        <strong>Taxa APP</strong> = a cadastrada em Taxas (usada em tudo: líquido, a receber, conciliação, DRE).
+        <strong> Taxa PDV</strong> = a que o PDVnet informou, só como referência. Linhas destacadas = onde as duas mais divergem.
+      </p>
+    </>
   );
 }

@@ -1882,6 +1882,7 @@ export const pdvnetResumoVendas = onCall(
     // "A receber" real = recebíveis cuja DATA DE CRÉDITO ainda não chegou (hoje).
     // Antecipação LIGADA: crédito D+1 (fds→seg). DESLIGADA: data de vencimento real.
     const antMap = await carregarAntecipacao();
+    const taxasApp = await carregarTaxasApp(); // líquido pelas taxas do APP (não do PDVnet)
     // Data de HOJE no fuso do Brasil (não UTC): à noite o UTC já virou o dia seguinte,
     // o que zerava o "a receber" de sex/sáb (que creditam na segunda).
     const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
@@ -1891,10 +1892,11 @@ export const pdvnetResumoVendas = onCall(
     for (const doc of recSnap.docs) {
       const r = doc.data();
       if (!dentro(r.lojaId)) continue;
+      const cidTaxa = String(r.conciliaEmpresaId ?? r.empresaId ?? "");
       const valor = r.valor || 0;
-      const liq = r.liquido ?? r.valor ?? 0;
+      const liq = liquidoApp(valor, taxaAppDe(taxasApp.get(cidTaxa), r.descricaoCartao, Number(r.parcela ?? 1) || 1));
       totalRecebiveis += valor;      // bruto vendido no cartão no período
-      totalLiquido += liq;           // líquido previsto (bruto − taxa)
+      totalLiquido += liq;           // líquido previsto (bruto − taxa do APP)
       recebiveis++;
       const cid = String(r.conciliaEmpresaId ?? r.empresaId ?? ""); // loja onde o dinheiro cai
       const antOn = antMap.get(cid) !== false; // default: antecipação ligada
@@ -1943,13 +1945,16 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     itensTot += Number(s.qtdItens ?? 0);
     itensComCusto += Number(s.itensComCusto ?? 0);
   }
-  // TAXAS DE CARTÃO — recebíveis PDV (bruto − líquido), competência = dia da venda
+  // TAXAS DE CARTÃO — pela TAXA DO APP (não pelo líquido do PDVnet), competência = dia da venda
   let taxasCartao = 0;
+  const taxasApp = await carregarTaxasApp();
   const recSnap = await db.collection("card_receivables").where("dia", ">=", de).where("dia", "<=", ate).get();
   for (const doc of recSnap.docs) {
     const r = doc.data();
     if (!daEmpresa(r.empresaId)) continue;
-    taxasCartao += Number(r.valor ?? 0) - Number(r.liquido ?? r.valor ?? 0);
+    const cidTaxa = String(r.conciliaEmpresaId ?? r.empresaId ?? "");
+    const bruto = Number(r.valor ?? 0);
+    taxasCartao += bruto - liquidoApp(bruto, taxaAppDe(taxasApp.get(cidTaxa), r.descricaoCartao, Number(r.parcela ?? 1) || 1));
   }
 
   // MANUAL — receita da loja offline; taxa estimada pela taxa MÉDIA da loja da máquina
@@ -2225,17 +2230,66 @@ async function carregarAntecipacao(): Promise<Map<string, boolean>> {
   }
   return m;
 }
+// ——— Taxas de cartão do APP (fonte da verdade p/ líquido; NÃO usamos a taxa do PDVnet) ———
+// Regra do usuário (2026-08): calcular todo líquido/taxa pelas taxas CADASTRADAS no APP
+// (card_rates, por bandeira), não pelo líquido que o PDVnet traz.
+interface CartaoRate { taxaDebito: number; taxaCredito: number; taxaPix: number; parcelas: Record<string, number> }
+interface TaxasLoja { porCartao: Map<string, CartaoRate>; mediaDeb: number; mediaCr1: number; parcMedia: Map<string, number> }
+const normNome = (s: unknown) => String(s ?? "").toUpperCase().normalize("NFD").replace(new RegExp("[\\u0300-\\u036f]", "g"), "").replace(/[^A-Z0-9]/g, "");
+async function carregarTaxasApp(): Promise<Map<string, TaxasLoja>> {
+  const acc = new Map<string, { cartoes: Map<string, CartaoRate>; debS: number; debN: number; cr1S: number; cr1N: number; parcAgg: Map<string, { s: number; n: number }> }>();
+  for (const d of (await db.collection("card_rates").get()).docs) {
+    const x = d.data(); const cid = String(x.empresaId ?? ""); if (!cid) continue;
+    let L = acc.get(cid); if (!L) { L = { cartoes: new Map(), debS: 0, debN: 0, cr1S: 0, cr1N: 0, parcAgg: new Map() }; acc.set(cid, L); }
+    const parcelas: Record<string, number> = {};
+    for (const [k, v] of Object.entries((x.parcelas ?? {}) as Record<string, number>)) parcelas[k] = Number(v) || 0;
+    L.cartoes.set(normNome(x.nome), { taxaDebito: Number(x.taxaDebito) || 0, taxaCredito: Number(x.taxaCredito) || 0, taxaPix: Number(x.taxaPix) || 0, parcelas });
+    if (Number(x.taxaDebito) > 0) { L.debS += Number(x.taxaDebito); L.debN++; }
+    if (Number(x.taxaCredito) > 0) { L.cr1S += Number(x.taxaCredito); L.cr1N++; }
+    for (const [k, v] of Object.entries(parcelas)) if (v > 0) { const a = L.parcAgg.get(k) ?? { s: 0, n: 0 }; a.s += v; a.n++; L.parcAgg.set(k, a); }
+  }
+  const out = new Map<string, TaxasLoja>();
+  for (const [cid, L] of acc) {
+    const parcMedia = new Map<string, number>(); for (const [k, a] of L.parcAgg) parcMedia.set(k, a.n ? a.s / a.n : 0);
+    out.set(cid, { porCartao: L.cartoes, mediaDeb: L.debN ? L.debS / L.debN : 0, mediaCr1: L.cr1N ? L.cr1S / L.cr1N : 0, parcMedia });
+  }
+  return out;
+}
+/** Taxa % do APP para um recebível: casa pela bandeira (descricaoCartao); senão média da loja. */
+function taxaAppDe(L: TaxasLoja | undefined, descricaoCartao: unknown, parcela: number): number {
+  if (!L) return 0;
+  const desc = String(descricaoCartao ?? "");
+  const isDeb = /DEBITO|DÉBITO/i.test(desc);
+  const card = L.porCartao.get(normNome(desc));
+  if (card) {
+    if (isDeb) return card.taxaDebito;
+    if (parcela >= 2) return card.parcelas[String(parcela)] || L.parcMedia.get(String(parcela)) || card.taxaCredito;
+    return card.taxaCredito;
+  }
+  if (isDeb) return L.mediaDeb;
+  if (parcela >= 2) return L.parcMedia.get(String(parcela)) || L.mediaCr1;
+  return L.mediaCr1;
+}
+/** Líquido de um recebível pela taxa do APP (bruto − taxa%). */
+function liquidoApp(bruto: number, taxaPct: number): number {
+  return Math.round(bruto * (1 - taxaPct / 100) * 100) / 100;
+}
+
 /**
  * Recebíveis de cartão com a DATA DE CRÉDITO correta por loja, respeitando o
  * toggle de antecipação. Antecipação LIGADA: crédito D+1 (fim de semana → segunda),
  * a venda inteira junto. DESLIGADA: crédito na DATA DE VENCIMENTO real do recebível
  * (parcelado cai mês a mês; à vista ~D+30). Só devolve o que cai em [de, ate].
+ * LÍQUIDO calculado pelas TAXAS DO APP (não pelo líquido do PDVnet).
  */
 async function recebiveisNoCredito(
   de: string, ate: string, daEmpresa: (cid: string) => boolean,
 ): Promise<Array<{ empresaId: string; liquido: number; credito: string; dia: string }>> {
   const ant = await carregarAntecipacao();
+  const taxasApp = await carregarTaxasApp();
   const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
+  const liqDe = (r: FirebaseFirestore.DocumentData, cid: string) =>
+    liquidoApp(Number(r.valor ?? 0), taxaAppDe(taxasApp.get(cid), r.descricaoCartao, Number(r.parcela ?? 1) || 1));
   const out: Array<{ empresaId: string; liquido: number; credito: string; dia: string }> = [];
   // LIGADA — pela data da venda (crédito D+1 / fds→seg)
   const qOn = await db.collection("card_receivables")
@@ -2246,7 +2300,7 @@ async function recebiveisNoCredito(
     if (!daEmpresa(cid) || ant.get(cid) === false) continue;
     const credito = dataCreditoCartao(d10(r.dia));
     if (!credito || credito < de || credito > ate) continue;
-    out.push({ empresaId: cid, liquido: Number(r.liquido ?? r.valor ?? 0), credito, dia: d10(r.dia) });
+    out.push({ empresaId: cid, liquido: liqDe(r, cid), credito, dia: d10(r.dia) });
   }
   // DESLIGADA — pela data de vencimento real do recebível
   const qOff = await db.collection("card_receivables")
@@ -2257,7 +2311,7 @@ async function recebiveisNoCredito(
     if (!daEmpresa(cid) || ant.get(cid) !== false) continue;
     const credito = d10(r.dataVencimento);
     if (!credito || credito < de || credito > ate) continue;
-    out.push({ empresaId: cid, liquido: Number(r.liquido ?? r.valor ?? 0), credito, dia: d10(r.dia) });
+    out.push({ empresaId: cid, liquido: liqDe(r, cid), credito, dia: d10(r.dia) });
   }
   return out;
 }
@@ -2844,6 +2898,63 @@ export const conciliacao = onCall(
       dif: { cartao: bancoCartao - previstoCartao, pix: bancoPix - previstoPix },
       porDia,
     };
+  },
+);
+
+/**
+ * Conferência de TAXAS de cartão: por bandeira/forma, compara a taxa REAL que o
+ * PDVnet já trouxe (bruto − líquido do recebível) com a taxa CADASTRADA no APP
+ * (card_rates). Não altera nada e NÃO reaplica desconto — só evidencia se a taxa
+ * cadastrada bate com a que a Stone efetivamente cobrou. Só leitura.
+ */
+export const conciliacaoTaxas = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+    const empresaId = String(req.data?.empresaId ?? "").trim();
+    if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa (conta).");
+    const de = String(req.data?.de ?? "").slice(0, 10);
+    const ate = String(req.data?.ate ?? "").slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
+      throw new HttpsError("invalid-argument", "Período inválido.");
+    }
+    const taxasApp = await carregarTaxasApp();
+    const L = taxasApp.get(empresaId);
+    const temCadastro = !!L && (L.mediaDeb > 0 || L.mediaCr1 > 0 || L.parcMedia.size > 0);
+
+    // Recebíveis reais do PDV no período (por dia de venda), agrupados por BANDEIRA.
+    // taxaApp = a taxa cadastrada (USADA nos cálculos); taxaPdv = a que o PDVnet informou (referência).
+    interface Grp { qtd: number; bruto: number; liqApp: number; liqPdv: number; taxaAppSoma: number }
+    const grupos = new Map<string, Grp>();
+    const rec = await db.collection("card_receivables").where("dia", ">=", de).where("dia", "<=", ate).get();
+    for (const doc of rec.docs) {
+      const r = doc.data();
+      if (String(r.conciliaEmpresaId ?? r.empresaId ?? "") !== empresaId) continue;
+      const p = Number(r.parcela ?? 1) || 1;
+      const bruto = Number(r.valor ?? 0);
+      const label = String(r.descricaoCartao ?? "Outros").trim() || "Outros";
+      const taxaApp = taxaAppDe(L, r.descricaoCartao, p);
+      const g = grupos.get(label) ?? { qtd: 0, bruto: 0, liqApp: 0, liqPdv: 0, taxaAppSoma: 0 };
+      g.qtd++; g.bruto += bruto; g.liqApp += liquidoApp(bruto, taxaApp);
+      g.liqPdv += Number(r.liquido ?? bruto); g.taxaAppSoma += taxaApp * bruto; // média ponderada por bruto
+      grupos.set(label, g);
+    }
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const linhas = [...grupos.entries()].map(([forma, g]) => {
+      const taxaApp = g.bruto > 0 ? g.taxaAppSoma / g.bruto : 0;
+      const taxaPdv = g.bruto > 0 ? (1 - g.liqPdv / g.bruto) * 100 : 0;
+      return {
+        forma, qtd: g.qtd, bruto: r2(g.bruto), liquido: r2(g.liqApp), liquidoPdv: r2(g.liqPdv),
+        taxaApp: r2(taxaApp), taxaPdv: r2(taxaPdv), difPP: r2(taxaApp - taxaPdv),
+      };
+    }).sort((a, b) => b.bruto - a.bruto);
+    const bruto = r2(linhas.reduce((s, l) => s + l.bruto, 0));
+    const liquido = r2(linhas.reduce((s, l) => s + l.liquido, 0));
+    const liquidoPdv = r2(linhas.reduce((s, l) => s + l.liquidoPdv, 0));
+    const qtd = linhas.reduce((s, l) => s + l.qtd, 0);
+    const taxaAppTotal = bruto > 0 ? r2((1 - liquido / bruto) * 100) : 0;
+    const taxaPdvTotal = bruto > 0 ? r2((1 - liquidoPdv / bruto) * 100) : 0;
+    return { ok: true, de, ate, empresaId, temCadastro, linhas, total: { qtd, bruto, liquido, liquidoPdv, taxas: r2(bruto - liquido), taxaApp: taxaAppTotal, taxaPdv: taxaPdvTotal } };
   },
 );
 
