@@ -173,7 +173,10 @@ export default function ManualPage() {
                     <Plus className="size-4" /> {salvando ? "Salvando…" : "Adicionar"}
                   </Button>
                 </div>
-                <p className="text-[11px] text-muted-foreground">Dinheiro fica na loja; cartão/PIX caem no banco da loja da máquina (soma na conciliação dela).</p>
+                <p className="text-[11px] text-muted-foreground">
+                  O <strong>resultado</strong> vai pra loja escolhida acima; o <strong>dinheiro</strong> do cartão/PIX cai no banco da loja da <strong>máquina</strong>.
+                  Ex.: venda do <strong>Maracanã</strong> na máquina da <strong>Barra</strong> → escolha Loja = Maracanã e Máquina = Barra: entra no resultado do Maracanã e na conciliação/taxa da Barra, sem mexer no resultado da Barra.
+                </p>
               </CardContent>
             </Card>
           ) : null}

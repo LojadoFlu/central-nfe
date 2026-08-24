@@ -2818,7 +2818,8 @@ export const conciliacao = onCall(
           : forma === "cartaoCredito" ? taxaCr1
             : taxaParc(Math.max(2, Math.min(10, Math.round(Number(m.parcelas) || 2))));
         const liq = liquidar(valor, taxa);
-        previstoCartao += liq; manualCartao += liq; bd(credito).previstoCartao += liq;
+        previstoCartao += liq; manualCartao += liq; brutoCartao += valor; bd(credito).previstoCartao += liq;
+        // brutoCartao inclui a venda manual/avulsa (ex.: Maracanã na máquina desta loja) p/ a taxa não distorcer
       }
       // dinheiro: fica na loja, não vai ao banco → ignora
     }
