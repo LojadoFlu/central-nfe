@@ -944,13 +944,22 @@ export async function obterExtrato(empresaId: string, de?: string, ate?: string)
   const res = await fn({ empresaId, de: de || undefined, ate: ate || undefined });
   return res.data as ExtratoBanco;
 }
-/** Leitura leve do saldo do banco de uma empresa (sem carregar os lançamentos). */
+/** Leitura leve do saldo do banco de uma empresa (sem carregar os lançamentos).
+ * Uma loja pode ter VÁRIAS contas (bank_accounts/{empresaId}_{contaId}); consolida
+ * o saldo de todas e usa a saldoData mais recente. */
 export async function obterContaBanco(empresaId: string): Promise<{ saldo: number | null; saldoData: string | null } | null> {
   const { db } = fb();
-  const snap = await getDoc(doc(db, "bank_accounts", empresaId));
-  if (!snap.exists()) return null;
-  const d = snap.data() as { saldo?: number | null; saldoData?: string | null };
-  return { saldo: d.saldo ?? null, saldoData: d.saldoData ?? null };
+  const snap = await getDocs(query(collection(db, "bank_accounts"), where("empresaId", "==", empresaId)));
+  if (snap.empty) return null;
+  let saldo = 0;
+  let temSaldo = false;
+  let saldoData: string | null = null;
+  for (const docSnap of snap.docs) {
+    const d = docSnap.data() as { saldo?: number | null; saldoData?: string | null };
+    if (d.saldo != null) { saldo += Number(d.saldo) || 0; temSaldo = true; }
+    if (d.saldoData && (!saldoData || d.saldoData > saldoData)) saldoData = d.saldoData;
+  }
+  return { saldo: temSaldo ? Math.round(saldo * 100) / 100 : null, saldoData };
 }
 
 export interface DiaConc {
