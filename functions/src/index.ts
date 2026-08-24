@@ -2285,11 +2285,15 @@ async function carregarTaxasApp(): Promise<Map<string, TaxasLoja>> {
   return out;
 }
 /** Taxa % do APP para um recebível: casa pela bandeira (descricaoCartao); senão média da loja. */
+function ehRecebivelPix(descricaoCartao: unknown): boolean {
+  return /pix/i.test(String(descricaoCartao ?? ""));
+}
 function taxaAppDe(L: TaxasLoja | undefined, descricaoCartao: unknown, parcela: number): number {
   if (!L) return 0;
   const desc = String(descricaoCartao ?? "");
   const isDeb = /DEBITO|DÉBITO/i.test(desc);
   const card = L.porCartao.get(normNome(desc));
+  if (/pix/i.test(desc)) return card?.taxaPix ?? L.mediaPix; // STONE PIX usa a taxa de PIX, não de cartão
   if (card) {
     if (isDeb) return card.taxaDebito;
     if (parcela >= 2) return card.parcelas[String(parcela)] || L.parcMedia.get(String(parcela)) || card.taxaCredito;
@@ -2313,13 +2317,13 @@ function liquidoApp(bruto: number, taxaPct: number): number {
  */
 async function recebiveisNoCredito(
   de: string, ate: string, daEmpresa: (cid: string) => boolean,
-): Promise<Array<{ empresaId: string; liquido: number; bruto: number; credito: string; dia: string }>> {
+): Promise<Array<{ empresaId: string; liquido: number; bruto: number; credito: string; dia: string; pix: boolean }>> {
   const ant = await carregarAntecipacao();
   const taxasApp = await carregarTaxasApp();
   const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
   const liqDe = (r: FirebaseFirestore.DocumentData, cid: string) =>
     liquidoApp(Number(r.valor ?? 0), taxaAppDe(taxasApp.get(cid), r.descricaoCartao, Number(r.parcela ?? 1) || 1));
-  const out: Array<{ empresaId: string; liquido: number; bruto: number; credito: string; dia: string }> = [];
+  const out: Array<{ empresaId: string; liquido: number; bruto: number; credito: string; dia: string; pix: boolean }>= [];
   // LIGADA — pela data da venda (crédito D+1 / fds→seg)
   const qOn = await db.collection("card_receivables")
     .where("dia", ">=", menosDiasISO(de, 4)).where("dia", "<=", ate).get();
@@ -2329,7 +2333,7 @@ async function recebiveisNoCredito(
     if (!daEmpresa(cid) || ant.get(cid) === false) continue;
     const credito = dataCreditoCartao(d10(r.dia));
     if (!credito || credito < de || credito > ate) continue;
-    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia) });
+    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia), pix: ehRecebivelPix(r.descricaoCartao) });
   }
   // DESLIGADA — pela data de vencimento real do recebível
   const qOff = await db.collection("card_receivables")
@@ -2340,7 +2344,7 @@ async function recebiveisNoCredito(
     if (!daEmpresa(cid) || ant.get(cid) !== false) continue;
     const credito = d10(r.dataVencimento);
     if (!credito || credito < de || credito > ate) continue;
-    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia) });
+    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia), pix: ehRecebivelPix(r.descricaoCartao) });
   }
   return out;
 }
@@ -2861,14 +2865,13 @@ export const conciliacao = onCall(
     // PREVISTO (PDV) — cartão (líquido) na DATA DE CRÉDITO real desta loja (respeita o
     // toggle de antecipação: LIGADA = D+1/fds→seg; DESLIGADA = data de vencimento);
     // PIX das vendas por dia.
-    let previstoCartao = 0, brutoCartao = 0;
+    let previstoCartao = 0, brutoCartao = 0, previstoPix = 0;
     const rc = await recebiveisNoCredito(de, ate, (cid) => settle(cid) === empresaId);
     for (const r of rc) {
-      previstoCartao += r.liquido;
-      brutoCartao += r.bruto;
-      bd(r.credito).previstoCartao += r.liquido;
+      // PIX da maquininha (STONE PIX) vem como recebível de cartão — vai pro PIX, não pro cartão.
+      if (r.pix) { previstoPix += r.liquido; bd(r.credito).previstoPix += r.liquido; }
+      else { previstoCartao += r.liquido; brutoCartao += r.bruto; bd(r.credito).previstoCartao += r.liquido; }
     }
-    let previstoPix = 0;
     const sp = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of sp.docs) {
       const p = doc.data();
