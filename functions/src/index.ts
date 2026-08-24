@@ -2823,6 +2823,13 @@ export const conciliacao = onCall(
       throw new HttpsError("invalid-argument", "Período inválido.");
     }
     const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
+    // Settlement: lojas cujo dinheiro (cartão/PIX/máquina) cai NA CONTA de outra loja.
+    // Ex.: SXCG → Barra. `configuracoes/conciliacao.settlement` = { lojaOrigem: lojaConta }.
+    const setSnap = await db.collection("configuracoes").doc("conciliacao").get();
+    const settlement = (setSnap.exists ? ((setSnap.data() as { settlement?: Record<string, string> }).settlement ?? {}) : {});
+    const settle = (cid: string) => settlement[cid] ?? cid;                   // resolve p/ a loja da conta
+    const aliases = Object.entries(settlement).filter(([, v]) => v === empresaId).map(([k]) => k); // lojas que caem nesta empresa
+    const maquinasAlvo = [empresaId, ...aliases].slice(0, 10);                 // p/ manual_sales (Firestore "in" ≤ 10)
 
     // acumulador por dia
     interface Dia { bancoCartao: number; bancoPix: number; previstoCartao: number; previstoPix: number }
@@ -2855,7 +2862,7 @@ export const conciliacao = onCall(
     // toggle de antecipação: LIGADA = D+1/fds→seg; DESLIGADA = data de vencimento);
     // PIX das vendas por dia.
     let previstoCartao = 0, brutoCartao = 0;
-    const rc = await recebiveisNoCredito(de, ate, (cid) => cid === empresaId);
+    const rc = await recebiveisNoCredito(de, ate, (cid) => settle(cid) === empresaId);
     for (const r of rc) {
       previstoCartao += r.liquido;
       brutoCartao += r.bruto;
@@ -2865,7 +2872,7 @@ export const conciliacao = onCall(
     const sp = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of sp.docs) {
       const p = doc.data();
-      if (String(p.conciliaEmpresaId ?? p.empresaId ?? "") !== empresaId || p.forma !== "pix") continue;
+      if (settle(String(p.conciliaEmpresaId ?? p.empresaId ?? "")) !== empresaId || p.forma !== "pix") continue;
       const v = Number(p.valor ?? 0);
       previstoPix += v;
       bd(d10(p.dia)).previstoPix += v;
@@ -2896,7 +2903,7 @@ export const conciliacao = onCall(
     const antecipacaoLoja = (cfgSnap.data()?.antecipacao) !== false;
 
     let manualCartao = 0, manualPix = 0;
-    const man = await db.collection("manual_sales").where("maquinaEmpresaId", "==", empresaId).get();
+    const man = await db.collection("manual_sales").where("maquinaEmpresaId", "in", maquinasAlvo).get();
     for (const doc of man.docs) {
       const m = doc.data();
       const diaV = d10(m.dia);
