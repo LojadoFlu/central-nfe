@@ -535,6 +535,7 @@ export interface DespesaManual {
   empresaNome?: string | null;
   dia: string; // YYYY-MM-DD
   descricao: string;
+  fornecedor?: string | null; // quem prestou o serviço / vendeu os produtos
   categoria: string;
   valor: number;
   formaPagamento?: "dinheiro" | "pix";
@@ -557,6 +558,7 @@ export async function salvarDespesaManual(input: {
   empresaId: string;
   dia: string;
   descricao: string;
+  fornecedor?: string;
   categoria: string;
   valor: number;
   formaPagamento?: "dinheiro" | "pix";

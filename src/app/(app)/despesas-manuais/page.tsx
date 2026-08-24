@@ -48,6 +48,7 @@ export default function DespesasManuaisPage() {
   const [empresaId, setEmpresaId] = useState("");
   const [dia, setDia] = useState(hojeISO());
   const [descricao, setDescricao] = useState("");
+  const [fornecedor, setFornecedor] = useState("");
   const [categoria, setCategoria] = useState("outros");
   const [valor, setValor] = useState("");
   const [forma, setForma] = useState<"dinheiro" | "pix">("dinheiro");
@@ -78,6 +79,7 @@ export default function DespesasManuaisPage() {
   function limparForm() {
     setEditId(null);
     setDescricao("");
+    setFornecedor("");
     setValor("");
     setCategoria("outros");
     setForma("dinheiro");
@@ -89,6 +91,7 @@ export default function DespesasManuaisPage() {
     setEmpresaId(d.empresaId);
     setDia(d.dia);
     setDescricao(d.descricao);
+    setFornecedor(d.fornecedor ?? "");
     setCategoria(d.categoria || "outros");
     setValor(String(d.valor ?? ""));
     setForma(d.formaPagamento === "pix" ? "pix" : "dinheiro");
@@ -105,7 +108,7 @@ export default function DespesasManuaisPage() {
     setErro(null);
     try {
       await salvarDespesaManual({
-        id: editId ?? undefined, empresaId, dia, descricao: descricao.trim(), categoria, valor: v,
+        id: editId ?? undefined, empresaId, dia, descricao: descricao.trim(), fornecedor: fornecedor.trim() || undefined, categoria, valor: v,
         formaPagamento: forma, contaEmpresaId: forma === "pix" ? (conta || empresaId) : undefined,
       });
       limparForm();
@@ -136,7 +139,7 @@ export default function DespesasManuaisPage() {
       (d) => (!fEmpresa || d.empresaId === fEmpresa)
         && (!fCategoria || d.categoria === fCategoria)
         && noPeriodo(d.dia, periodo)
-        && (!t || (d.descricao ?? "").toLowerCase().includes(t)),
+        && (!t || (d.descricao ?? "").toLowerCase().includes(t) || (d.fornecedor ?? "").toLowerCase().includes(t)),
     );
   }, [lista, fEmpresa, fCategoria, periodo, busca]);
 
@@ -186,6 +189,10 @@ export default function DespesasManuaisPage() {
                   <label className="space-y-1 sm:col-span-2">
                     <span className="block text-[11px] text-muted-foreground">Descrição</span>
                     <Input value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="Ex.: Uber para o banco, material de limpeza…" className="h-9" />
+                  </label>
+                  <label className="space-y-1 sm:col-span-2">
+                    <span className="block text-[11px] text-muted-foreground">Fornecedor / prestador (quem vendeu ou prestou o serviço)</span>
+                    <Input value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} placeholder="Ex.: Padaria do João, Uber, Eletricista Carlos…" className="h-9" />
                   </label>
                   <label className="space-y-1">
                     <span className="block text-[11px] text-muted-foreground">Categoria</span>
@@ -270,6 +277,7 @@ export default function DespesasManuaisPage() {
                   <CardContent className="flex items-center justify-between gap-3 py-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{d.descricao}</p>
+                      {d.fornecedor ? <p className="truncate text-xs text-muted-foreground">{d.fornecedor}</p> : null}
                       <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <Badge variant="neutral">{CAT_LABEL[d.categoria] ?? d.categoria}</Badge>
                         {d.formaPagamento === "pix"

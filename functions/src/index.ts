@@ -3269,6 +3269,7 @@ export const salvarDespesaManual = onCall(opcoes, async (req) => {
   const empresaId = String(d.empresaId ?? "").trim();
   const dia = String(d.dia ?? "").slice(0, 10);
   const descricao = String(d.descricao ?? "").trim().slice(0, 200);
+  const fornecedor = String(d.fornecedor ?? "").trim().slice(0, 160) || null; // quem prestou o serviço / vendeu
   const categoria = String(d.categoria ?? "").trim().slice(0, 40) || "outros";
   const valor = Number(d.valor);
   // Forma de pagamento: dinheiro (não toca no banco) ou pix (débito na conta escolhida).
@@ -3281,7 +3282,7 @@ export const salvarDespesaManual = onCall(opcoes, async (req) => {
   const emp = await resolverEmpresa(empresaId);
   const now = agoraISO();
   const doc: Record<string, unknown> = {
-    empresaId, empresaNome: emp?.nome ?? null, dia, descricao, categoria,
+    empresaId, empresaNome: emp?.nome ?? null, dia, descricao, fornecedor, categoria,
     formaPagamento, contaEmpresaId,
     valor: Math.round(valor * 100) / 100, atualizadoEm: now, atualizadoPor: uid,
   };
