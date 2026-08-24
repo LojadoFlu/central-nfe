@@ -2466,13 +2466,14 @@ export const fluxoCaixa = onCall(
     const proximosCartao = [...proxCartaoMap.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([dia, valor]) => ({ dia, valor }));
-    // ENTRADAS — PIX/dinheiro (na data da venda)
+    // ENTRADAS — PIX/dinheiro/depósito (na data da venda), sem taxa (valor cheio).
     const spSnap = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of spSnap.docs) {
       const p = doc.data();
-      if (p.forma !== "dinheiro" && p.forma !== "pix") continue;
-      // dinheiro fica na loja física (empresaId); pix cai no banco da loja da máquina.
-      const cid = p.forma === "pix" ? (p.conciliaEmpresaId ?? p.empresaId) : p.empresaId;
+      if (p.forma !== "dinheiro" && p.forma !== "pix" && p.forma !== "deposito") continue;
+      // dinheiro fica na loja física (empresaId); pix e depósito caem no banco da loja da máquina.
+      const naConta = p.forma === "pix" || p.forma === "deposito";
+      const cid = naConta ? (p.conciliaEmpresaId ?? p.empresaId) : p.empresaId;
       if (!daEmpresa(cid)) continue;
       const dia = d10(p.dia);
       entrada(dia, Number(p.valor ?? 0), dia <= hoje, "avista");
