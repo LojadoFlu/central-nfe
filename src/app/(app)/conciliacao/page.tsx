@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
-import { obterConciliacao, obterConciliacaoTaxas, listarEmpresas, type Conciliacao, type ConcilTaxas } from "@/lib/nfe/repo";
+import { obterConciliacao, listarEmpresas, type Conciliacao } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { cn, formatBRL, formatarData } from "@/lib/utils";
 import { CheckCircle2, AlertTriangle } from "lucide-react";
@@ -22,9 +22,7 @@ export default function ConciliacaoPage() {
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   const [periodo, setPeriodo] = useState<Periodo>(periodoEsteMes());
-  const [modo, setModo] = useState<"receb" | "taxas">("receb");
   const [dados, setDados] = useState<Conciliacao | null>(null);
-  const [taxas, setTaxas] = useState<ConcilTaxas | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [verDia, setVerDia] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -42,14 +40,13 @@ export default function ConciliacaoPage() {
     setCarregando(true);
     setErro(null);
     try {
-      if (modo === "taxas") setTaxas(await obterConciliacaoTaxas(empresaId, periodo.de, periodo.ate));
-      else setDados(await obterConciliacao(empresaId, periodo.de, periodo.ate));
+      setDados(await obterConciliacao(empresaId, periodo.de, periodo.ate));
     } catch (e) {
       setErro((e as Error).message);
     } finally {
       setCarregando(false);
     }
-  }, [empresaId, periodo, modo]);
+  }, [empresaId, periodo]);
 
   useEffect(() => { void carregar(); }, [carregar]);
 
@@ -73,29 +70,11 @@ export default function ConciliacaoPage() {
           </select>
         ) : null}
         <FiltroPeriodo value={periodo} onChange={setPeriodo} allowClear={false} />
-        <div className="flex gap-2 text-sm">
-          {([["receb", "Recebimentos"], ["taxas", "Taxa da Stone"]] as const).map(([k, lb]) => (
-            <button key={k} onClick={() => setModo(k)} className={`rounded-full px-3 py-1 font-medium ${modo === k ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{lb}</button>
-          ))}
-        </div>
-        <p className="px-1 text-[11px] text-muted-foreground">
-          {modo === "receb"
-            ? "Recebimentos: tudo que o banco recebeu (cartão + PIX) × o que o PDV previa (líquido pela taxa do app)."
-            : "Taxa da Stone: o líquido esperado (bruto × taxa do app) × o que a Stone realmente depositou — confere se a taxa aplicada no repasse é a cadastrada."}
-        </p>
       </div>
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
 
-      {modo === "taxas" ? (
-        carregando && !taxas ? (
-          <div className="space-y-3"><Skeleton className="h-40" /></div>
-        ) : taxas ? (
-          <TaxasView taxas={taxas} />
-        ) : (
-          <p className="text-sm text-muted-foreground">Selecione a empresa e o período.</p>
-        )
-      ) : carregando && !dados ? (
+      {carregando && !dados ? (
         <div className="space-y-3"><Skeleton className="h-40" /><Skeleton className="h-40" /></div>
       ) : dados ? (
         <>
@@ -105,6 +84,8 @@ export default function ConciliacaoPage() {
             <LinhaConc titulo="PIX" banco={dados.banco.pix} previsto={dados.previsto.pix} dif={dados.dif.pix}
               nota="Banco: PIX recebido na maquininha. PDV: vendas em PIX." />
           </div>
+
+          {dados.taxaCartao && dados.taxaCartao.bruto > 0 ? <TaxaStoneCard t={dados.taxaCartao} /> : null}
 
           {(dados.manual && (dados.manual.cartao > 0 || dados.manual.pix > 0)) ? (
             <p className="mt-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
@@ -232,96 +213,52 @@ function LinhaConc({ titulo, banco, previsto, dif, nota }: { titulo: string; ban
 }
 
 const pct = (n: number) => `${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
-function TaxasView({ taxas }: { taxas: ConcilTaxas }) {
-  const okStone = Math.abs(taxas.dif) <= Math.max(50, taxas.esperado * 0.005); // tolerância 0,5%
+/** Validação da taxa da Stone (agregada): taxa cadastrada (esperada) × taxa efetiva do repasse. */
+function TaxaStoneCard({ t }: { t: NonNullable<Conciliacao["taxaCartao"]> }) {
+  const difPP = t.taxaStone - t.taxaApp; // >0 = Stone reteve mais que a cadastrada
+  const bate = Math.abs(difPP) <= 0.1;
   return (
-    <>
-      <Card className={cn("mb-4 relative overflow-hidden", !okStone && "border-warning/50")}>
-        <CardContent className="py-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[0.95rem] font-semibold tracking-tight">A Stone aplicou a taxa cadastrada?</h2>
-            {okStone ? (
-              <Badge variant="success"><CheckCircle2 className="mr-1 size-3.5" /> Bate</Badge>
-            ) : (
-              <Badge variant="warning"><AlertTriangle className="mr-1 size-3.5" /> Diverge</Badge>
-            )}
-          </div>
-          <div className="grid grid-cols-3 gap-1 divide-x divide-border/50 text-center">
-            <div className="px-1">
-              <p className="text-[10px] uppercase text-muted-foreground">Esperado (taxa app)</p>
-              <p className="mt-1 text-base font-bold tnum">{formatBRL(taxas.esperado)}</p>
-              <p className="text-[11px] text-muted-foreground">{pct(taxas.taxaApp)}</p>
-            </div>
-            <div className="px-1">
-              <p className="text-[10px] uppercase text-muted-foreground">Stone depositou</p>
-              <p className="mt-1 text-base font-bold tnum">{formatBRL(taxas.recebido)}</p>
-              <p className="text-[11px] text-muted-foreground">{pct(taxas.taxaStone)}</p>
-            </div>
-            <div className="px-1">
-              <p className="text-[10px] uppercase text-muted-foreground">Diferença</p>
-              <p className={cn("mt-1 text-base font-bold tnum", okStone ? "text-muted-foreground" : "text-warning")}>
-                {taxas.dif >= 0 ? "+" : "−"}{formatBRL(Math.abs(taxas.dif))}
-              </p>
-              <p className="text-[11px] text-muted-foreground">bruto {formatBRL(taxas.bruto)}</p>
-            </div>
-          </div>
-          <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
-            {taxas.dif < -0.5
-              ? <>A Stone depositou <strong>menos</strong> que o esperado — reteve ~{pct(taxas.taxaStone - taxas.taxaApp)} a mais que a taxa cadastrada. Vale contestar.</>
-              : taxas.dif > 0.5
-                ? <>A Stone depositou <strong>mais</strong> que o esperado (taxa efetiva menor que a cadastrada, ou vendas de fora do período).</>
-                : <>O repasse da Stone bate com a taxa cadastrada no APP.</>}
-          </p>
-        </CardContent>
-      </Card>
-
-      {taxas.clampado ? (
-        <p className="mb-4 rounded-md bg-muted px-3 py-2 text-[11px] text-muted-foreground">
-          Comparando só o período coberto pelo extrato: <strong>{formatarData(taxas.de)} a {formatarData(taxas.ate)}</strong>
-          {taxas.periodoExtrato?.de ? ` (extrato de ${formatarData(taxas.periodoExtrato.de)} a ${formatarData(taxas.periodoExtrato.ate ?? "")})` : ""}.
-        </p>
-      ) : null}
-
-      {!taxas.temCadastro ? (
-        <p className="mb-4 rounded-md bg-warning/10 p-3 text-sm text-warning">
-          Esta loja não tem taxas cadastradas em <strong>Taxas</strong> — sem elas o esperado fica igual ao bruto. Cadastre as taxas por bandeira.
-        </p>
-      ) : null}
-
-      {taxas.porDia.length ? (
-        <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full text-right text-xs">
-            <thead>
-              <tr className="border-b border-border text-[10px] uppercase text-muted-foreground">
-                <th className="py-2 pl-3 pr-2 text-left font-medium">Dia (crédito)</th>
-                <th className="py-2 px-2 font-medium">Esperado</th>
-                <th className="py-2 px-2 font-medium">Stone depositou</th>
-                <th className="py-2 pl-2 pr-3 font-medium">Diferença</th>
-              </tr>
-            </thead>
-            <tbody className="tnum">
-              {taxas.porDia.map((d) => {
-                const diverge = Math.abs(d.dif) > 100;
-                return (
-                  <tr key={d.dia} className={`border-b border-border/50 ${diverge ? "bg-warning/5" : ""}`}>
-                    <td className="py-1.5 pl-3 pr-2 text-left font-medium">{formatarData(d.dia)}</td>
-                    <td className="py-1.5 px-2 text-muted-foreground">{formatBRL(d.esperado)}</td>
-                    <td className="py-1.5 px-2">{formatBRL(d.recebido)}</td>
-                    <td className={`py-1.5 pl-2 pr-3 ${diverge ? "font-semibold text-warning" : "text-muted-foreground"}`}>
-                      {d.dif >= 0 ? "+" : "−"}{formatBRL(Math.abs(d.dif))}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+    <Card className="mt-4">
+      <CardContent className="py-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[0.95rem] font-semibold tracking-tight">Taxa da Stone × cadastrada</h2>
+          {t.confiavel ? (
+            bate ? <Badge variant="success"><CheckCircle2 className="mr-1 size-3.5" /> Bate</Badge>
+              : <Badge variant="warning"><AlertTriangle className="mr-1 size-3.5" /> Diverge</Badge>
+          ) : <Badge variant="neutral">Sem base p/ concluir</Badge>}
         </div>
-      ) : null}
-      <p className="mt-3 text-xs text-muted-foreground">
-        <strong>Esperado</strong> = bruto do PDV × taxa cadastrada no APP, na data de crédito (D+1 / fds→seg).
-        <strong> Stone depositou</strong> = créditos de cartão no extrato. Depende do período estar coberto dos dois lados
-        (vendas sincronizadas + extrato importado). O crédito da antecipação vem somado, então a leitura mais confiável é o total do período.
-      </p>
-    </>
+        <div className="grid grid-cols-3 gap-1 divide-x divide-border/50 text-center">
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Cadastrada (app)</p>
+            <p className="mt-1 text-base font-bold tnum">{pct(t.taxaApp)}</p>
+          </div>
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Efetiva (Stone)</p>
+            <p className="mt-1 text-base font-bold tnum">{pct(t.taxaStone)}</p>
+          </div>
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Diferença</p>
+            <p className={cn("mt-1 text-base font-bold tnum", !t.confiavel ? "text-muted-foreground" : bate ? "text-muted-foreground" : "text-warning")}>
+              {difPP >= 0 ? "+" : "−"}{pct(Math.abs(difPP))}
+            </p>
+          </div>
+        </div>
+        {t.confiavel ? (
+          <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
+            {difPP > 0.1
+              ? <>A Stone reteve <strong>~{pct(difPP)} a mais</strong> que a taxa cadastrada no repasse. Vale contestar.</>
+              : difPP < -0.1
+                ? <>A Stone reteve <strong>menos</strong> que a cadastrada (a seu favor).</>
+                : <>O repasse da Stone bate com a taxa cadastrada no app.</>}
+          </p>
+        ) : (
+          <p className="mt-3 rounded-md bg-warning/10 px-3 py-2 text-[11px] leading-snug text-warning">
+            Extrato curto ({t.extratoDias || 0} dias de cartão no período) — não dá pra concluir a taxa: a antecipação da Stone
+            descasa as datas e distorce janelas curtas. Importe um extrato de <strong>~2 a 3 meses</strong> (aba Banco) e volte aqui;
+            aí o total fica confiável (sobre um bruto de {formatBRL(t.bruto)}).
+          </p>
+        )}
+      </CardContent>
+    </Card>
   );
 }

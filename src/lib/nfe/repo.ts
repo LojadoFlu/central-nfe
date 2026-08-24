@@ -941,6 +941,9 @@ export interface Conciliacao {
   previsto: { cartao: number; pix: number };
   manual?: { cartao: number; pix: number };
   dif: { cartao: number; pix: number };
+  // Validação da taxa da Stone (agregada): bruto × taxa app (taxaApp) vs o que caiu (taxaStone).
+  // `confiavel` = extrato cobre ≥ ~60 dias; abaixo disso o descasamento da antecipação distorce.
+  taxaCartao?: { bruto: number; taxaApp: number; taxaStone: number; extratoDias: number; confiavel: boolean };
   porDia: DiaConc[];
 }
 export async function obterConciliacao(empresaId: string, de: string, ate: string): Promise<Conciliacao> {
@@ -948,27 +951,6 @@ export async function obterConciliacao(empresaId: string, de: string, ate: strin
   const fn = httpsCallable(functions, "conciliacao");
   const res = await fn({ empresaId, de, ate });
   return res.data as Conciliacao;
-}
-
-export interface ConcilTaxas {
-  ok: boolean;
-  de: string; ate: string; empresaId: string;
-  pedidoDe?: string; pedidoAte?: string; clampado?: boolean; // período foi reduzido ao coberto pelo extrato
-  periodoExtrato?: { de: string | null; ate: string | null };
-  temCadastro: boolean; // há taxa cadastrada no APP
-  bruto: number;        // bruto do PDV cujo crédito cai no período
-  esperado: number;     // líquido esperado = bruto × taxa do APP
-  recebido: number;     // o que a Stone realmente depositou (extrato)
-  dif: number;          // recebido − esperado (negativo = Stone reteve mais que a taxa cadastrada)
-  taxaApp: number;      // taxa cadastrada (efetiva) %
-  taxaStone: number;    // taxa real da Stone %
-  porDia: Array<{ dia: string; esperado: number; recebido: number; dif: number }>;
-}
-export async function obterConciliacaoTaxas(empresaId: string, de: string, ate: string): Promise<ConcilTaxas> {
-  const { functions } = fb();
-  const fn = httpsCallable(functions, "conciliacaoTaxas");
-  const res = await fn({ empresaId, de, ate });
-  return res.data as ConcilTaxas;
 }
 
 // ——— Recebimento de compras (SEFAZ × entrada na loja) ———

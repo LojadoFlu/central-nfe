@@ -2284,13 +2284,13 @@ function liquidoApp(bruto: number, taxaPct: number): number {
  */
 async function recebiveisNoCredito(
   de: string, ate: string, daEmpresa: (cid: string) => boolean,
-): Promise<Array<{ empresaId: string; liquido: number; credito: string; dia: string }>> {
+): Promise<Array<{ empresaId: string; liquido: number; bruto: number; credito: string; dia: string }>> {
   const ant = await carregarAntecipacao();
   const taxasApp = await carregarTaxasApp();
   const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
   const liqDe = (r: FirebaseFirestore.DocumentData, cid: string) =>
     liquidoApp(Number(r.valor ?? 0), taxaAppDe(taxasApp.get(cid), r.descricaoCartao, Number(r.parcela ?? 1) || 1));
-  const out: Array<{ empresaId: string; liquido: number; credito: string; dia: string }> = [];
+  const out: Array<{ empresaId: string; liquido: number; bruto: number; credito: string; dia: string }> = [];
   // LIGADA — pela data da venda (crédito D+1 / fds→seg)
   const qOn = await db.collection("card_receivables")
     .where("dia", ">=", menosDiasISO(de, 4)).where("dia", "<=", ate).get();
@@ -2300,7 +2300,7 @@ async function recebiveisNoCredito(
     if (!daEmpresa(cid) || ant.get(cid) === false) continue;
     const credito = dataCreditoCartao(d10(r.dia));
     if (!credito || credito < de || credito > ate) continue;
-    out.push({ empresaId: cid, liquido: liqDe(r, cid), credito, dia: d10(r.dia) });
+    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia) });
   }
   // DESLIGADA — pela data de vencimento real do recebível
   const qOff = await db.collection("card_receivables")
@@ -2311,7 +2311,7 @@ async function recebiveisNoCredito(
     if (!daEmpresa(cid) || ant.get(cid) !== false) continue;
     const credito = d10(r.dataVencimento);
     if (!credito || credito < de || credito > ate) continue;
-    out.push({ empresaId: cid, liquido: liqDe(r, cid), credito, dia: d10(r.dia) });
+    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia) });
   }
   return out;
 }
@@ -2802,14 +2802,18 @@ export const conciliacao = onCall(
 
     // BANCO (extrato) — por categoria, no período (pela data do lançamento)
     let bancoCartao = 0, bancoPix = 0, bancoOutrasEnt = 0, bancoSaidas = 0;
+    let cartaoMinDia = "", cartaoMaxDia = ""; // cobertura do extrato de cartão no período
     const bt = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
     for (const doc of bt.docs) {
       const t = doc.data();
       const dia = d10(t.dia);
       if (dia < de || dia > ate) continue;
       const v = Number(t.valor ?? 0);
-      if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") { bancoCartao += v; bd(dia).bancoCartao += v; }
-      else if (t.categoria === "pix_venda") { bancoPix += v; bd(dia).bancoPix += v; }
+      if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") {
+        bancoCartao += v; bd(dia).bancoCartao += v;
+        if (!cartaoMinDia || dia < cartaoMinDia) cartaoMinDia = dia;
+        if (dia > cartaoMaxDia) cartaoMaxDia = dia;
+      } else if (t.categoria === "pix_venda") { bancoPix += v; bd(dia).bancoPix += v; }
       else if (v > 0) bancoOutrasEnt += v;
       else bancoSaidas += v;
     }
@@ -2817,10 +2821,11 @@ export const conciliacao = onCall(
     // PREVISTO (PDV) — cartão (líquido) na DATA DE CRÉDITO real desta loja (respeita o
     // toggle de antecipação: LIGADA = D+1/fds→seg; DESLIGADA = data de vencimento);
     // PIX das vendas por dia.
-    let previstoCartao = 0;
+    let previstoCartao = 0, brutoCartao = 0;
     const rc = await recebiveisNoCredito(de, ate, (cid) => cid === empresaId);
     for (const r of rc) {
       previstoCartao += r.liquido;
+      brutoCartao += r.bruto;
       bd(r.credito).previstoCartao += r.liquido;
     }
     let previstoPix = 0;
@@ -2890,103 +2895,23 @@ export const conciliacao = onCall(
         bancoPix: x.bancoPix, previstoPix: x.previstoPix, difPix: x.bancoPix - x.previstoPix,
       }));
 
+    // TAXA efetiva do cartão: esperada (app) × real da Stone (o que caiu no banco).
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const taxaApp = brutoCartao > 0 ? r2((1 - previstoCartao / brutoCartao) * 100) : 0;
+    const taxaStone = brutoCartao > 0 ? r2((1 - bancoCartao / brutoCartao) * 100) : 0;
+    const diasCob = cartaoMinDia && cartaoMaxDia
+      ? Math.round((new Date(`${cartaoMaxDia}T00:00:00`).getTime() - new Date(`${cartaoMinDia}T00:00:00`).getTime()) / 86_400_000) + 1
+      : 0;
     return {
       ok: true, de, ate, empresaId,
       banco: { cartao: bancoCartao, pix: bancoPix, outrasEntradas: bancoOutrasEnt, saidas: bancoSaidas },
       previsto: { cartao: previstoCartao, pix: previstoPix },
       manual: { cartao: manualCartao, pix: manualPix },
       dif: { cartao: bancoCartao - previstoCartao, pix: bancoPix - previstoPix },
+      // Validação da taxa da Stone (agregada). Só é confiável num extrato longo (≥ ~60 dias);
+      // extrato curto tem descasamento de datas da antecipação.
+      taxaCartao: { bruto: r2(brutoCartao), taxaApp, taxaStone, extratoDias: diasCob, confiavel: diasCob >= 60 },
       porDia,
-    };
-  },
-);
-
-/**
- * Validação da TAXA DA STONE: o líquido ESPERADO (bruto do PDV × taxa cadastrada no
- * APP, na data de crédito) × o que a Stone REALMENTE depositou (créditos de cartão no
- * extrato) no período. Responde: "a Stone está aplicando a taxa que combinamos?".
- * Recebido < esperado = a Stone reteve MAIS que a taxa cadastrada. Só leitura.
- */
-export const conciliacaoTaxas = onCall(
-  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
-  async (req) => {
-    await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
-    const empresaId = String(req.data?.empresaId ?? "").trim();
-    if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa (conta).");
-    const de = String(req.data?.de ?? "").slice(0, 10);
-    const ate = String(req.data?.ate ?? "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
-      throw new HttpsError("invalid-argument", "Período inválido.");
-    }
-    const r2 = (n: number) => Math.round(n * 100) / 100;
-    const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
-    const taxasApp = await carregarTaxasApp();
-    const L = taxasApp.get(empresaId);
-    const temCadastro = !!L && (L.mediaDeb > 0 || L.mediaCr1 > 0 || L.parcMedia.size > 0);
-    const ant = await carregarAntecipacao();
-    const antOn = ant.get(empresaId) !== false;
-
-    // 1) RECEBIDO = créditos de cartão do extrato. Também descobre o período REALMENTE
-    //    coberto pelo extrato (para comparar só onde há extrato dos dois lados).
-    const bankCred: Array<{ dia: string; valor: number }> = [];
-    let minExt = "", maxExt = "";
-    const bt = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
-    for (const doc of bt.docs) {
-      const t = doc.data();
-      const dia = d10(t.dia);
-      if (dia < de || dia > ate) continue;
-      if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") {
-        bankCred.push({ dia, valor: Number(t.valor ?? 0) });
-        if (!minExt || dia < minExt) minExt = dia;
-        if (dia > maxExt) maxExt = dia;
-      }
-    }
-    // Clampa o período ao trecho coberto pelo extrato.
-    const deEff = minExt && minExt > de ? minExt : de;
-    const ateEff = maxExt && maxExt < ate ? maxExt : ate;
-    const clampado = deEff !== de || ateEff !== ate;
-
-    // 2) ESPERADO = bruto do PDV × taxa do APP, na DATA DE CRÉDITO, só dentro de [deEff, ateEff].
-    const porDia = new Map<string, { esperado: number; recebido: number }>();
-    const bd = (dia: string) => { let x = porDia.get(dia); if (!x) { x = { esperado: 0, recebido: 0 }; porDia.set(dia, x); } return x; };
-    let brutoCredit = 0, esperado = 0;
-    const somaRec = (r: FirebaseFirestore.DocumentData, credito: string) => {
-      const bruto = Number(r.valor ?? 0);
-      const liq = liquidoApp(bruto, taxaAppDe(L, r.descricaoCartao, Number(r.parcela ?? 1) || 1));
-      brutoCredit += bruto; esperado += liq; bd(credito).esperado += liq;
-    };
-    if (antOn) {
-      const q = await db.collection("card_receivables").where("dia", ">=", menosDiasISO(deEff, 4)).where("dia", "<=", ateEff).get();
-      for (const doc of q.docs) {
-        const r = doc.data();
-        if (String(r.conciliaEmpresaId ?? r.empresaId ?? "") !== empresaId) continue;
-        const credito = dataCreditoCartao(d10(r.dia));
-        if (!credito || credito < deEff || credito > ateEff) continue;
-        somaRec(r, credito);
-      }
-    } else {
-      const q = await db.collection("card_receivables").where("dataVencimento", ">=", deEff).where("dataVencimento", "<", maisDiasISO(ateEff, 1)).get();
-      for (const doc of q.docs) {
-        const r = doc.data();
-        if (String(r.conciliaEmpresaId ?? r.empresaId ?? "") !== empresaId) continue;
-        const credito = d10(r.dataVencimento);
-        if (!credito || credito < deEff || credito > ateEff) continue;
-        somaRec(r, credito);
-      }
-    }
-    // 3) recebido dentro do período clampado
-    let recebido = 0;
-    for (const b of bankCred) { if (b.dia >= deEff && b.dia <= ateEff) { recebido += b.valor; bd(b.dia).recebido += b.valor; } }
-
-    const taxaApp = brutoCredit > 0 ? r2((1 - esperado / brutoCredit) * 100) : 0;      // taxa cadastrada (efetiva)
-    const taxaStone = brutoCredit > 0 ? r2((1 - recebido / brutoCredit) * 100) : 0;    // taxa real da Stone
-    const linhasDia = [...porDia.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([dia, x]) => ({ dia, esperado: r2(x.esperado), recebido: r2(x.recebido), dif: r2(x.recebido - x.esperado) }));
-    return {
-      ok: true, de: deEff, ate: ateEff, pedidoDe: de, pedidoAte: ate, clampado,
-      periodoExtrato: { de: minExt || null, ate: maxExt || null }, empresaId, temCadastro,
-      bruto: r2(brutoCredit), esperado: r2(esperado), recebido: r2(recebido), dif: r2(recebido - esperado),
-      taxaApp, taxaStone, porDia: linhasDia,
     };
   },
 );
