@@ -172,7 +172,7 @@ export default function InicioPage() {
               <p className="mt-2 text-sm text-muted-foreground">Todas as lojas do grupo · {mesAno}</p>
             </Link>
             <div className="relative grid grid-cols-3 divide-x divide-border/60 border-t border-border/60">
-              <HeroMetric href="/vendas" label="Cartões a receber" value={vendasMes ? formatBRL(vendasMes.totalLiquido) : "…"} tone="success" />
+              <HeroMetric href="/vendas" label="Cartão a receber" value={vendasMes ? formatBRL(vendasMes.cartaoAReceber ?? vendasMes.totalLiquido) : "…"} tone="warning" />
               <HeroMetric href="/financeiro" label="A pagar" value={carregando ? "…" : formatBRL(aPagarGrupo)} tone="warning" />
               <HeroMetric href="/pendencias" label="Pendências" value={pend ? String(pendCount) : "…"} tone={pendCount > 0 ? "destructive" : "default"} />
             </div>
