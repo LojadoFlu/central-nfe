@@ -2441,16 +2441,17 @@ export const fluxoCaixa = onCall(
       return b;
     };
     const tot = { entrada: 0, saida: 0, entradaReal: 0, saidaReal: 0 };
-    const porOrigem: Record<string, number> = { cartao: 0, avista: 0, nfe: 0, despesas: 0, acordos: 0 };
+    // Toda origem já inicializada; o += usa (?? 0) para nunca virar NaN se surgir uma nova.
+    const porOrigem: Record<string, number> = { cartao: 0, avista: 0, nfe: 0, despesas: 0, despesasManuais: 0, acordos: 0 };
     const entrada = (dia: string, valor: number, real: boolean, origem: string) => {
       if (!noRange(dia) || !(valor > 0)) return;
       const b = buck(dia); b.entrada += valor; if (real) b.entradaReal += valor;
-      tot.entrada += valor; if (real) tot.entradaReal += valor; porOrigem[origem] += valor;
+      tot.entrada += valor; if (real) tot.entradaReal += valor; porOrigem[origem] = (porOrigem[origem] ?? 0) + valor;
     };
     const saida = (dia: string, valor: number, real: boolean, origem: string) => {
       if (!noRange(dia) || !(valor > 0)) return;
       const b = buck(dia); b.saida += valor; if (real) b.saidaReal += valor;
-      tot.saida += valor; if (real) tot.saidaReal += valor; porOrigem[origem] += valor;
+      tot.saida += valor; if (real) tot.saidaReal += valor; porOrigem[origem] = (porOrigem[origem] ?? 0) + valor;
     };
 
     // ENTRADAS — cartões (líquido) na data de crédito real de cada loja (respeita
