@@ -1577,16 +1577,28 @@ export const pdvnetSondarFormas = onCall(
     const CAMPOS = ["ValorDinheiro", "ValorPix", "ValorCartaoDebito", "ValorCartaoParcelado", "ValorCartaoRotativo", "ValorCheque", "ValorChequePre", "ValorCrediario", "ValorDuplicata", "ValorVale", "ValorVendaVale", "ValorValeSaida", "ValorDeposito", "ValorOutros", "ValorBonus", "ValorTroco"];
     const LIDOS = new Set(["ValorDinheiro", "ValorPix", "ValorCartaoDebito", "ValorCartaoParcelado", "ValorCartaoRotativo", "ValorCrediario", "ValorCheque", "ValorVale", "ValorDuplicata"]);
     const soma: Record<string, number> = {}; for (const cmp of CAMPOS) soma[cmp] = 0;
+    const todasChavesValor = new Map<string, number>(); // qualquer campo "Valor*" visto (mesmo fora do tipo)
+    const amostrasResiduo: Array<{ id: unknown; valorTotal: number; residuo: number; campos: Record<string, number> }> = [];
     let vendido = 0, canc = 0, nv = 0, residuoTot = 0, comResiduo = 0, cartaoParcelasTot = 0;
     await cli.percorrerVendas(fmt(ini), fmt(hoje), async (lote) => {
       for (const v of lote) {
         if (v.Inativa) { canc++; continue; }
         nv++; const total = Number(v.ValorTotal ?? 0); vendido += total;
+        const raw = v as unknown as Record<string, unknown>;
         let inflow = 0;
-        for (const cmp of CAMPOS) { const val = Number((v as unknown as Record<string, unknown>)[cmp] ?? 0); soma[cmp] += val; if (cmp !== "ValorTroco") inflow += val; }
+        for (const cmp of CAMPOS) { const val = Number(raw[cmp] ?? 0); soma[cmp] += val; if (cmp !== "ValorTroco") inflow += val; }
+        // Descobre QUALQUER campo Valor* (inclusive fora do tipo) com valor.
+        for (const k of Object.keys(raw)) { if (/^Valor/.test(k)) { const val = Number(raw[k] ?? 0); if (val) todasChavesValor.set(k, (todasChavesValor.get(k) ?? 0) + val); } }
         for (const p of v.ParcelasCartao ?? []) { if (!p.Inativa) cartaoParcelasTot += Number(p.Valor ?? 0); }
         const residuo = Math.round((total - inflow + Number(v.ValorTroco ?? 0)) * 100) / 100; // ValorTotal - formas líquidas
-        if (Math.abs(residuo) > 0.5) { residuoTot += residuo; comResiduo++; }
+        if (Math.abs(residuo) > 0.5) {
+          residuoTot += residuo; comResiduo++;
+          if (amostrasResiduo.length < 5) {
+            const campos: Record<string, number> = {};
+            for (const k of Object.keys(raw)) { if (/^Valor/.test(k)) { const val = Number(raw[k] ?? 0); if (val) campos[k] = Math.round(val * 100) / 100; } }
+            amostrasResiduo.push({ id: v.Id, valorTotal: total, residuo, campos });
+          }
+        }
       }
     });
     await auditar(uid, "pdvnet.sondarFormas", { dias, nv });
@@ -1597,6 +1609,8 @@ export const pdvnetSondarFormas = onCall(
       porForma: Object.fromEntries(CAMPOS.map((cmp) => [cmp, r2(soma[cmp])])),
       naoLidosComValor,
       cartaoParcelasTotal: r2(cartaoParcelasTot),
+      todosCamposValor: Object.fromEntries([...todasChavesValor.entries()].map(([k, v]) => [k, r2(v)])),
+      amostrasResiduo,
       residuo: { total: r2(residuoTot), vendasComResiduo: comResiduo, obs: "ValorTotal − formas (>0 = forma de entrada não capturada)" },
     };
   },

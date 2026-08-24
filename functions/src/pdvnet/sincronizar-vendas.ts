@@ -54,6 +54,7 @@ const FORMAS: { key: string; campo: keyof PdvVenda }[] = [
   { key: "cheque", campo: "ValorCheque" },
   { key: "vale", campo: "ValorVale" },
   { key: "duplicata", campo: "ValorDuplicata" },
+  { key: "deposito", campo: "ValorDeposito" },
 ];
 
 export interface ResultadoSyncVendas {
