@@ -1882,7 +1882,9 @@ export const pdvnetResumoVendas = onCall(
     // "A receber" real = recebíveis cuja DATA DE CRÉDITO ainda não chegou (hoje).
     // Antecipação LIGADA: crédito D+1 (fds→seg). DESLIGADA: data de vencimento real.
     const antMap = await carregarAntecipacao();
-    const hoje = agoraISO().slice(0, 10);
+    // Data de HOJE no fuso do Brasil (não UTC): à noite o UTC já virou o dia seguinte,
+    // o que zerava o "a receber" de sex/sáb (que creditam na segunda).
+    const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
     let totalRecebiveis = 0, totalLiquido = 0, recebiveis = 0;
     let cartaoAReceber = 0, liquidoAReceber = 0, cartaoCreditado = 0;
     const recSnap = await db.collection("card_receivables").where("dia", ">=", de).where("dia", "<=", ate).get();
