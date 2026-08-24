@@ -1197,6 +1197,19 @@ export interface VendaManual {
   maquinaEmpresaId: string | null;
   valor: number;
 }
+export interface AgAvulsa { chave: string; n: number; bruto: number; liquido: number }
+export interface ResumoAvulsas {
+  ok: boolean; de: string; ate: string; empresaId: string;
+  total: { qtd: number; bruto: number; liquido: number; dinheiro: number; cartaoPix: number; taxas: number };
+  porForma: AgAvulsa[];
+  porMaquina: AgAvulsa[];
+  porDia: AgAvulsa[];
+}
+export async function obterResumoAvulsas(empresaId: string, de: string, ate: string): Promise<ResumoAvulsas> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "resumoAvulsas");
+  return (await fn({ empresaId, de, ate })).data as ResumoAvulsas;
+}
 export async function listarVendasManuais(empresaId: string, de: string, ate: string): Promise<VendaManual[]> {
   const { db } = fb();
   const snap = await getDocs(query(collection(db, "manual_sales"), where("empresaId", "==", empresaId)));

@@ -2166,24 +2166,25 @@ async function carregarAntecipacao(): Promise<Map<string, boolean>> {
 // Regra do usuário (2026-08): calcular todo líquido/taxa pelas taxas CADASTRADAS no APP
 // (card_rates, por bandeira), não pelo líquido que o PDVnet traz.
 interface CartaoRate { taxaDebito: number; taxaCredito: number; taxaPix: number; parcelas: Record<string, number> }
-interface TaxasLoja { porCartao: Map<string, CartaoRate>; mediaDeb: number; mediaCr1: number; parcMedia: Map<string, number> }
+interface TaxasLoja { porCartao: Map<string, CartaoRate>; mediaDeb: number; mediaCr1: number; mediaPix: number; parcMedia: Map<string, number> }
 const normNome = (s: unknown) => String(s ?? "").toUpperCase().normalize("NFD").replace(new RegExp("[\\u0300-\\u036f]", "g"), "").replace(/[^A-Z0-9]/g, "");
 async function carregarTaxasApp(): Promise<Map<string, TaxasLoja>> {
-  const acc = new Map<string, { cartoes: Map<string, CartaoRate>; debS: number; debN: number; cr1S: number; cr1N: number; parcAgg: Map<string, { s: number; n: number }> }>();
+  const acc = new Map<string, { cartoes: Map<string, CartaoRate>; debS: number; debN: number; cr1S: number; cr1N: number; pixS: number; pixN: number; parcAgg: Map<string, { s: number; n: number }> }>();
   for (const d of (await db.collection("card_rates").get()).docs) {
     const x = d.data(); const cid = String(x.empresaId ?? ""); if (!cid) continue;
-    let L = acc.get(cid); if (!L) { L = { cartoes: new Map(), debS: 0, debN: 0, cr1S: 0, cr1N: 0, parcAgg: new Map() }; acc.set(cid, L); }
+    let L = acc.get(cid); if (!L) { L = { cartoes: new Map(), debS: 0, debN: 0, cr1S: 0, cr1N: 0, pixS: 0, pixN: 0, parcAgg: new Map() }; acc.set(cid, L); }
     const parcelas: Record<string, number> = {};
     for (const [k, v] of Object.entries((x.parcelas ?? {}) as Record<string, number>)) parcelas[k] = Number(v) || 0;
     L.cartoes.set(normNome(x.nome), { taxaDebito: Number(x.taxaDebito) || 0, taxaCredito: Number(x.taxaCredito) || 0, taxaPix: Number(x.taxaPix) || 0, parcelas });
     if (Number(x.taxaDebito) > 0) { L.debS += Number(x.taxaDebito); L.debN++; }
     if (Number(x.taxaCredito) > 0) { L.cr1S += Number(x.taxaCredito); L.cr1N++; }
+    if (Number(x.taxaPix) > 0) { L.pixS += Number(x.taxaPix); L.pixN++; }
     for (const [k, v] of Object.entries(parcelas)) if (v > 0) { const a = L.parcAgg.get(k) ?? { s: 0, n: 0 }; a.s += v; a.n++; L.parcAgg.set(k, a); }
   }
   const out = new Map<string, TaxasLoja>();
   for (const [cid, L] of acc) {
     const parcMedia = new Map<string, number>(); for (const [k, a] of L.parcAgg) parcMedia.set(k, a.n ? a.s / a.n : 0);
-    out.set(cid, { porCartao: L.cartoes, mediaDeb: L.debN ? L.debS / L.debN : 0, mediaCr1: L.cr1N ? L.cr1S / L.cr1N : 0, parcMedia });
+    out.set(cid, { porCartao: L.cartoes, mediaDeb: L.debN ? L.debS / L.debN : 0, mediaCr1: L.cr1N ? L.cr1S / L.cr1N : 0, mediaPix: L.pixN ? L.pixS / L.pixN : 0, parcMedia });
   }
   return out;
 }
@@ -2996,6 +2997,56 @@ export const conciliacaoSaidas = onCall(
 // ============ VENDAS MANUAIS (lojas offline, ex.: Maracanã) ============
 
 const FORMAS_MANUAIS = ["dinheiro", "pix", "cartaoDebito", "cartaoCredito", "cartaoParcelado"];
+
+/**
+ * Resumo das vendas avulsas (ex.: Maracanã) no período: bruto E líquido (após a taxa
+ * do APP, pela loja da MÁQUINA e forma/parcelas), por forma, por máquina e por dia.
+ * Dinheiro não tem taxa. Só leitura.
+ */
+export const resumoAvulsas = onCall(opcoes, async (req) => {
+  await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
+  const empresaId = String(req.data?.empresaId ?? "").trim();
+  if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a loja.");
+  const de = String(req.data?.de ?? "").slice(0, 10);
+  const ate = String(req.data?.ate ?? "").slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) throw new HttpsError("invalid-argument", "Período inválido.");
+  const taxas = await carregarTaxasApp();
+  const taxaManual = (maq: string, forma: string, parc: number): number => {
+    const L = taxas.get(maq); if (!L) return 0;
+    if (forma === "pix") return L.mediaPix;
+    if (forma === "cartaoDebito") return L.mediaDeb;
+    if (forma === "cartaoCredito") return L.mediaCr1;
+    if (forma === "cartaoParcelado") return L.parcMedia.get(String(Math.max(2, Math.min(10, Math.round(parc || 2))))) ?? L.mediaCr1;
+    return 0; // dinheiro
+  };
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  interface Ag { bruto: number; liquido: number; n: number }
+  const porForma = new Map<string, Ag>(), porMaquina = new Map<string, Ag>(), porDia = new Map<string, Ag>();
+  const add = (m: Map<string, Ag>, k: string, b: number, l: number) => { const g = m.get(k) ?? { bruto: 0, liquido: 0, n: 0 }; g.bruto += b; g.liquido += l; g.n++; m.set(k, g); };
+  let totalB = 0, totalL = 0, dinB = 0, n = 0;
+  const snap = await db.collection("manual_sales").where("empresaId", "==", empresaId).get();
+  for (const doc of snap.docs) {
+    const m = doc.data();
+    const dia = String(m.dia ?? "").slice(0, 10);
+    if (dia < de || dia > ate) continue;
+    const valor = Number(m.valor ?? 0) || 0; if (valor <= 0) continue;
+    const forma = String(m.forma ?? ""); const maq = String(m.maquinaEmpresaId ?? "");
+    const taxa = forma === "dinheiro" ? 0 : taxaManual(maq, forma, Number(m.parcelas) || 2);
+    const liq = Math.round(valor * (1 - taxa / 100) * 100) / 100;
+    totalB += valor; totalL += liq; n++; if (forma === "dinheiro") dinB += valor;
+    add(porForma, forma, valor, liq);
+    add(porMaquina, forma === "dinheiro" ? "(dinheiro na loja)" : (maq || "(sem máquina)"), valor, liq);
+    add(porDia, dia, valor, liq);
+  }
+  const dump = (mp: Map<string, Ag>) => [...mp.entries()].map(([chave, g]) => ({ chave, n: g.n, bruto: r2(g.bruto), liquido: r2(g.liquido) }));
+  return {
+    ok: true, de, ate, empresaId,
+    total: { qtd: n, bruto: r2(totalB), liquido: r2(totalL), dinheiro: r2(dinB), cartaoPix: r2(totalB - dinB), taxas: r2(totalB - totalL) },
+    porForma: dump(porForma).sort((a, b) => b.bruto - a.bruto),
+    porMaquina: dump(porMaquina).sort((a, b) => b.bruto - a.bruto),
+    porDia: dump(porDia).sort((a, b) => b.chave.localeCompare(a.chave)),
+  };
+});
 
 /** Lança/edita uma venda manual (total por dia, forma e máquina/loja). Admin/financeiro. */
 export const salvarVendaManual = onCall(opcoes, async (req) => {

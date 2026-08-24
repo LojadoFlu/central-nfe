@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
 import { Hero } from "@/components/ui/hero";
-import { listarEmpresas, listarVendasManuais, type VendaManual } from "@/lib/nfe/repo";
+import { listarEmpresas, obterResumoAvulsas, type ResumoAvulsas } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { formatBRL, formatarData } from "@/lib/utils";
 import { Trophy } from "lucide-react";
@@ -26,12 +26,11 @@ export default function MaracanaPage() {
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   const [periodo, setPeriodo] = useState<Periodo>(periodoEsteMes());
-  const [lista, setLista] = useState<VendaManual[] | null>(null);
+  const [dados, setDados] = useState<ResumoAvulsas | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
-  // Lojas offline (Maracanã é uma delas). Só elas fazem sentido aqui.
   const offline = useMemo(() => empresas.filter((e) => e.manual), [empresas]);
-  const nomeEmp = (id: string | null) => empresas.find((e) => e.id === id)?.nomeFantasia || empresas.find((e) => e.id === id)?.razaoSocial || (id ?? "—");
+  const nomeEmp = (id: string) => empresas.find((e) => e.id === id)?.nomeFantasia || empresas.find((e) => e.id === id)?.razaoSocial || id;
 
   useEffect(() => {
     void listarEmpresas().then((es) => {
@@ -47,32 +46,13 @@ export default function MaracanaPage() {
     if (!empresaId || !periodo.de || !periodo.ate) return;
     setErro(null);
     try {
-      setLista(await listarVendasManuais(empresaId, periodo.de, periodo.ate));
-    } catch (e) { setErro((e as Error).message); setLista([]); }
+      setDados(await obterResumoAvulsas(empresaId, periodo.de, periodo.ate));
+    } catch (e) { setErro((e as Error).message); setDados(null); }
   }, [empresaId, periodo]);
-  useEffect(() => { setLista(null); void carregar(); }, [carregar]);
+  useEffect(() => { setDados(null); void carregar(); }, [carregar]);
 
-  const resumo = useMemo(() => {
-    const vs = lista ?? [];
-    const total = vs.reduce((s, v) => s + (v.valor ?? 0), 0);
-    const emDinheiro = vs.filter((v) => v.forma === "dinheiro").reduce((s, v) => s + (v.valor ?? 0), 0);
-    const noBanco = total - emDinheiro; // cartão/PIX (cai na conta da máquina)
-    const porForma = new Map<string, { n: number; valor: number }>();
-    const porMaquina = new Map<string, number>();
-    const porDia = new Map<string, number>();
-    for (const v of vs) {
-      const f = porForma.get(v.forma) ?? { n: 0, valor: 0 }; f.n++; f.valor += v.valor ?? 0; porForma.set(v.forma, f);
-      const mk = v.forma === "dinheiro" ? "(dinheiro na loja)" : (v.maquinaEmpresaId ?? "(sem máquina)");
-      porMaquina.set(mk, (porMaquina.get(mk) ?? 0) + (v.valor ?? 0));
-      porDia.set(v.dia, (porDia.get(v.dia) ?? 0) + (v.valor ?? 0));
-    }
-    return {
-      total, emDinheiro, noBanco, qtd: vs.length,
-      porForma: [...porForma.entries()].sort((a, b) => b[1].valor - a[1].valor),
-      porMaquina: [...porMaquina.entries()].sort((a, b) => b[1] - a[1]),
-      porDia: [...porDia.entries()].sort((a, b) => b[0].localeCompare(a[0])),
-    };
-  }, [lista]);
+  const t = dados?.total;
+  const rotulo = (chave: string) => (chave.startsWith("(") ? chave : nomeEmp(chave));
 
   return (
     <div>
@@ -95,9 +75,9 @@ export default function MaracanaPage() {
 
       {erro ? <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">{erro}</p> : null}
 
-      {lista === null ? (
+      {dados === null ? (
         <div className="space-y-3"><Skeleton className="h-24" /><Skeleton className="h-40" /></div>
-      ) : lista.length === 0 ? (
+      ) : (t?.qtd ?? 0) === 0 ? (
         <ModulePlaceholder icon={Trophy} title="Sem vendas avulsas no período" etapa="Maracanã">
           Lance as vendas do Maracanã em <strong>Vendas manuais</strong> (Loja = Maracanã, Máquina = Barra/Tijuca). Elas aparecem aqui e na
           conciliação bancária da loja da máquina, sem entrar no resultado da Barra/Tijuca.
@@ -106,61 +86,69 @@ export default function MaracanaPage() {
         <>
           <Hero
             eyebrow="Vendas avulsas no período"
-            value={formatBRL(resumo.total)}
-            subtitle={`${resumo.qtd} lançamento(s) · ${formatarData(periodo.de)} a ${formatarData(periodo.ate)}`}
+            value={formatBRL(t?.bruto)}
+            subtitle={`${t?.qtd ?? 0} lançamento(s) · ${formatarData(periodo.de)} a ${formatarData(periodo.ate)}`}
             metrics={[
-              { label: "Em cartão/PIX (banco)", value: formatBRL(resumo.noBanco), tone: "warning" },
-              { label: "Em dinheiro (na loja)", value: formatBRL(resumo.emDinheiro), tone: "success" },
+              { label: "Líquido (após taxa)", value: formatBRL(t?.liquido), tone: "success" },
+              { label: "Taxa estimada", value: formatBRL(t?.taxas), tone: "destructive" },
             ]}
           />
+          <p className="mt-2 px-1 text-[11px] text-muted-foreground">
+            Em cartão/PIX (cai no banco): <strong>{formatBRL(t?.cartaoPix)}</strong> · em dinheiro (fica na loja): {formatBRL(t?.dinheiro)}.
+            Líquido pela taxa cadastrada da máquina (forma/parcelas).
+          </p>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <div>
               <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">Por meio de pagamento</h2>
-              <Card><CardContent className="py-3">
-                <div className="divide-y divide-border text-sm">
-                  {resumo.porForma.map(([f, g]) => (
-                    <div key={f} className="flex items-center justify-between py-1.5">
-                      <span className="text-muted-foreground">{FORMA_LABEL[f] ?? f} <span className="text-[11px]">· {g.n}</span></span>
-                      <span className="font-medium tnum">{formatBRL(g.valor)}</span>
-                    </div>
-                  ))}
-                </div>
+              <Card><CardContent className="py-2">
+                <TabelaAg linhas={dados.porForma.map((g) => ({ ...g, rot: FORMA_LABEL[g.chave] ?? g.chave }))} />
               </CardContent></Card>
             </div>
             <div>
               <h2 className="mb-2 text-[0.95rem] font-semibold tracking-tight">Por máquina (onde o dinheiro cai)</h2>
-              <Card><CardContent className="py-3">
-                <div className="divide-y divide-border text-sm">
-                  {resumo.porMaquina.map(([mk, v]) => (
-                    <div key={mk} className="flex items-center justify-between py-1.5">
-                      <span className="text-muted-foreground">{mk.startsWith("(") ? mk : nomeEmp(mk)}</span>
-                      <span className="font-medium tnum">{formatBRL(v)}</span>
-                    </div>
-                  ))}
-                </div>
+              <Card><CardContent className="py-2">
+                <TabelaAg linhas={dados.porMaquina.map((g) => ({ ...g, rot: rotulo(g.chave) }))} />
               </CardContent></Card>
             </div>
           </div>
 
           <h2 className="mb-2 mt-6 text-[0.95rem] font-semibold tracking-tight">Por dia</h2>
-          <Card><CardContent className="py-3">
-            <div className="divide-y divide-border text-sm">
-              {resumo.porDia.map(([d, v]) => (
-                <div key={d} className="flex items-center justify-between py-1.5">
-                  <span className="text-muted-foreground">{formatarData(d)}</span>
-                  <span className="font-medium tnum">{formatBRL(v)}</span>
-                </div>
-              ))}
-            </div>
+          <Card><CardContent className="py-2">
+            <TabelaAg linhas={dados.porDia.map((g) => ({ ...g, rot: formatarData(g.chave) }))} />
           </CardContent></Card>
 
           <p className="mt-4 text-xs text-muted-foreground">
-            Estes valores são o resultado do Maracanã (não entram no resultado da Barra/Tijuca). O cartão/PIX cai no banco da loja da
-            máquina e aparece na conciliação bancária e na taxa dela. Para lançar, use <strong>Vendas manuais</strong>.
+            Resultado do Maracanã (não entra no resultado da Barra/Tijuca). O cartão/PIX cai no banco da loja da máquina e aparece na
+            conciliação e na taxa dela. Lançamento em <strong>Vendas manuais</strong>. A taxa é a média cadastrada da forma (o manual não informa a bandeira).
           </p>
         </>
       )}
+    </div>
+  );
+}
+
+function TabelaAg({ linhas }: { linhas: Array<{ rot: string; n: number; bruto: number; liquido: number }> }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-right text-sm">
+        <thead>
+          <tr className="text-[10px] uppercase text-muted-foreground">
+            <th className="py-1.5 pl-1 text-left font-medium"> </th>
+            <th className="py-1.5 px-2 font-medium">Bruto</th>
+            <th className="py-1.5 pl-2 font-medium">Líquido</th>
+          </tr>
+        </thead>
+        <tbody className="tnum">
+          {linhas.map((l, i) => (
+            <tr key={i} className="border-t border-border/60">
+              <td className="py-1.5 pl-1 text-left text-muted-foreground">{l.rot} <span className="text-[11px]">· {l.n}</span></td>
+              <td className="py-1.5 px-2 font-medium">{formatBRL(l.bruto)}</td>
+              <td className="py-1.5 pl-2 text-success">{formatBRL(l.liquido)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
