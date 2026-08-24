@@ -1559,6 +1559,50 @@ export const pdvnetSondarVendas = onCall(
 );
 
 /**
+ * Diagnóstico: soma TODAS as formas de pagamento do PDVnet no período e mede o
+ * RESÍDUO (ValorTotal − soma das formas), para achar forma "escondida" que não lemos
+ * (como aconteceu com o PIX de maquininha, que vem em ParcelasCartao). Só leitura.
+ */
+export const pdvnetSondarFormas = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
+    const dias = Math.min(Math.max(Math.floor(Number(req.data?.dias ?? 7)), 1), 31);
+    let cred;
+    try { cred = await lerSegredoPdvnet(); } catch { throw new HttpsError("failed-precondition", "Credenciais do PDVnet não configuradas."); }
+    const cli = new PdvnetClient(cred);
+    const hoje = new Date();
+    const ini = new Date(hoje.getTime() - dias * 86_400_000);
+    const fmt = (d: Date) => d.toISOString().slice(0, 10);
+    const CAMPOS = ["ValorDinheiro", "ValorPix", "ValorCartaoDebito", "ValorCartaoParcelado", "ValorCartaoRotativo", "ValorCheque", "ValorChequePre", "ValorCrediario", "ValorDuplicata", "ValorVale", "ValorVendaVale", "ValorValeSaida", "ValorDeposito", "ValorOutros", "ValorBonus", "ValorTroco"];
+    const LIDOS = new Set(["ValorDinheiro", "ValorPix", "ValorCartaoDebito", "ValorCartaoParcelado", "ValorCartaoRotativo", "ValorCrediario", "ValorCheque", "ValorVale", "ValorDuplicata"]);
+    const soma: Record<string, number> = {}; for (const cmp of CAMPOS) soma[cmp] = 0;
+    let vendido = 0, canc = 0, nv = 0, residuoTot = 0, comResiduo = 0, cartaoParcelasTot = 0;
+    await cli.percorrerVendas(fmt(ini), fmt(hoje), async (lote) => {
+      for (const v of lote) {
+        if (v.Inativa) { canc++; continue; }
+        nv++; const total = Number(v.ValorTotal ?? 0); vendido += total;
+        let inflow = 0;
+        for (const cmp of CAMPOS) { const val = Number((v as unknown as Record<string, unknown>)[cmp] ?? 0); soma[cmp] += val; if (cmp !== "ValorTroco") inflow += val; }
+        for (const p of v.ParcelasCartao ?? []) { if (!p.Inativa) cartaoParcelasTot += Number(p.Valor ?? 0); }
+        const residuo = Math.round((total - inflow + Number(v.ValorTroco ?? 0)) * 100) / 100; // ValorTotal - formas líquidas
+        if (Math.abs(residuo) > 0.5) { residuoTot += residuo; comResiduo++; }
+      }
+    });
+    await auditar(uid, "pdvnet.sondarFormas", { dias, nv });
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+    const naoLidosComValor = CAMPOS.filter((cmp) => !LIDOS.has(cmp) && Math.abs(soma[cmp]) > 0.01).map((cmp) => ({ campo: cmp, total: r2(soma[cmp]) }));
+    return {
+      ok: true, periodo: { inicio: fmt(ini), fim: fmt(hoje) }, vendas: nv, canceladas: canc, totalVendido: r2(vendido),
+      porForma: Object.fromEntries(CAMPOS.map((cmp) => [cmp, r2(soma[cmp])])),
+      naoLidosComValor,
+      cartaoParcelasTotal: r2(cartaoParcelasTot),
+      residuo: { total: r2(residuoTot), vendasComResiduo: comResiduo, obs: "ValorTotal − formas (>0 = forma de entrada não capturada)" },
+    };
+  },
+);
+
+/**
  * Piso de data das vendas (virada de produção): vendas anteriores NÃO são importadas.
  * Config em `configuracoes/producao`.inicioVendas (AAAA-MM-DD). Evita que o sync diário
  * ressuscite o histórico apagado na virada.
