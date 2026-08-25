@@ -2448,7 +2448,11 @@ async function recebiveisNoCredito(
   for (const doc of qOn.docs) {
     const r = doc.data();
     const cid = String(r.conciliaEmpresaId ?? r.empresaId ?? ""); // loja da máquina (onde o dinheiro cai)
-    if (!daEmpresa(cid) || ant.get(cid) === false) continue;
+    if (!daEmpresa(cid)) continue;
+    // Loja SEM antecipação é tratada pela data de vencimento (branch abaixo) — EXCETO recebível
+    // sem dataVencimento, que ali some do resultado (o where(">=") descarta null); aqui ele
+    // entra com crédito estimado D+1 em vez de desaparecer.
+    if (ant.get(cid) === false && r.dataVencimento) continue;
     const credito = dataCreditoCartao(d10(r.dia));
     if (!credito || credito < de || credito > ate) continue;
     out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia), pix: ehRecebivelPix(r.descricaoCartao) });
@@ -2664,12 +2668,13 @@ export const centralPendencias = onCall(
     }
     if (acQtd) pend.push({ chave: "acordosAtrasados", titulo: `${acQtd} parcela(s) de acordo em atraso`, descricao: "Parcelas de acordos vencidas e não pagas.", severidade: "atencao", qtd: acQtd, valor: acVal, href: "/acordos" });
 
-    // Notas sem XML completo (manifestação pendente)
+    // Notas sem XML completo (manifestação pendente). Filtra no Firestore (índice de campo
+    // único, automático) em vez de varrer nfe_documents inteira só para contar as com false.
     let nxQtd = 0;
-    for (const doc of (await db.collection("nfe_documents").get()).docs) {
+    for (const doc of (await db.collection("nfe_documents").where("temXmlCompleto", "==", false).get()).docs) {
       const dcto = doc.data();
       if (!daEmpresa(dcto.companyId)) continue;
-      if (dcto.temXmlCompleto === false) nxQtd++;
+      nxQtd++;
     }
     if (nxQtd) pend.push({ chave: "notasSemXml", titulo: `${nxQtd} nota(s) sem XML completo`, descricao: "Manifeste (Ciência) para destravar o XML/DANFE.", severidade: "info", qtd: nxQtd, valor: 0, href: "/notas" });
 
