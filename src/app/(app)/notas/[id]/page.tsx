@@ -68,12 +68,13 @@ function gerarDatas(base: string, n: number, p: Periodicidade): string[] {
 }
 
 /** Formulário para definir o pagamento de uma NF sem parcelas no XML. */
-function DefinirPagamento({ chNFe, total, dhEmi, onSaved }: { chNFe: string; total: number; dhEmi?: string | null; onSaved: () => void }) {
+function DefinirPagamento({ chNFe, total, dhEmi, companyId, empresas, onSaved }: { chNFe: string; total: number; dhEmi?: string | null; companyId?: string | null; empresas: Company[]; onSaved: () => void }) {
   const emissao = dhEmi && /^\d{4}-\d{2}-\d{2}/.test(dhEmi) ? dhEmi.slice(0, 10) : hojeISO();
   const [modo, setModo] = useState<"avista" | "parcelado">("avista");
   // À vista — padrão na data de emissão da NF.
   const [avistaData, setAvistaData] = useState(emissao);
   const [avistaQuitado, setAvistaQuitado] = useState(true);
+  const [contaPg, setContaPg] = useState(companyId ?? ""); // conta de onde saiu o pagamento (default = empresa da NF)
   // Parcelado
   const [numParc, setNumParc] = useState(2);
   const [base, setBase] = useState(addDias(hojeISO(), 30));
@@ -102,7 +103,7 @@ function DefinirPagamento({ chNFe, total, dhEmi, onSaved }: { chNFe: string; tot
     setSalvando(true);
     try {
       const parcelas = modo === "avista"
-        ? [{ vencimento: avistaData, valor: total, pago: avistaQuitado, dataPagamento: avistaQuitado ? avistaData : undefined }]
+        ? [{ vencimento: avistaData, valor: total, pago: avistaQuitado, dataPagamento: avistaQuitado ? avistaData : undefined, contaPagamento: avistaQuitado ? (contaPg || undefined) : undefined }]
         : rows.map((r) => ({ vencimento: r.venc, valor: Number(r.valor) }));
       await definirPagamento({ chNFe, parcelas });
       onSaved();
@@ -145,6 +146,14 @@ function DefinirPagamento({ chNFe, total, dhEmi, onSaved }: { chNFe: string; tot
                 <input type="checkbox" className="size-4" checked={avistaQuitado} onChange={(e) => setAvistaQuitado(e.target.checked)} />
                 Já quitado
               </label>
+              {avistaQuitado ? (
+                <label className="space-y-1">
+                  <span className="block text-[11px] text-muted-foreground">Pago pela conta de</span>
+                  <select value={contaPg} onChange={(e) => setContaPg(e.target.value)} className="h-9 min-w-[10rem] rounded-md border border-input bg-background px-2 text-sm">
+                    {empresas.map((e) => <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>)}
+                  </select>
+                </label>
+              ) : null}
             </div>
             <p className="text-xs text-muted-foreground">
               {avistaQuitado
@@ -226,16 +235,42 @@ export default function NotaDetalhePage() {
   const [manifestando, setManifestando] = useState(false);
   const [resManif, setResManif] = useState<ResultadoManifestacao | null>(null);
   const [baixando, setBaixando] = useState<string | null>(null);
+  const [pagando, setPagando] = useState<string | null>(null); // parcela escolhendo a conta pagadora
+  const [contaPg, setContaPg] = useState("");                   // empresa de onde saiu o pagamento
   const podeBaixar = podeAcao("financeiro.baixar");
 
-  async function alternarPagamento(p: Parcela, pago: boolean) {
+  const nomeEmpresa = (id?: string | null) => {
+    if (!id) return null;
+    const e = empresas.find((x) => x.id === id);
+    return e?.nomeFantasia || e?.razaoSocial || id;
+  };
+
+  // Abre o seletor de conta (default = empresa que recebeu a NF).
+  function iniciarPagamento(p: Parcela) {
+    setPagando(p.id);
+    setContaPg(doc?.companyId ?? "");
+  }
+
+  async function confirmarPagamento(p: Parcela) {
     setBaixando(p.id);
     try {
       await baixarParcela({
         parcelaId: p.id,
-        pago,
-        ...(pago ? { valorPago: p.valor ?? undefined } : {}),
+        pago: true,
+        valorPago: p.valor ?? undefined,
+        contasPagamento: contaPg ? [{ empresaId: contaPg, valor: p.valor ?? 0 }] : undefined,
       });
+      setPagando(null);
+      await carregar();
+    } finally {
+      setBaixando(null);
+    }
+  }
+
+  async function reabrir(p: Parcela) {
+    setBaixando(p.id);
+    try {
+      await baixarParcela({ parcelaId: p.id, pago: false });
       await carregar();
     } finally {
       setBaixando(null);
@@ -493,7 +528,7 @@ export default function NotaDetalhePage() {
 
       {/* Definir pagamento — quando a NF não trouxe parcelas no XML */}
       {parcelas.length === 0 && doc.chNFe && podeBaixar ? (
-        <DefinirPagamento chNFe={doc.chNFe} total={doc.vNF ?? 0} dhEmi={doc.dhEmi} onSaved={carregar} />
+        <DefinirPagamento chNFe={doc.chNFe} total={doc.vNF ?? 0} dhEmi={doc.dhEmi} companyId={doc.companyId} empresas={empresas} onSaved={carregar} />
       ) : null}
 
       {/* Financeiro (parcelas) */}
@@ -507,33 +542,58 @@ export default function NotaDetalhePage() {
               {parcelas.map((p) => {
                 const paga = p.statusPagamento === "pago";
                 const ocupado = baixando === p.id;
+                const contaPaga = p.contasPagamento?.[0]?.empresaId ?? null;
+                const escolhendo = pagando === p.id;
                 return (
-                  <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
-                    <div className="min-w-0">
-                      <span className="text-muted-foreground">
-                        Parcela {p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
-                      </span>
-                      {paga ? (
-                        <span className="ml-2 text-xs text-success">Pago em {formatarData(p.dataPagamento)}</span>
-                      ) : null}
+                  <div key={p.id} className="py-2.5 text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="text-muted-foreground">
+                          Parcela {p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
+                        </span>
+                        {paga ? (
+                          <span className="ml-2 text-xs text-success">
+                            Pago em {formatarData(p.dataPagamento)}
+                            {contaPaga ? <> · por {nomeEmpresa(contaPaga)}</> : null}
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium tnum">{formatBRL(p.valor)}</span>
+                        {paga ? <Badge variant="success">Paga</Badge> : null}
+                        {podeBaixar && !escolhendo ? (
+                          <Button
+                            size="sm"
+                            variant={paga ? "ghost" : "outline"}
+                            disabled={ocupado}
+                            onClick={() => (paga ? reabrir(p) : iniciarPagamento(p))}
+                          >
+                            {paga ? <RotateCcw className="size-4" /> : <Check className="size-4" />}
+                            {ocupado ? "…" : paga ? "Reabrir" : "Marcar pago"}
+                          </Button>
+                        ) : null}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium tnum">{formatBRL(p.valor)}</span>
-                      {paga ? (
-                        <Badge variant="success">Paga</Badge>
-                      ) : null}
-                      {podeBaixar ? (
-                        <Button
-                          size="sm"
-                          variant={paga ? "ghost" : "outline"}
-                          disabled={ocupado}
-                          onClick={() => alternarPagamento(p, !paga)}
+                    {escolhendo ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/40 p-2">
+                        <label className="text-xs text-muted-foreground">Pago pela conta de</label>
+                        <select
+                          value={contaPg}
+                          onChange={(e) => setContaPg(e.target.value)}
+                          className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-sm"
                         >
-                          {paga ? <RotateCcw className="size-4" /> : <Check className="size-4" />}
-                          {ocupado ? "…" : paga ? "Reabrir" : "Marcar pago"}
+                          {empresas.map((e) => (
+                            <option key={e.id} value={e.id}>{e.nomeFantasia || e.razaoSocial}</option>
+                          ))}
+                        </select>
+                        <Button size="sm" disabled={ocupado} onClick={() => confirmarPagamento(p)}>
+                          <Check className="size-4" />{ocupado ? "…" : "Confirmar"}
                         </Button>
-                      ) : null}
-                    </div>
+                        <Button size="sm" variant="ghost" disabled={ocupado} onClick={() => setPagando(null)}>
+                          Cancelar
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}

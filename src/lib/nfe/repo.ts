@@ -665,7 +665,7 @@ export async function parcelasDoDocumento(chNFe: string): Promise<Parcela[]> {
 /** Define manualmente o pagamento de uma NF-e sem parcelas (parcelado ou à vista quitado). */
 export async function definirPagamento(input: {
   chNFe: string;
-  parcelas: Array<{ vencimento: string; valor: number; pago?: boolean; dataPagamento?: string }>;
+  parcelas: Array<{ vencimento: string; valor: number; pago?: boolean; dataPagamento?: string; contaPagamento?: string }>;
 }): Promise<{ ok: boolean; parcelas: number }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "nfeDefinirPagamento");

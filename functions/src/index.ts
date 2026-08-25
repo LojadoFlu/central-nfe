@@ -1075,7 +1075,9 @@ export const nfeDefinirPagamento = onCall(opcoes, async (req) => {
     if (!dataOK(p.vencimento)) throw new HttpsError("invalid-argument", `Data inválida na parcela ${i + 1}.`);
     const pago = p.pago === true;
     const dataPagamento = pago ? (dataOK(p.dataPagamento) ? String(p.dataPagamento) : String(p.vencimento)) : null;
-    return { valor: Math.round(valor * 100) / 100, vencimento: String(p.vencimento), pago, dataPagamento };
+    // Conta de onde saiu o pagamento (default = empresa que recebeu a NF).
+    const contaPagamento = pago ? (String(p.contaPagamento ?? "").trim() || nf.companyId || "") : "";
+    return { valor: Math.round(valor * 100) / 100, vencimento: String(p.vencimento), pago, dataPagamento, contaPagamento };
   });
 
   // Protege parcelas do XML: só é permitido (re)definir quando não há parcela do XML.
@@ -1103,7 +1105,10 @@ export const nfeDefinirPagamento = onCall(opcoes, async (req) => {
       vencimento: p.vencimento,
       valor: p.valor,
       statusPagamento: p.pago ? "pago" : "nao_informado",
-      ...(p.pago ? { dataPagamento: p.dataPagamento, valorPago: p.valor, baixadoPor: uid, baixadoEm: now } : {}),
+      ...(p.pago ? {
+        dataPagamento: p.dataPagamento, valorPago: p.valor, baixadoPor: uid, baixadoEm: now,
+        ...(p.contaPagamento ? { contasPagamento: [{ empresaId: p.contaPagamento, valor: p.valor }] } : {}),
+      } : {}),
       origem: "manual",
       definidoPor: uid,
       definidoEm: now,
