@@ -79,20 +79,18 @@ export default function ConciliacaoPage() {
       ) : dados ? (
         <>
           <div className="space-y-3">
-            <LinhaConc titulo="Cartões" banco={dados.banco.cartao} previsto={dados.previsto.cartao} dif={dados.dif.cartao}
-              nota="Banco: liquidações de cartão. PDV: recebíveis líquidos na data de crédito — com antecipação, D+1 (fim de semana → segunda); sem antecipação, na data de vencimento (parcelado cai mês a mês)." />
-            <LinhaConc titulo="PIX" banco={dados.banco.pix} previsto={dados.previsto.pix} dif={dados.dif.pix}
-              nota="Banco: PIX recebido na maquininha. PDV: vendas em PIX." />
+            <LinhaConc titulo="Cartões" banco={dados.banco.cartao} previsto={dados.previsto.cartao} dif={dados.dif.cartao} manual={dados.manual?.cartao ?? 0}
+              nota="Banco: liquidações de cartão. Esperado = PDV + Maracanã (avulsas nas máquinas desta loja), líquidos na data de crédito — com antecipação, D+1 (fim de semana → segunda); sem antecipação, na data de vencimento (parcelado cai mês a mês)." />
+            <LinhaConc titulo="PIX" banco={dados.banco.pix} previsto={dados.previsto.pix} dif={dados.dif.pix} manual={dados.manual?.pix ?? 0}
+              nota="Banco: PIX recebido na maquininha. Esperado = PDV + Maracanã (avulsas em PIX nas máquinas desta loja)." />
           </div>
 
           {dados.taxaCartao && dados.taxaCartao.bruto > 0 ? <TaxaStoneCard t={dados.taxaCartao} /> : null}
 
           {(dados.manual && (dados.manual.cartao > 0 || dados.manual.pix > 0)) ? (
             <p className="mt-3 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-              Inclui vendas manuais (lojas offline) que passaram nas máquinas desta loja, convertidas de bruto para líquido pela taxa média cadastrada:{" "}
-              {dados.manual.cartao > 0 ? <strong>{formatBRL(dados.manual.cartao)} em cartão</strong> : null}
-              {dados.manual.cartao > 0 && dados.manual.pix > 0 ? " e " : null}
-              {dados.manual.pix > 0 ? <strong>{formatBRL(dados.manual.pix)} em PIX</strong> : null}.
+              A parcela <strong>Maracanã</strong> do esperado são vendas avulsas (lojas offline) que passaram nas máquinas desta loja,
+              convertidas de bruto para líquido pela taxa média cadastrada. Lançadas manualmente — se faltar registrar alguma, o esperado fica abaixo do banco.
             </p>
           ) : null}
 
@@ -180,9 +178,10 @@ export default function ConciliacaoPage() {
   );
 }
 
-function LinhaConc({ titulo, banco, previsto, dif, nota }: { titulo: string; banco: number; previsto: number; dif: number; nota: string }) {
+function LinhaConc({ titulo, banco, previsto, dif, nota, manual = 0 }: { titulo: string; banco: number; previsto: number; dif: number; nota: string; manual?: number }) {
   const tolerancia = Math.max(50, Math.abs(previsto) * 0.02);
   const confere = Math.abs(dif) <= tolerancia;
+  const pdv = previsto - manual;
   return (
     <Card className={cn("relative overflow-hidden shadow-card", !confere && "border-warning/50")}>
       <div className={cn("pointer-events-none absolute inset-0 bg-gradient-to-br to-transparent", confere ? "from-success/[0.07]" : "from-warning/[0.09]")} />
@@ -201,8 +200,13 @@ function LinhaConc({ titulo, banco, previsto, dif, nota }: { titulo: string; ban
             <p className="mt-1 text-[0.95rem] font-bold leading-none tracking-[-0.01em] tnum sm:text-base">{formatBRL(banco)}</p>
           </div>
           <div className="px-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">PDV previa</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Esperado</p>
             <p className="mt-1 text-[0.95rem] font-bold leading-none tracking-[-0.01em] tnum sm:text-base">{formatBRL(previsto)}</p>
+            {manual > 0 ? (
+              <p className="mt-1 text-[9px] leading-tight text-muted-foreground">
+                PDV {formatBRL(pdv)}<br />+ Maracanã {formatBRL(manual)}
+              </p>
+            ) : null}
           </div>
           <div className="px-1">
             <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Diferença</p>
