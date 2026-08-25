@@ -85,3 +85,9 @@ export function cnpjBase(cnpj: string): string {
 export function agoraISO(): string {
   return new Date().toISOString();
 }
+
+/** Data de HOJE (YYYY-MM-DD) no fuso de São Paulo. Use no lugar de agoraISO().slice(0,10)
+ * para "hoje", senão depois das 21h (BRT) o UTC já virou amanhã e classifica errado. */
+export function hojeBRT(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+}

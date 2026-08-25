@@ -11,6 +11,7 @@ import {
   somenteDigitos,
   cnpjBase,
   agoraISO,
+  hojeBRT,
 } from "./lib/base";
 import { lerMetadadosPfx, pfxParaPem } from "./lib/certificado";
 import {
@@ -2067,6 +2068,9 @@ interface DREResultado {
 /** Núcleo do DRE gerencial (competência). Reutilizado pelo comparativo. */
 async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: number, cmvBase = "gerencial"): Promise<DREResultado> {
   const daEmpresa = (cid: unknown) => !empresaId || String(cid ?? "") === empresaId;
+  // Number seguro: um campo gravado como texto não-numérico vira 0 em vez de NaN
+  // (NaN num acumulador retornado quebra a serialização do callable → "Internal").
+  const n0 = (x: unknown) => { const v = Number(x); return Number.isFinite(v) ? v : 0; };
 
   const emps = await db.collection("nfe_companies").get();
   const cnpjPorId = new Map<string, string>();
@@ -2079,13 +2083,13 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
   for (const doc of salesSnap.docs) {
     const s = doc.data();
     if (s.cancelada || !daEmpresa(s.empresaId)) continue;
-    const desc = Number(s.valorDesconto ?? 0) + Number(s.valorDescontoPromocional ?? 0);
+    const desc = n0(s.valorDesconto) + n0(s.valorDescontoPromocional);
     descontos += desc;
-    receitaVendas += Number(s.valorTotal ?? 0) - desc; // líquido
-    cmvRealAquisicao += Number(s.custoAquisicao ?? 0);
-    cmvRealGerencial += Number(s.custoGerencial ?? 0);
-    itensTot += Number(s.qtdItens ?? 0);
-    itensComCusto += Number(s.itensComCusto ?? 0);
+    receitaVendas += n0(s.valorTotal) - desc; // líquido
+    cmvRealAquisicao += n0(s.custoAquisicao);
+    cmvRealGerencial += n0(s.custoGerencial);
+    itensTot += n0(s.qtdItens);
+    itensComCusto += n0(s.itensComCusto);
   }
   // TAXAS DE CARTÃO — pela TAXA DO APP (não pelo líquido do PDVnet), competência = dia da venda
   let taxasCartao = 0;
@@ -2095,8 +2099,8 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     const r = doc.data();
     if (!daEmpresa(r.empresaId)) continue;
     const cidTaxa = String(r.conciliaEmpresaId ?? r.empresaId ?? "");
-    const bruto = Number(r.valor ?? 0);
-    taxasCartao += bruto - liquidoApp(bruto, taxaAppDe(taxasApp.get(cidTaxa), r.descricaoCartao, Number(r.parcela ?? 1) || 1));
+    const bruto = n0(r.valor);
+    taxasCartao += n0(bruto - liquidoApp(bruto, taxaAppDe(taxasApp.get(cidTaxa), r.descricaoCartao, Number(r.parcela ?? 1) || 1)));
   }
 
   // MANUAL — receita da loja offline; taxa estimada pela taxa MÉDIA da loja da máquina
@@ -2126,13 +2130,13 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
   for (const doc of manSnap.docs) {
     const m = doc.data();
     if (!daEmpresa(m.empresaId)) continue;
-    const valor = Number(m.valor ?? 0);
+    const valor = n0(m.valor);
     if (!(valor > 0)) continue;
     receitaManual += valor;
     const forma = String(m.forma ?? "");
     if (forma !== "dinheiro") {
       const parcelas = Math.max(2, Math.min(10, Math.round(Number(m.parcelas) || 2)));
-      taxaManual += valor * (taxaMedia(String(m.maquinaEmpresaId ?? ""), forma, parcelas) / 100);
+      taxaManual += n0(valor * (taxaMedia(String(m.maquinaEmpresaId ?? ""), forma, parcelas) / 100));
     }
   }
   receitaVendas += receitaManual;
@@ -2146,7 +2150,7 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     if (!daEmpresa(cid)) continue;
     const emit = somenteDigitos(String(r.cnpjEmit ?? ""));
     if (!emit || emit === (cnpjPorId.get(cid) ?? "")) continue; // exclui emissões próprias
-    compras += Number(r.vNF ?? 0);
+    compras += n0(r.vNF);
   }
 
   // DESPESAS FIXAS (competência mensal). No mês pago, usa o VALOR REAL pago; senão, o previsto.
@@ -2161,7 +2165,7 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     for (const ym of meses) {
       if (!incideNoMes(x, ym) || (inicio && ym < inicio) || (fim && ym > fim)) continue;
       const pg = pagamentos[ym];
-      despesasFixas += pg?.pago ? Number(pg.valor ?? x.valor ?? 0) : Number(x.valor ?? 0);
+      despesasFixas += pg?.pago ? n0(pg.valor ?? x.valor) : n0(x.valor);
     }
   }
   // DESPESAS MANUAIS (sem NF / extraordinárias) — competência = dia
@@ -2169,16 +2173,16 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
   for (const doc of (await db.collection("manual_expenses").where("dia", ">=", de).where("dia", "<=", ate).get()).docs) {
     const x = doc.data();
     if (!daEmpresa(x.empresaId)) continue;
-    despesasManuais += Number(x.valor ?? 0);
+    despesasManuais += n0(x.valor);
   }
   // FRETES (CT-e) e SERVIÇOS (NFS-e) — competência = dhEmi
   let fretes = 0;
   for (const doc of (await db.collection("cte_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get()).docs) {
-    const r = doc.data(); if (daEmpresa(r.companyId)) fretes += Number(r.vTPrest ?? 0);
+    const r = doc.data(); if (daEmpresa(r.companyId)) fretes += n0(r.vTPrest);
   }
   let servicos = 0;
   for (const doc of (await db.collection("nfse_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get()).docs) {
-    const r = doc.data(); if (daEmpresa(r.companyId)) servicos += Number(r.vServ ?? 0);
+    const r = doc.data(); if (daEmpresa(r.companyId)) servicos += n0(r.vServ);
   }
 
   // CMV: prioridade (1) % informado; (2) CUSTO REAL dos itens vendidos (padrão); (3) compras (fallback).
@@ -2481,7 +2485,7 @@ export const fluxoCaixa = onCall(
       throw new HttpsError("invalid-argument", "Período inválido.");
     }
     const empresaId = d.empresaId ? String(d.empresaId) : "";
-    const hoje = agoraISO().slice(0, 10);
+    const hoje = hojeBRT(); // fuso de SP: senão, à noite (UTC = amanhã) marca crédito futuro como já recebido
     const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
     const noRange = (dia: string) => !!dia && dia >= de && dia <= ate;
     const daEmpresa = (cid: unknown) => !empresaId || String(cid ?? "") === empresaId;
@@ -2619,8 +2623,9 @@ export const centralPendencias = onCall(
   async (req) => {
     await exigirModulo(req, "financeiro", ["admin", "fiscal", "financeiro"]);
     const empresaId = req.data?.empresaId ? String(req.data.empresaId) : "";
-    const hoje = agoraISO().slice(0, 10);
+    const hoje = hojeBRT(); // fuso de SP: senão, à noite (UTC = amanhã) conta como vencida a conta que vence hoje
     const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
+    const n0 = (x: unknown) => { const v = Number(x); return Number.isFinite(v) ? v : 0; }; // NaN → 0 (não quebra o callable)
     const daEmpresa = (cid: unknown) => !empresaId || String(cid ?? "") === empresaId;
     const menosDias = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 
@@ -2635,8 +2640,8 @@ export const centralPendencias = onCall(
       if (p.statusPagamento === "pago" || !daEmpresa(p.companyId)) continue;
       const dia = d10(p.vencimento);
       if (!dia) continue;
-      if (dia < hoje) { vencQtd++; vencVal += Number(p.valor ?? 0); }
-      else if (dia <= seteDias) { prox7Qtd++; prox7Val += Number(p.valor ?? 0); }
+      if (dia < hoje) { vencQtd++; vencVal += n0(p.valor); }
+      else if (dia <= seteDias) { prox7Qtd++; prox7Val += n0(p.valor); }
     }
     if (vencQtd) pend.push({ chave: "contasVencidas", titulo: `${vencQtd} conta(s) vencida(s)`, descricao: "Contas a pagar das NF-e em atraso.", severidade: "critico", qtd: vencQtd, valor: vencVal, href: "/financeiro" });
     if (prox7Qtd) pend.push({ chave: "contas7d", titulo: `${prox7Qtd} conta(s) vencem em 7 dias`, descricao: "Contas a pagar próximas do vencimento.", severidade: "atencao", qtd: prox7Qtd, valor: prox7Val, href: "/financeiro" });
@@ -2654,7 +2659,7 @@ export const centralPendencias = onCall(
       for (const p of (a.parcelas ?? []) as Array<Record<string, unknown>>) {
         if (p.statusPagamento === "pago") continue;
         const dia = d10(p.vencimento);
-        if (dia && dia < hoje) { acQtd++; acVal += Number(p.valor ?? 0); }
+        if (dia && dia < hoje) { acQtd++; acVal += n0(p.valor); }
       }
     }
     if (acQtd) pend.push({ chave: "acordosAtrasados", titulo: `${acQtd} parcela(s) de acordo em atraso`, descricao: "Parcelas de acordos vencidas e não pagas.", severidade: "atencao", qtd: acQtd, valor: acVal, href: "/acordos" });
