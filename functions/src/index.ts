@@ -1559,6 +1559,54 @@ export const pdvnetSondarVendas = onCall(
 );
 
 /**
+ * Diagnóstico: itens de vendas específicas (por dia + ids), direto do PDVnet.
+ * O nome do produto NÃO vem no /vendas (só VariacaoId = código da etiqueta),
+ * então devolvemos código, quantidade, preço, desconto e custo por linha. Só leitura.
+ */
+export const pdvnetItensVenda = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 300 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
+    const dia = String(req.data?.dia ?? "").slice(0, 10);
+    const idsArr: string[] = (Array.isArray(req.data?.ids) ? req.data.ids : []).map((x: unknown) => String(x));
+    const ids = new Set<string>(idsArr);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dia) || ids.size === 0) {
+      throw new HttpsError("invalid-argument", "Informe dia (yyyy-MM-dd) e ids[].");
+    }
+    let cred;
+    try { cred = await lerSegredoPdvnet(); }
+    catch { throw new HttpsError("failed-precondition", "Credenciais do PDVnet não configuradas."); }
+    const cli = new PdvnetClient(cred);
+    const achadas: Record<string, unknown> = {};
+    let pagina = 1;
+    for (;;) {
+      const resp = await cli.listarVendas(dia, dia, { pagina, tamanhoPagina: 50 });
+      const registros = resp.Registros ?? [];
+      for (const v of registros) {
+        if (!ids.has(String(v.Id))) continue;
+        achadas[String(v.Id)] = {
+          id: v.Id, dataHora: v.DataHora, lojaId: v.LojaId, vendedorId: v.VendedorId,
+          valorTotal: v.ValorTotal, valorDesconto: v.ValorDesconto, valorProdutos: v.ValorProdutos,
+          itens: (v.Itens ?? []).map((it) => ({
+            seq: it.SequencialItem, variacaoId: it.VariacaoId, qtd: it.Quantidade,
+            preco: it.Preco, precoLiquido: it.PrecoLiquido, desconto: it.ValorDesconto,
+            acrescimo: it.ValorAcrescimo, custoGerencial: it.PrecoCustoGerencial,
+            natureza: it.NaturezaOperacao, inativo: it.Inativo,
+          })),
+        };
+      }
+      if (Object.keys(achadas).length >= ids.size) break;
+      if (!resp.PaginacaoInfo?.TemProximaPagina) break;
+      pagina += 1;
+      if (pagina > 200) break; // teto de segurança
+    }
+    await auditar(uid, "pdvnet.itensVenda", { dia, ids: [...ids], achadas: Object.keys(achadas).length });
+    const faltantes = idsArr.filter((id) => !achadas[id]);
+    return { ok: true, dia, achadas, faltantes };
+  },
+);
+
+/**
  * Diagnóstico: soma TODAS as formas de pagamento do PDVnet no período e mede o
  * RESÍDUO (ValorTotal − soma das formas), para achar forma "escondida" que não lemos
  * (como aconteceu com o PIX de maquininha, que vem em ParcelasCartao). Só leitura.
