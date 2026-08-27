@@ -13,6 +13,8 @@ import {
   listarEmpresas,
   importarExtrato,
   obterExtrato,
+  obterContaBanco,
+  obterFluxoCaixa,
   type ExtratoBanco,
   type TxBanco,
 } from "@/lib/nfe/repo";
@@ -46,6 +48,7 @@ export default function BancoPage() {
   const [importando, setImportando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [projetado, setProjetado] = useState<{ valor: number; comExtrato: boolean } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -96,6 +99,42 @@ export default function BancoPage() {
   }, [empresaId, empresas]);
 
   useEffect(() => { void carregar(); }, [carregar]);
+
+  // Saldo PROJETADO hoje = saldo do extrato + movimento realizado (recebido − pago) da data
+  // do extrato até hoje, pelo fluxo de caixa. Estima o saldo atual entre importações.
+  useEffect(() => {
+    const lojas = empresaId ? [empresaId] : empresas.map((e) => e.id);
+    if (!lojas.length) { setProjetado(null); return; }
+    const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const diaSeguinte = (iso: string) => {
+      const [y, m, d] = iso.slice(0, 10).split("-").map(Number);
+      const dt = new Date(y, m - 1, d + 1);
+      return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    };
+    let cancelado = false;
+    setProjetado(null);
+    void (async () => {
+      const partes = await Promise.all(lojas.map(async (id) => {
+        const c = await obterContaBanco(id).catch(() => null);
+        if (!c || c.saldo == null) return null; // sem conta/saldo importado → fora
+        let net = 0;
+        if (c.saldoData) {
+          const de = diaSeguinte(c.saldoData);
+          if (de <= hoje) {
+            const fx = await obterFluxoCaixa(de, hoje, id).catch(() => null);
+            if (fx?.totais) net = (fx.totais.entradaReal ?? 0) - (fx.totais.saidaReal ?? 0);
+          }
+        }
+        return { saldo: c.saldo, net, temData: !!c.saldoData };
+      }));
+      if (cancelado) return;
+      const validas = partes.filter((p): p is NonNullable<typeof p> => !!p);
+      if (!validas.length) { setProjetado(null); return; }
+      const valor = validas.reduce((s, p) => s + p.saldo + p.net, 0);
+      setProjetado({ valor, comExtrato: validas.every((p) => p.temData) });
+    })();
+    return () => { cancelado = true; };
+  }, [empresaId, empresas]);
 
   async function aoEscolherArquivo(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -196,6 +235,15 @@ export default function BancoPage() {
                 {conta.org ?? "Conta"}{conta.ultimoImport ? ` · importado ${formatarDataHora(conta.ultimoImport)}` : ""}
               </p>
             </div>
+            {projetado ? (
+              <div className="relative mt-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-t border-border/60 pt-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">Saldo projetado hoje</p>
+                  <p className="text-[10px] text-muted-foreground">extrato − contas pagas + recebimentos desde então</p>
+                </div>
+                <p className={`text-xl font-bold tnum ${projetado.valor < 0 ? "text-destructive" : "text-foreground"}`}>{formatBRL(projetado.valor)}</p>
+              </div>
+            ) : null}
           </div>
 
           {/* Contas da loja (várias por loja) — saldo consolidado acima, detalhe aqui */}
