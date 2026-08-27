@@ -120,6 +120,7 @@ export default function InicioPage() {
     for (const p of parcelas) {
       if (empresaId && p.companyId !== empresaId) continue;
       if (p.statusPagamento === "pago") continue; // já pagas não entram em vencidas/a vencer
+      if (p.migradoAcordo) continue;              // migrada p/ acordo: o acordo carrega a dívida (igual ao Financeiro)
       const dias = diasAte(p.vencimento);
       if (dias === null) continue;
       if (dias < 0) vencido += p.valor ?? 0;                                   // vencidas (acumulado)
@@ -140,7 +141,7 @@ export default function InicioPage() {
     const ag = new Date();
     const mesAtual = `${ag.getFullYear()}-${String(ag.getMonth() + 1).padStart(2, "0")}`;
     return parcelas.reduce((s, p) => {
-      if (p.statusPagamento === "pago") return s;
+      if (p.statusPagamento === "pago" || p.migradoAcordo) return s; // migrada p/ acordo sai (o acordo carrega)
       const dias = diasAte(p.vencimento);
       if (dias === null) return s;
       const noMes = (p.vencimento ?? "").slice(0, 7) === mesAtual;
