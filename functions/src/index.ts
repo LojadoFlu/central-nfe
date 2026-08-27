@@ -2583,14 +2583,18 @@ export const fluxoCaixa = onCall(
         }
       }
     }
-    // SAÍDAS — despesas manuais (pagas na data). O caixa sai da conta do pagamento
-    // (contaEmpresaId no PIX; a própria empresa no dinheiro).
-    const dmSnap = await db.collection("manual_expenses").where("dia", ">=", de).where("dia", "<=", ate).get();
+    // SAÍDAS — despesas manuais. Paga → saída REAL na data do pagamento; não paga → saída
+    // PREVISTA no vencimento (dia). O caixa sai da conta do pagamento (contaEmpresaId no PIX;
+    // a própria empresa no dinheiro). Compat: doc sem `pago` = pago (comportamento antigo).
+    // Não paga cai por vencimento (dia); paga pode ter dataPagamento fora da janela → busca ampla.
+    const dmSnap = await db.collection("manual_expenses").get();
     for (const doc of dmSnap.docs) {
       const x = doc.data();
       const cid = x.contaEmpresaId ?? x.empresaId;
       if (!daEmpresa(cid)) continue;
-      saida(d10(x.dia), Number(x.valor ?? 0), true, "despesasManuais");
+      const pago = x.pago !== false;
+      const dia = pago ? d10(x.dataPagamento ?? x.dia) : d10(x.dia);
+      saida(dia, Number(x.valor ?? 0), pago, "despesasManuais");
     }
     // SAÍDAS — parcelas de acordos
     const acSnap = await db.collection("nfe_agreements").get();
@@ -3340,6 +3344,11 @@ export const salvarDespesaManual = onCall(opcoes, async (req) => {
   // Forma de pagamento: dinheiro (não toca no banco) ou pix (débito na conta escolhida).
   const formaPagamento = d.formaPagamento === "pix" ? "pix" : "dinheiro";
   const contaEmpresaId = formaPagamento === "pix" ? (String(d.contaEmpresaId ?? "").trim() || empresaId) : null;
+  // pago=false → vira conta a pagar (vencimento = dia). Default pago (compat + entrada rápida).
+  const pago = d.pago !== false;
+  const dataPagamento = pago
+    ? (/^\d{4}-\d{2}-\d{2}$/.test(String(d.dataPagamento ?? "")) ? String(d.dataPagamento) : dia)
+    : null;
   if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dia)) throw new HttpsError("invalid-argument", "Data inválida.");
   if (!descricao) throw new HttpsError("invalid-argument", "Informe a descrição.");
@@ -3348,7 +3357,7 @@ export const salvarDespesaManual = onCall(opcoes, async (req) => {
   const now = agoraISO();
   const doc: Record<string, unknown> = {
     empresaId, empresaNome: emp?.nome ?? null, dia, descricao, fornecedor, categoria,
-    formaPagamento, contaEmpresaId,
+    formaPagamento, contaEmpresaId, pago, dataPagamento,
     valor: Math.round(valor * 100) / 100, atualizadoEm: now, atualizadoPor: uid,
   };
   if (!d.id) { doc.criadoEm = now; doc.criadoPor = uid; }
@@ -3366,6 +3375,28 @@ export const excluirDespesaManual = onCall(opcoes, async (req) => {
   await db.collection("manual_expenses").doc(id).delete();
   await auditar(uid, "manual.excluirDespesa", { id });
   return { ok: true };
+});
+
+/** Baixa (ou reabre) o pagamento de uma despesa manual. "pago" é manual, com data e autor. */
+export const baixarDespesaManual = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "financeiro.baixar", ["admin", "financeiro"]);
+  const d = req.data ?? {};
+  const id = String(d.id ?? "").trim();
+  if (!id) throw new HttpsError("invalid-argument", "id obrigatório.");
+  const pago = d.pago !== false;
+  const ref = db.collection("manual_expenses").doc(id);
+  const snap = await ref.get();
+  if (!snap.exists) throw new HttpsError("not-found", "Despesa não encontrada.");
+  const now = agoraISO();
+  if (pago) {
+    const dataPagamento = /^\d{4}-\d{2}-\d{2}$/.test(String(d.dataPagamento ?? ""))
+      ? String(d.dataPagamento) : (String(snap.data()?.dia ?? "").slice(0, 10) || now.slice(0, 10));
+    await ref.set({ pago: true, dataPagamento, baixadoPor: uid, baixadoEm: now, atualizadoEm: now, atualizadoPor: uid }, { merge: true });
+  } else {
+    await ref.set({ pago: false, dataPagamento: null, atualizadoEm: now, atualizadoPor: uid }, { merge: true });
+  }
+  await auditar(uid, "manual.baixarDespesa", { id, pago });
+  return { ok: true, pago };
 });
 
 // ============ PEDIDOS DE COMPRA ============

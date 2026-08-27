@@ -14,13 +14,14 @@ import {
   listarDespesasManuais,
   salvarDespesaManual,
   excluirDespesaManual,
+  baixarDespesaManual,
   CATEGORIAS_DESPESA_MANUAL,
   type DespesaManual,
 } from "@/lib/nfe/repo";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { formatBRL, formatarData } from "@/lib/utils";
-import { Receipt, Plus, Trash2, PencilLine, X } from "lucide-react";
+import { Receipt, Plus, Trash2, PencilLine, X, Check, RotateCcw } from "lucide-react";
 
 const CAT_LABEL = Object.fromEntries(CATEGORIAS_DESPESA_MANUAL.map((c) => [c.key, c.label]));
 
@@ -53,6 +54,7 @@ export default function DespesasManuaisPage() {
   const [valor, setValor] = useState("");
   const [forma, setForma] = useState<"dinheiro" | "pix">("dinheiro");
   const [conta, setConta] = useState("");
+  const [pago, setPago] = useState(true); // false = lança como conta a pagar (vencimento = dia)
   const [salvando, setSalvando] = useState(false);
 
   const nomeEmp = (id?: string) => empresas.find((e) => e.id === id)?.nomeFantasia || empresas.find((e) => e.id === id)?.razaoSocial || id || "—";
@@ -84,6 +86,7 @@ export default function DespesasManuaisPage() {
     setCategoria("outros");
     setForma("dinheiro");
     setConta("");
+    setPago(true);
     setDia(hojeISO());
   }
   function editar(d: DespesaManual) {
@@ -96,6 +99,7 @@ export default function DespesasManuaisPage() {
     setValor(String(d.valor ?? ""));
     setForma(d.formaPagamento === "pix" ? "pix" : "dinheiro");
     setConta(d.contaEmpresaId ?? "");
+    setPago(d.pago !== false);
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -110,6 +114,7 @@ export default function DespesasManuaisPage() {
       await salvarDespesaManual({
         id: editId ?? undefined, empresaId, dia, descricao: descricao.trim(), fornecedor: fornecedor.trim() || undefined, categoria, valor: v,
         formaPagamento: forma, contaEmpresaId: forma === "pix" ? (conta || empresaId) : undefined,
+        pago, dataPagamento: pago ? dia : undefined,
       });
       limparForm();
       await carregar();
@@ -125,6 +130,18 @@ export default function DespesasManuaisPage() {
     try {
       await excluirDespesaManual(id);
       if (editId === id) limparForm();
+      await carregar();
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setOcupado(null);
+    }
+  }
+  async function alternarPago(d: DespesaManual, novoPago: boolean) {
+    setOcupado(d.id);
+    setErro(null);
+    try {
+      await baixarDespesaManual({ id: d.id, pago: novoPago, dataPagamento: novoPago ? hojeISO() : undefined });
       await carregar();
     } catch (e) {
       setErro((e as Error).message);
@@ -183,7 +200,7 @@ export default function DespesasManuaisPage() {
                     </select>
                   </label>
                   <label className="space-y-1">
-                    <span className="block text-[11px] text-muted-foreground">Data</span>
+                    <span className="block text-[11px] text-muted-foreground">{pago ? "Data do pagamento" : "Vencimento"}</span>
                     <Input type="date" value={dia} onChange={(e) => setDia(e.target.value)} className="h-9" />
                   </label>
                   <label className="space-y-1 sm:col-span-2">
@@ -220,6 +237,17 @@ export default function DespesasManuaisPage() {
                       </select>
                     </label>
                   ) : null}
+                  <div className="sm:col-span-2 rounded-md border border-border bg-muted/30 p-2.5">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input type="checkbox" className="size-4" checked={pago} onChange={(e) => setPago(e.target.checked)} />
+                      Já paga
+                    </label>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {pago
+                        ? "Sai do caixa na data acima."
+                        : "Vai para Contas a pagar e entra no fluxo como saída prevista no vencimento — quite quando pagar."}
+                    </p>
+                  </div>
                 </div>
                 <Button size="sm" disabled={salvando} onClick={salvar}>
                   <Plus className="size-4" /> {salvando ? "Salvando…" : editId ? "Salvar alterações" : "Adicionar despesa"}
@@ -279,17 +307,23 @@ export default function DespesasManuaisPage() {
                       <p className="truncate text-sm font-medium">{d.descricao}</p>
                       {d.fornecedor ? <p className="truncate text-xs text-muted-foreground">{d.fornecedor}</p> : null}
                       <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                        {d.pago === false
+                          ? <Badge variant="warning">A pagar · vence {formatarData(d.dia)}</Badge>
+                          : <Badge variant="success">Paga {formatarData(d.dataPagamento ?? d.dia)}</Badge>}
                         <Badge variant="neutral">{CAT_LABEL[d.categoria] ?? d.categoria}</Badge>
                         {d.formaPagamento === "pix"
                           ? <Badge variant="neutral">PIX · {nomeEmp(d.contaEmpresaId ?? d.empresaId)}</Badge>
                           : <Badge variant="neutral">Dinheiro</Badge>}
-                        {formatarData(d.dia)} · {nomeEmp(d.empresaId)}
+                        {nomeEmp(d.empresaId)}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
                       <p className="font-bold tnum text-destructive">{formatBRL(d.valor)}</p>
                       {podeEditar ? (
                         <>
+                          <Button size="sm" variant={d.pago === false ? "outline" : "ghost"} disabled={ocupado === d.id} onClick={() => alternarPago(d, d.pago === false)}>
+                            {d.pago === false ? <><Check className="size-4" /> Pagar</> : <RotateCcw className="size-4" />}
+                          </Button>
                           <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => editar(d)}>
                             <PencilLine className="size-4" />
                           </Button>
@@ -306,7 +340,7 @@ export default function DespesasManuaisPage() {
           )}
 
           <p className="mt-4 text-xs text-muted-foreground">
-            Cada despesa é considerada <strong>paga na data informada</strong> — entra como saída no fluxo de caixa e reduz o resultado no DRE (por competência).
+            Despesa <strong>paga</strong> sai do caixa na data do pagamento. Despesa <strong>a pagar</strong> vai para Contas a pagar e entra no fluxo como saída prevista no vencimento até você quitar. Nos dois casos reduz o resultado no DRE por competência (data informada).
           </p>
         </>
       )}

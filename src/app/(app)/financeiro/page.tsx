@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Hero } from "@/components/ui/hero";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ModulePlaceholder } from "@/components/layout/module-placeholder";
-import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, listarDespesasFixas, pagarDespesaFixa, migrarParcelaAcordo, contestarParcela, resolverContestacao, type Parcela, type Acordo, type ContaPagamento, type DespesaFixa, type Contestacao } from "@/lib/nfe/repo";
+import { listarParcelas, baixarParcela, baixarParcelasLote, listarEmpresas, listarAcordos, baixarParcelaAcordo, listarDespesasFixas, pagarDespesaFixa, migrarParcelaAcordo, contestarParcela, resolverContestacao, listarDespesasManuais, baixarDespesaManual, type Parcela, type Acordo, type ContaPagamento, type DespesaFixa, type DespesaManual, type Contestacao } from "@/lib/nfe/repo";
 import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento";
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
@@ -40,13 +40,14 @@ function janelaMeses(back: number, fwd: number): string[] {
   return out;
 }
 
-/** Conta a pagar: parcela de NF-e, parcela de acordo ou mês de despesa fixa. */
+/** Conta a pagar: parcela de NF-e, parcela de acordo, mês de despesa fixa ou despesa manual. */
 interface Conta {
-  id: string;               // NF-e = id; acordo = "acordo:{id}:{i}"; despesa = "despesa:{id}:{ym}"
-  origem: "nfe" | "acordo" | "despesa";
+  id: string;               // NF-e = id; acordo = "acordo:{id}:{i}"; despesa = "despesa:{id}:{ym}"; manual = "manual:{id}"
+  origem: "nfe" | "acordo" | "despesa" | "despesa-manual";
   acordoId?: string | null;
   indice?: number;
   despesaId?: string;
+  despesaManualId?: string;
   ym?: string;
   companyId?: string | null;
   cnpjEmit?: string | null;
@@ -101,6 +102,7 @@ export default function FinanceiroPage() {
   const [parcelas, setParcelas] = useState<Parcela[] | null>(null);
   const [acordos, setAcordos] = useState<Acordo[]>([]);
   const [despesas, setDespesas] = useState<DespesaFixa[]>([]);
+  const [despManuais, setDespManuais] = useState<DespesaManual[]>([]);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [empresaId, setEmpresaId] = useState("");
   // Padrão: a semana atual (domingo a sábado). Mudar o filtro recalcula tudo.
@@ -137,11 +139,12 @@ export default function FinanceiroPage() {
   const carregar = useCallback(async () => {
     setErro(null);
     try {
-      const [ps, emps, acs, dfs] = await Promise.all([listarParcelas(2000), listarEmpresas(), listarAcordos(), listarDespesasFixas()]);
+      const [ps, emps, acs, dfs, dms] = await Promise.all([listarParcelas(2000), listarEmpresas(), listarAcordos(), listarDespesasFixas(), listarDespesasManuais()]);
       setParcelas(ps);
       setEmpresas(emps);
       setAcordos(acs);
       setDespesas(dfs);
+      setDespManuais(dms);
     } catch (e) {
       setErro((e as Error).message);
       setParcelas([]);
@@ -186,8 +189,17 @@ export default function FinanceiroPage() {
         };
       });
     });
-    return [...nfe, ...ac, ...df];
-  }, [parcelas, acordos, despesas]);
+    // Despesas manuais NÃO pagas — cada uma é uma conta a pagar (vencimento = dia).
+    const dm: Conta[] = despManuais
+      .filter((d) => d.pago === false)
+      .map((d) => ({
+        id: `manual:${d.id}`, origem: "despesa-manual" as const, despesaManualId: d.id,
+        companyId: d.contaEmpresaId ?? d.empresaId, cnpjEmit: null, xNomeEmit: d.fornecedor ?? d.empresaNome ?? null,
+        nDup: "1", vencimento: d.dia, valor: d.valor, statusPagamento: "nao_informado",
+        dataPagamento: null, descricao: d.descricao,
+      }));
+    return [...nfe, ...ac, ...df, ...dm];
+  }, [parcelas, acordos, despesas, despManuais]);
 
   const nomeConta = (id: string) => {
     const e = empresas.find((x) => x.id === id);
@@ -221,7 +233,9 @@ export default function FinanceiroPage() {
         return;
       }
       const cps = contasValidas(contasPg);
-      if (p.origem === "acordo") {
+      if (p.origem === "despesa-manual") {
+        await baixarDespesaManual({ id: p.despesaManualId as string, pago: true, dataPagamento: dataPg });
+      } else if (p.origem === "acordo") {
         await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: true, dataPagamento: dataPg, contasPagamento: cps.length ? cps : undefined });
       } else if (p.origem === "despesa") {
         const v = Number(valorPg);
@@ -252,6 +266,8 @@ export default function FinanceiroPage() {
     try {
       if (p.migradoAcordo) {
         await migrarParcelaAcordo({ parcelaId: p.id, migrado: false });
+      } else if (p.origem === "despesa-manual") {
+        await baixarDespesaManual({ id: p.despesaManualId as string, pago: false });
       } else if (p.origem === "acordo") {
         await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: false });
       } else if (p.origem === "despesa") {
@@ -560,8 +576,8 @@ export default function FinanceiroPage() {
                   <div className="min-w-0">
                     <p className="truncate font-medium">{p.xNomeEmit ?? "Fornecedor"}</p>
                     <p className="text-xs text-muted-foreground">
-                      {p.origem === "acordo" ? "Acordo · parcela" : p.origem === "despesa" ? "Despesa fixa" : "Parcela"}
-                      {p.origem === "despesa" ? "" : ` ${p.nDup ?? "1"}`} · venc. {formatarData(p.vencimento)}
+                      {p.origem === "acordo" ? "Acordo · parcela" : p.origem === "despesa" ? "Despesa fixa" : p.origem === "despesa-manual" ? (p.descricao ?? "Despesa manual") : "Parcela"}
+                      {p.origem === "despesa" || p.origem === "despesa-manual" ? "" : ` ${p.nDup ?? "1"}`} · venc. {formatarData(p.vencimento)}
                     </p>
                     {p.companyId ? (
                       <p className="mt-0.5 truncate text-xs font-medium text-muted-foreground">{nomeConta(p.companyId)}</p>
@@ -571,6 +587,7 @@ export default function FinanceiroPage() {
                     {p.contestacao?.status === "aberta" ? <Badge variant="destructive">Em contestação</Badge> : null}
                     {p.origem === "acordo" ? <Badge variant="neutral">Acordo</Badge> : null}
                     {p.origem === "despesa" ? <Badge variant="neutral">Despesa fixa</Badge> : null}
+                    {p.origem === "despesa-manual" ? <Badge variant="neutral">Despesa manual</Badge> : null}
                     <Badge variant={cfg.variant}>{cfg.label}</Badge>
                   </div>
                 </div>
@@ -635,7 +652,7 @@ export default function FinanceiroPage() {
                     </button>
                   ) : (
                     <>
-                      <Link href={p.origem === "acordo" ? "/acordos" : p.origem === "despesa" ? "/despesas" : (p.chNFe ? `/notas/${encodeURIComponent(p.chNFe)}` : "#")} className="block">
+                      <Link href={p.origem === "acordo" ? "/acordos" : p.origem === "despesa" ? "/despesas" : p.origem === "despesa-manual" ? "/despesas-manuais" : (p.chNFe ? `/notas/${encodeURIComponent(p.chNFe)}` : "#")} className="block">
                         {info}
                       </Link>
 
@@ -724,7 +741,7 @@ export default function FinanceiroPage() {
                                     className="h-9 w-40"
                                   />
                                 </div>
-                                {p.origem !== "acordo" ? (
+                                {p.origem !== "acordo" && p.origem !== "despesa-manual" ? (
                                   <div className="space-y-1">
                                     <label className="text-xs text-muted-foreground">Valor pago (R$)</label>
                                     <Input
@@ -750,14 +767,18 @@ export default function FinanceiroPage() {
                                   />
                                 </div>
                               ) : null}
-                              <div className="rounded-md border border-border p-2">
-                                <ContasPagamento
-                                  empresas={empresas}
-                                  valorTotal={p.origem === "acordo" ? (p.valor ?? 0) : (Number(valorPg) || p.valor || 0)}
-                                  contas={contasPg}
-                                  onChange={setContasPg}
-                                />
-                              </div>
+                              {p.origem === "despesa-manual" ? (
+                                <p className="text-[11px] text-muted-foreground">Sai da conta desta despesa ({nomeConta(p.companyId ?? "")}). Para mudar a conta, edite a despesa em Despesas manuais.</p>
+                              ) : (
+                                <div className="rounded-md border border-border p-2">
+                                  <ContasPagamento
+                                    empresas={empresas}
+                                    valorTotal={p.origem === "acordo" ? (p.valor ?? 0) : (Number(valorPg) || p.valor || 0)}
+                                    contas={contasPg}
+                                    onChange={setContasPg}
+                                  />
+                                </div>
+                              )}
                               </>
                               )}
                               <div className="flex gap-2 pt-1">

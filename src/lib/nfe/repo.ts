@@ -540,6 +540,8 @@ export interface DespesaManual {
   valor: number;
   formaPagamento?: "dinheiro" | "pix";
   contaEmpresaId?: string | null; // conta bancária (empresa) de onde saiu o PIX
+  pago?: boolean;                 // false = conta a pagar (dia = vencimento). Ausente = pago (legado).
+  dataPagamento?: string | null;  // quando foi paga (pode diferir do vencimento)
   criadoEm?: string;
   atualizadoEm?: string;
 }
@@ -563,11 +565,21 @@ export async function salvarDespesaManual(input: {
   valor: number;
   formaPagamento?: "dinheiro" | "pix";
   contaEmpresaId?: string;
+  pago?: boolean;
+  dataPagamento?: string;
 }): Promise<{ ok: boolean; id: string }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "salvarDespesaManual");
   const res = await fn(input);
   return res.data as { ok: boolean; id: string };
+}
+
+/** Baixa (ou reabre) o pagamento de uma despesa manual. */
+export async function baixarDespesaManual(input: { id: string; pago: boolean; dataPagamento?: string }): Promise<{ ok: boolean; pago: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "baixarDespesaManual");
+  const res = await fn(input);
+  return res.data as { ok: boolean; pago: boolean };
 }
 
 /** Exclui uma despesa manual. */
