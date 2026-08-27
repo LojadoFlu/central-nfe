@@ -97,3 +97,21 @@ export function dataCredito(vendaISO: string | undefined | null): string {
   else if (dow === 0) dt.setDate(dt.getDate() + 1); // domingo → segunda
   return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
 }
+
+/**
+ * Vencimento de uma despesa fixa num mês (ym = "YYYY-MM"), a partir do dia cadastrado.
+ * Dias 1–28: literal (sempre existem). Dias 29–31: significam "fim do mês" → último dia
+ * ÚTIL do mês (último dia; se cair em sábado/domingo, recua para a sexta). Nunca vaza p/ o mês seguinte.
+ */
+export function vencimentoDoMes(ym: string, diaVencimento?: number | null): string {
+  const [y, m] = ym.split("-").map(Number);
+  const ultimoDia = new Date(y, m, 0).getDate(); // dias do mês m
+  const dv = Number(diaVencimento) || 1;
+  let dia = dv >= 29 ? ultimoDia : Math.min(dv, ultimoDia);
+  if (dv >= 29) {
+    const dow = new Date(y, m - 1, dia).getDay(); // 0=Dom … 6=Sáb
+    if (dow === 6) dia -= 1;      // sábado → sexta
+    else if (dow === 0) dia -= 2; // domingo → sexta
+  }
+  return `${ym}-${String(dia).padStart(2, "0")}`;
+}

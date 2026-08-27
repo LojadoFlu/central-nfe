@@ -2320,6 +2320,24 @@ function mesesEntre(de: string, ate: string): string[] {
   }
   return out;
 }
+/**
+ * Vencimento de uma despesa fixa num mês (ym = "YYYY-MM"), a partir do dia cadastrado.
+ * Dias 1–28: literal. Dias 29–31: "fim do mês" → último dia ÚTIL (último dia; se cair em
+ * sábado/domingo, recua para a sexta). Nunca vaza para o mês seguinte. Espelha o util do front.
+ */
+function vencimentoDoMes(ym: string, diaVencimento: unknown): string {
+  const y = Number(ym.slice(0, 4));
+  const m = Number(ym.slice(5, 7));
+  const ultimoDia = new Date(y, m, 0).getDate();
+  const dv = Number(diaVencimento) || 1;
+  let dia = dv >= 29 ? ultimoDia : Math.min(dv, ultimoDia);
+  if (dv >= 29) {
+    const dow = new Date(y, m - 1, dia).getDay(); // 0=Dom … 6=Sáb
+    if (dow === 6) dia -= 1;      // sábado → sexta
+    else if (dow === 0) dia -= 2; // domingo → sexta
+  }
+  return `${ym}-${String(dia).padStart(2, "0")}`;
+}
 /** A despesa fixa incide no mês ym conforme a recorrência? */
 function incideNoMes(x: Record<string, unknown>, ym: string): boolean {
   const p = PERIODO_REC[String(x.recorrencia ?? "mensal")] ?? 1;
@@ -2578,7 +2596,7 @@ export const fluxoCaixa = onCall(
         if (pg?.pago) {
           saidaObrig(d10(pg.data) || `${ym}-01`, Number(pg.valor ?? x.valor ?? 0), true, "despesas", x.companyId, pg.contasPagamento);
         } else {
-          const dia = `${ym}-${String(Math.min(Number(x.diaVencimento) || 1, 28)).padStart(2, "0")}`;
+          const dia = vencimentoDoMes(ym, x.diaVencimento);
           saidaObrig(dia, Number(x.valor ?? 0), false, "despesas", x.companyId, null);
         }
       }

@@ -24,7 +24,7 @@ import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
-import { formatBRL, formatarData } from "@/lib/utils";
+import { formatBRL, formatarData, vencimentoDoMes } from "@/lib/utils";
 import { Receipt, Plus, Trash2, Check, RotateCcw, X, Pencil, Upload } from "lucide-react";
 
 const CATEGORIAS: { key: string; label: string }[] = [
@@ -256,7 +256,7 @@ export default function DespesasPage() {
   }
 
   function dataDefault(d: DespesaFixa, ym: string): string {
-    return `${ym}-${String(Math.min(d.diaVencimento ?? 1, 28)).padStart(2, "0")}`;
+    return vencimentoDoMes(ym, d.diaVencimento);
   }
   function abrirBaixa(d: DespesaFixa, incid: string[]) {
     const alvo = incid.find((ym) => !pagamentoDe(d, ym)?.pago) ?? incid[incid.length - 1] ?? meses[0];
@@ -586,7 +586,7 @@ export default function DespesasPage() {
                       </div>
                       {d.empresaNome ? <p className="mt-0.5 text-[11px] font-medium text-primary">{d.empresaNome}</p> : null}
                       <p className="mt-0.5 text-xs text-muted-foreground">
-                        {d.diaVencimento ? `vence dia ${d.diaVencimento}` : "sem dia definido"}
+                        {d.diaVencimento ? (Number(d.diaVencimento) >= 29 ? "vence no último dia útil do mês" : `vence dia ${d.diaVencimento}`) : "sem dia definido"}
                         {d.qtdParcelas ? ` · ${d.qtdParcelas}x${d.fimVigencia ? ` (até ${d.fimVigencia.slice(5, 7)}/${d.fimVigencia.slice(0, 4)})` : ""}` : " · permanente"}
                         {d.beneficiario ? ` · ${d.beneficiario}` : ""}
                       </p>

@@ -15,7 +15,7 @@ import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { FiltroPeriodo, noPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
-import { formatBRL, formatarData, diasAte } from "@/lib/utils";
+import { formatBRL, formatarData, diasAte, vencimentoDoMes } from "@/lib/utils";
 import { Wallet, Check, RotateCcw, CheckSquare, X } from "lucide-react";
 
 type Situacao = "paga" | "vencida" | "a_vencer" | "sem_venc" | "migrado";
@@ -172,7 +172,6 @@ export default function FinanceiroPage() {
     const meses = janelaMeses(3, 1);
     const df: Conta[] = despesas.flatMap((d) => {
       if (d.ativo === false) return [];
-      const dia = String(Math.min(Number(d.diaVencimento) || 1, 28)).padStart(2, "0");
       // Não retroagir antes da criação; nem passar do fim da vigência (qtd de parcelas).
       const inicio = d.createdAt ? d.createdAt.slice(0, 7) : "";
       const fim = d.fimVigencia ?? "";
@@ -181,7 +180,7 @@ export default function FinanceiroPage() {
         return {
           id: `despesa:${d.id}:${ym}`, origem: "despesa" as const, despesaId: d.id, ym,
           companyId: d.companyId ?? undefined, cnpjEmit: null, xNomeEmit: d.nome,
-          nDup: ym, vencimento: `${ym}-${dia}`,
+          nDup: ym, vencimento: vencimentoDoMes(ym, d.diaVencimento),
           valor: pg?.pago ? (pg.valor ?? d.valor) : d.valor,
           statusPagamento: pg?.pago ? "pago" : "nao_informado",
           dataPagamento: pg?.data ?? null, valorPago: pg?.valor ?? null,
