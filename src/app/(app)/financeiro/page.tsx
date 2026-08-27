@@ -108,7 +108,7 @@ export default function FinanceiroPage() {
   // Padrão: a semana atual (domingo a sábado). Mudar o filtro recalcula tudo.
   const [periodo, setPeriodo] = useState<Periodo>(() => { const { ini, fim } = semanaAtual(); return { de: ini, ate: fim }; });
   const [erro, setErro] = useState<string | null>(null);
-  const [filtro, setFiltro] = useState<"todas" | "a_vencer" | "vencida" | "paga">("todas");
+  const [filtro, setFiltro] = useState<"todas" | "a_vencer" | "vencida" | "paga">("a_vencer");
   const [forn, setForn] = useState(""); // cnpjEmit selecionado ("" = todos)
   const [salvando, setSalvando] = useState<string | null>(null); // id ou "lote"
 
@@ -651,7 +651,7 @@ export default function FinanceiroPage() {
                     </button>
                   ) : (
                     <>
-                      <Link href={p.origem === "acordo" ? "/acordos" : p.origem === "despesa" ? "/despesas" : p.origem === "despesa-manual" ? "/despesas-manuais" : (p.chNFe ? `/notas/${encodeURIComponent(p.chNFe)}` : "#")} className="block">
+                      <Link href={p.origem === "acordo" ? "/acordos" : p.origem === "despesa" ? `/despesas?despesa=${p.despesaId}` : p.origem === "despesa-manual" ? "/despesas-manuais" : (p.chNFe ? `/notas/${encodeURIComponent(p.chNFe)}` : "#")} className="block">
                         {info}
                       </Link>
 

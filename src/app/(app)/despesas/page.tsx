@@ -24,7 +24,7 @@ import { ContasPagamento, contasValidas } from "@/components/ui/contas-pagamento
 import type { Company } from "@/lib/nfe/types";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { FiltroPeriodo, type Periodo } from "@/components/ui/filtro-periodo";
-import { formatBRL, formatarData, vencimentoDoMes } from "@/lib/utils";
+import { formatBRL, formatarData, vencimentoDoMes, cn } from "@/lib/utils";
 import { Receipt, Plus, Trash2, Check, RotateCcw, X, Pencil, Upload } from "lucide-react";
 
 const CATEGORIAS: { key: string; label: string }[] = [
@@ -104,7 +104,9 @@ export default function DespesasPage() {
   const [despesas, setDespesas] = useState<DespesaFixa[] | null>(null);
   const [empresas, setEmpresas] = useState<Company[]>([]);
   const [filtroEmp, setFiltroEmp] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState<"todas" | "a_vencer" | "vencida" | "paga">("a_vencer");
   const [periodo, setPeriodo] = useState<Periodo>(periodoEsteMes());
+  const [alvo, setAlvo] = useState<string | null>(null); // despesa vinda por deep-link (?despesa=id)
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
@@ -156,6 +158,23 @@ export default function DespesasPage() {
   useEffect(() => {
     void carregar();
   }, [carregar]);
+
+  // Deep-link ?despesa=id (vindo de Contas a pagar): mostra tudo e destaca a despesa clicada.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = new URLSearchParams(window.location.search).get("despesa");
+    if (id) { setAlvo(id); setFiltroStatus("todas"); }
+  }, []);
+
+  useEffect(() => {
+    if (!alvo || !despesas) return;
+    const el = document.getElementById(`despesa-${alvo}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      const t = setTimeout(() => setAlvo(null), 2600); // remove o destaque depois de um tempo
+      return () => clearTimeout(t);
+    }
+  }, [alvo, despesas]);
 
   async function aoEscolherArquivo(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -332,13 +351,28 @@ export default function DespesasPage() {
     }
   }
 
+  // Situações que a despesa apresenta no período (por mês de incidência): paga / vencida / a_vencer.
+  const hojeStr = useMemo(() => new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }), []);
+  const statusDespesa = useCallback((d: DespesaFixa): Set<string> => {
+    const set = new Set<string>();
+    for (const ym of meses) {
+      if (!aplicaNoMes(d, ym)) continue;
+      const p = pagamentoDe(d, ym);
+      if (p?.pago) { set.add("paga"); continue; }
+      if (d.ativo === false) continue; // inativa não gera conta a vencer
+      set.add(vencimentoDoMes(ym, d.diaVencimento) < hojeStr ? "vencida" : "a_vencer");
+    }
+    return set;
+  }, [meses, hojeStr]);
+
   const visiveis = useMemo(
     () => (despesas ?? [])
       .filter((d) => !filtroEmp || (d.companyId ?? "") === filtroEmp)
+      .filter((d) => filtroStatus === "todas" || statusDespesa(d).has(filtroStatus))
       // por dia de vencimento, mais próximo (menor dia) primeiro
       .slice()
       .sort((a, b) => (Number(a.diaVencimento) || 99) - (Number(b.diaVencimento) || 99)),
-    [despesas, filtroEmp],
+    [despesas, filtroEmp, filtroStatus, statusDespesa],
   );
 
   const totais = useMemo(() => {
@@ -429,6 +463,20 @@ export default function DespesasPage() {
       ) : null}
 
       <FiltroPeriodo value={periodo} onChange={setPeriodo} allowClear={false} className="mb-1" />
+
+      <div className="my-3 flex gap-2">
+        {(["todas", "a_vencer", "vencida", "paga"] as const).map((f) => (
+          <button
+            key={f}
+            onClick={() => setFiltroStatus(f)}
+            className={`rounded-full px-3 py-1 text-sm font-medium transition-colors ${
+              filtroStatus === f ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+            }`}
+          >
+            {{ todas: "Todas", a_vencer: "A vencer", vencida: "Vencidas", paga: "Pagas" }[f]}
+          </button>
+        ))}
+      </div>
       <p className="mb-3 px-1 text-[11px] text-muted-foreground">
         Totais somados no período ({periodoLabel}). A baixa é lançada por mês.
       </p>
@@ -571,7 +619,14 @@ export default function DespesasPage() {
             const tudoPago = incideNoPeriodo && pagosN === incid.length;
 
             return (
-              <Card key={d.id} className={inativa || !incideNoPeriodo ? "opacity-70" : undefined}>
+              <Card
+                key={d.id}
+                id={`despesa-${d.id}`}
+                className={cn(
+                  alvo === d.id && "ring-2 ring-primary ring-offset-2 ring-offset-background transition-shadow",
+                  (inativa || !incideNoPeriodo) && "opacity-70",
+                )}
+              >
                 <CardContent className="py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
