@@ -23,6 +23,8 @@ export interface DocParsed {
   dhEmi: string | null;
   nNF: string | null;
   serie: string | null;
+  finNFe: string | null;   // finalidade: 1=Normal 2=Complementar 3=Ajuste 4=Devolução (só no XML completo)
+  natOp: string | null;    // natureza da operação (texto)
   situacao: string | null; // cSitNFe (resumo) ou cStat do protocolo
   tpEvento: string | null; // eventos
   descEvento: string | null;
@@ -48,6 +50,8 @@ export function parseDoc(xml: string, schema: string): DocParsed {
       dhEmi: pick(xml, "dhEvento"),
       nNF: null,
       serie: null,
+      finNFe: null,
+      natOp: null,
       situacao: pick(xml, "cStat"),
       tpEvento: pick(xml, "tpEvento"),
       descEvento: pick(xml, "xEvento") || pick(xml, "descEvento"),
@@ -69,6 +73,8 @@ export function parseDoc(xml: string, schema: string): DocParsed {
       dhEmi: pick(xml, "dhEmi"),
       nNF: pick(xml, "nNF"),
       serie: pick(xml, "serie"),
+      finNFe: pick(xml, "finNFe"), // só presente no XML completo (procNFe)
+      natOp: pick(xml, "natOp"),
       // resNFe traz cSitNFe; procNFe autorizada traz protocolo cStat 100
       situacao: pick(xml, "cSitNFe") || pick(xml, "cStat"),
       tpEvento: null,
@@ -85,6 +91,8 @@ export function parseDoc(xml: string, schema: string): DocParsed {
     dhEmi: null,
     nNF: null,
     serie: null,
+    finNFe: null,
+    natOp: null,
     situacao: null,
     tpEvento: null,
     descEvento: null,

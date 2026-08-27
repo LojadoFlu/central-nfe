@@ -147,6 +147,9 @@ export interface NfeDocumento {
   dhEmi?: string | null;
   nNF?: string | null;
   serie?: string | null;
+  finNFe?: string | null;   // 4 = devolução
+  natOp?: string | null;
+  isDevolucao?: boolean;
   situacao?: string | null;
   schema?: string;
   temXmlCompleto?: boolean;

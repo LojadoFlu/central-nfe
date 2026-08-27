@@ -163,6 +163,9 @@ async function salvarDoc(companyId: string, cnpj: string, d: DocZip): Promise<vo
       dhEmi: p.dhEmi,
       nNF: p.nNF,
       serie: p.serie,
+      finNFe: p.finNFe,
+      natOp: p.natOp,
+      isDevolucao: p.finNFe === "4", // finalidade 4 = devolução/retorno → não é compra, não gera pagamento
       situacao: p.situacao,
       schema: d.schema,
       // completo se veio procNFe; senão é só resumo (aguarda manifestação/produção)
@@ -177,10 +180,12 @@ async function salvarDoc(companyId: string, cnpj: string, d: DocZip): Promise<vo
   );
 
   // Se completa, extrai itens e parcelas (contas a pagar + produtos).
+  // Devolução (finNFe=4) não gera parcelas — não é uma compra a pagar.
   if (completo && p.chNFe) {
     await gravarItensEParcelas(
       { companyId, chNFe: p.chNFe, cnpjEmit: p.cnpjEmit, xNomeEmit: p.xNomeEmit, dhEmi: p.dhEmi },
       d.xml,
+      { pularParcelas: p.finNFe === "4" },
     );
   }
 }
@@ -195,9 +200,10 @@ export async function gravarItensEParcelas(
     dhEmi: string | null;
   },
   xml: string,
+  opts: { pularParcelas?: boolean } = {},
 ): Promise<{ itens: number; parcelas: number }> {
   const itens = parseItens(xml);
-  const parcelas = parseParcelas(xml);
+  const parcelas = opts.pularParcelas ? [] : parseParcelas(xml);
   const now = new Date().toISOString();
   const cnpjEmit = meta.cnpjEmit ? somenteDigitos(meta.cnpjEmit) : null;
   const batch = db.batch();

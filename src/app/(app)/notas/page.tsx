@@ -416,9 +416,12 @@ export default function NotasPage() {
                       <p className="mt-0.5 truncate text-xs text-muted-foreground">Recebida por {nomeEmpresa(d.companyId)}</p>
                     ) : null}
                   </div>
-                  <Badge variant={d.temXmlCompleto ? "success" : "neutral"}>
-                    {d.temXmlCompleto ? "XML completo" : "Resumo"}
-                  </Badge>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    {d.isDevolucao ? <Badge variant="warning">Devolução</Badge> : null}
+                    <Badge variant={d.temXmlCompleto ? "success" : "neutral"}>
+                      {d.temXmlCompleto ? "XML completo" : "Resumo"}
+                    </Badge>
+                  </div>
                 </div>
                 <div className="mt-2 flex items-end justify-between">
                   <p className="text-lg font-bold tnum">{formatBRL(d.vNF)}</p>

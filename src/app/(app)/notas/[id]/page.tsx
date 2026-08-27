@@ -574,8 +574,17 @@ export default function NotaDetalhePage() {
         </Card>
       ) : null}
 
-      {/* Definir pagamento — quando a NF não trouxe parcelas no XML */}
-      {parcelas.length === 0 && doc.chNFe && podeBaixar ? (
+      {/* Devolução não gera pagamento */}
+      {doc.isDevolucao ? (
+        <Card className="mb-4 border-warning/40 bg-warning/5">
+          <CardContent className="py-3 text-sm">
+            <strong>Nota de devolução</strong> (finalidade 4){doc.natOp ? ` · ${doc.natOp}` : ""} — não gera conta a pagar.
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {/* Definir pagamento — quando a NF não trouxe parcelas no XML (exceto devolução) */}
+      {parcelas.length === 0 && doc.chNFe && podeBaixar && !doc.isDevolucao ? (
         <DefinirPagamento chNFe={doc.chNFe} total={doc.vNF ?? 0} dhEmi={doc.dhEmi} companyId={doc.companyId} empresas={empresas} onSaved={carregar} />
       ) : null}
 

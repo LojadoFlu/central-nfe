@@ -543,6 +543,8 @@ export const nfeReprocessarItens = onCall(
       if (!data.temXmlCompleto || !data.storagePath || !data.chNFe) continue;
       try {
         const [buf] = await getStorage().bucket().file(data.storagePath).download();
+        const xmlStr = buf.toString("utf8");
+        const devolucao = (xmlStr.match(/<finNFe>(\d)<\/finNFe>/) || [])[1] === "4";
         const r = await gravarItensEParcelas(
           {
             companyId,
@@ -551,7 +553,8 @@ export const nfeReprocessarItens = onCall(
             xNomeEmit: data.xNomeEmit ?? null,
             dhEmi: data.dhEmi ?? null,
           },
-          buf.toString("utf8"),
+          xmlStr,
+          { pularParcelas: devolucao },
         );
         docs++;
         itens += r.itens;
@@ -1144,6 +1147,7 @@ export const nfePagamentosPendentes = onCall(opcoes, async (req) => {
     const nf = doc.data() as Record<string, unknown>;
     if (empresaId && nf.companyId !== empresaId) continue;
     if (nf.recusada === true) continue; // nota recusada não é conta a pagar
+    if (nf.isDevolucao === true) continue; // devolução não gera pagamento
     const ch = nf.chNFe as string | undefined;
     if (ch && comParcela.has(ch)) continue;
     pendentes.push({
@@ -2148,6 +2152,7 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
   for (const doc of nfSnap.docs) {
     const r = doc.data(); const cid = String(r.companyId ?? "");
     if (!daEmpresa(cid)) continue;
+    if (r.isDevolucao) continue; // devolução (finNFe=4) não é compra
     const emit = somenteDigitos(String(r.cnpjEmit ?? ""));
     if (!emit || emit === (cnpjPorId.get(cid) ?? "")) continue; // exclui emissões próprias
     compras += n0(r.vNF);
