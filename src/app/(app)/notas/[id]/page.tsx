@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { PageHeader } from "@/components/layout/page-header";
@@ -238,6 +238,17 @@ export default function NotaDetalhePage() {
   const [pagando, setPagando] = useState<string | null>(null); // parcela escolhendo a conta pagadora
   const [contaPg, setContaPg] = useState("");                   // empresa de onde saiu o pagamento
   const podeBaixar = podeAcao("financeiro.baixar");
+
+  // Sequência N/total das parcelas desta NF (ordenadas por vencimento).
+  const seqParcela = useMemo(() => {
+    const m = new Map<string, string>();
+    if (parcelas.length > 1) {
+      [...parcelas]
+        .sort((a, b) => (a.vencimento ?? "").localeCompare(b.vencimento ?? "") || (a.nDup ?? "").localeCompare(b.nDup ?? ""))
+        .forEach((p, i) => m.set(p.id, `${i + 1}/${parcelas.length}`));
+    }
+    return m;
+  }, [parcelas]);
 
   const nomeEmpresa = (id?: string | null) => {
     if (!id) return null;
@@ -549,7 +560,7 @@ export default function NotaDetalhePage() {
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="min-w-0">
                         <span className="text-muted-foreground">
-                          Parcela {p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
+                          Parcela {seqParcela.get(p.id) ?? p.nDup ?? "1"} · venc. {formatarData(p.vencimento)}
                         </span>
                         {paga ? (
                           <span className="ml-2 text-xs text-success">

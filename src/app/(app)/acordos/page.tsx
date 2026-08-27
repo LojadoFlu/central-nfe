@@ -526,11 +526,12 @@ export default function AcordosPage() {
                         const pago = p.statusPagamento === "pago";
                         const dias = diasAte(p.vencimento);
                         const bz = `${a.id}:${idx}`;
+                        const totalParc = (a.parcelas ?? []).length;
                         return (
                           <div key={idx} className="flex flex-wrap items-center justify-between gap-2 text-sm">
                             <div className="min-w-0">
                               <span className="text-muted-foreground">
-                                Parcela {p.n ?? idx + 1} · venc. {formatarData(p.vencimento)}
+                                Parcela {p.n ?? idx + 1}{totalParc > 1 ? `/${totalParc}` : ""} · venc. {formatarData(p.vencimento)}
                               </span>
                               {pago ? (
                                 <span className="ml-2 text-xs text-success">Pago em {formatarData(p.dataPagamento)}</span>

@@ -173,21 +173,36 @@ export default function FinanceiroPage() {
 
   // Unifica parcelas de NF-e + parcelas de acordos numa lista só de "contas".
   const contas = useMemo<Conta[]>(() => {
+    // Sequência N/total das parcelas de cada NF (por chNFe), ordenadas por vencimento.
+    const seqNfe = new Map<string, string>(); // parcelaId -> "2/3"
+    const porChave = new Map<string, Parcela[]>();
+    for (const p of parcelas ?? []) {
+      const k = p.chNFe ?? p.id;
+      const arr = porChave.get(k); if (arr) arr.push(p); else porChave.set(k, [p]);
+    }
+    for (const arr of porChave.values()) {
+      if (arr.length <= 1) continue;
+      arr.slice()
+        .sort((a, b) => (a.vencimento ?? "").localeCompare(b.vencimento ?? "") || (a.nDup ?? "").localeCompare(b.nDup ?? ""))
+        .forEach((p, i) => seqNfe.set(p.id, `${i + 1}/${arr.length}`));
+    }
     const nfe: Conta[] = (parcelas ?? []).map((p) => ({
       id: p.id, origem: "nfe", companyId: p.companyId, cnpjEmit: p.cnpjEmit, xNomeEmit: p.xNomeEmit,
-      nDup: p.nDup, vencimento: p.vencimento, valor: p.valor, statusPagamento: p.statusPagamento,
+      nDup: p.nDup, parcelaFixa: seqNfe.get(p.id), vencimento: p.vencimento, valor: p.valor, statusPagamento: p.statusPagamento,
       dataPagamento: p.dataPagamento, valorPago: p.valorPago, obsPagamento: p.obsPagamento, contasPagamento: p.contasPagamento,
       migradoAcordo: p.migradoAcordo, acordoId: p.acordoId, chNFe: p.chNFe, contestacao: p.contestacao,
     }));
-    const ac: Conta[] = acordos.flatMap((a) =>
-      (a.parcelas ?? []).map((pc, i) => ({
+    const ac: Conta[] = acordos.flatMap((a) => {
+      const total = a.parcelas?.length ?? 0;
+      return (a.parcelas ?? []).map((pc, i) => ({
         id: `acordo:${a.id}:${i}`, origem: "acordo" as const, acordoId: a.id, indice: i,
         companyId: a.companyId, cnpjEmit: a.cnpjFornecedor, xNomeEmit: a.nomeFornecedor,
-        nDup: String(pc.n ?? i + 1), vencimento: pc.vencimento, valor: pc.valor, contasPagamento: pc.contasPagamento,
+        nDup: String(pc.n ?? i + 1), parcelaFixa: total > 1 ? `${pc.n ?? i + 1}/${total}` : undefined,
+        vencimento: pc.vencimento, valor: pc.valor, contasPagamento: pc.contasPagamento,
         statusPagamento: pc.statusPagamento === "pago" ? "pago" : "nao_informado",
         dataPagamento: pc.dataPagamento ?? null, descricao: a.descricao ?? a.nomeFornecedor,
-      })),
-    );
+      }));
+    });
     // Despesas fixas — uma "conta" por mês que incide (janela recente + próximos).
     const meses = janelaMeses(3, 1);
     const df: Conta[] = despesas.flatMap((d) => {
@@ -201,7 +216,7 @@ export default function FinanceiroPage() {
           id: `despesa:${d.id}:${ym}`, origem: "despesa" as const, despesaId: d.id, ym,
           companyId: d.companyId ?? undefined, cnpjEmit: null, xNomeEmit: d.nome,
           nDup: ym, vencimento: vencimentoDoMes(ym, d.diaVencimento),
-          parcelaFixa: d.qtdParcelas ? `${parcelaDespesa(d, ym)}/${d.qtdParcelas}` : undefined,
+          parcelaFixa: d.qtdParcelas && d.qtdParcelas > 1 ? `${parcelaDespesa(d, ym)}/${d.qtdParcelas}` : undefined,
           valor: pg?.pago ? (pg.valor ?? d.valor) : d.valor,
           statusPagamento: pg?.pago ? "pago" : "nao_informado",
           dataPagamento: pg?.data ?? null, valorPago: pg?.valor ?? null,
@@ -597,7 +612,7 @@ export default function FinanceiroPage() {
                     <p className="truncate font-medium">{p.xNomeEmit ?? "Fornecedor"}</p>
                     <p className="text-xs text-muted-foreground">
                       {p.origem === "acordo" ? "Acordo · parcela" : p.origem === "despesa" ? "Despesa fixa" : p.origem === "despesa-manual" ? (p.descricao ?? "Despesa manual") : "Parcela"}
-                      {p.origem === "despesa" ? (p.parcelaFixa ? ` · ${p.parcelaFixa}` : "") : p.origem === "despesa-manual" ? "" : ` ${p.nDup ?? "1"}`} · venc. {formatarData(p.vencimento)}
+                      {p.origem === "despesa" ? (p.parcelaFixa ? ` · ${p.parcelaFixa}` : "") : p.origem === "despesa-manual" ? "" : ` ${p.parcelaFixa ?? p.nDup ?? "1"}`} · venc. {formatarData(p.vencimento)}
                     </p>
                     {p.companyId ? (
                       <p className="mt-0.5 truncate text-xs font-medium text-muted-foreground">{nomeConta(p.companyId)}</p>
