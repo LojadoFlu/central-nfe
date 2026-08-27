@@ -29,6 +29,25 @@ function incideNoMes(d: DespesaFixa, ym: string): boolean {
   const m = Number(ym.slice(5, 7));
   return ((((m - mesBase) % p) + p) % p) === 0;
 }
+/** Nº da parcela (1-based) da despesa fixa no mês `ym`: quantas incidências houve
+ * da 1ª incidência (>= mês de criação) até `ym` inclusive. Espelha a âncora do backend. */
+function parcelaDespesa(d: DespesaFixa, ym: string): number {
+  const inicio = (d.createdAt ?? "").slice(0, 7) || ym;
+  let y = Number(inicio.slice(0, 4));
+  let m = Number(inicio.slice(5, 7));
+  for (let i = 0; i < 36; i++) { // avança até a 1ª incidência
+    if (incideNoMes(d, `${y}-${String(m).padStart(2, "0")}`)) break;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  let n = 0;
+  for (let i = 0; i < 600; i++) {
+    const cur = `${y}-${String(m).padStart(2, "0")}`;
+    if (cur > ym) break;
+    if (incideNoMes(d, cur)) n++;
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return n;
+}
 /** Janela de meses (YYYY-MM) de `back` meses atrás até `fwd` meses à frente. */
 function janelaMeses(back: number, fwd: number): string[] {
   const out: string[] = [];
@@ -49,6 +68,7 @@ interface Conta {
   despesaId?: string;
   despesaManualId?: string;
   ym?: string;
+  parcelaFixa?: string;     // "8/10" p/ despesa fixa com nº de parcelas definido
   companyId?: string | null;
   cnpjEmit?: string | null;
   xNomeEmit?: string | null;
@@ -181,6 +201,7 @@ export default function FinanceiroPage() {
           id: `despesa:${d.id}:${ym}`, origem: "despesa" as const, despesaId: d.id, ym,
           companyId: d.companyId ?? undefined, cnpjEmit: null, xNomeEmit: d.nome,
           nDup: ym, vencimento: vencimentoDoMes(ym, d.diaVencimento),
+          parcelaFixa: d.qtdParcelas ? `${parcelaDespesa(d, ym)}/${d.qtdParcelas}` : undefined,
           valor: pg?.pago ? (pg.valor ?? d.valor) : d.valor,
           statusPagamento: pg?.pago ? "pago" : "nao_informado",
           dataPagamento: pg?.data ?? null, valorPago: pg?.valor ?? null,
@@ -576,7 +597,7 @@ export default function FinanceiroPage() {
                     <p className="truncate font-medium">{p.xNomeEmit ?? "Fornecedor"}</p>
                     <p className="text-xs text-muted-foreground">
                       {p.origem === "acordo" ? "Acordo · parcela" : p.origem === "despesa" ? "Despesa fixa" : p.origem === "despesa-manual" ? (p.descricao ?? "Despesa manual") : "Parcela"}
-                      {p.origem === "despesa" || p.origem === "despesa-manual" ? "" : ` ${p.nDup ?? "1"}`} · venc. {formatarData(p.vencimento)}
+                      {p.origem === "despesa" ? (p.parcelaFixa ? ` · ${p.parcelaFixa}` : "") : p.origem === "despesa-manual" ? "" : ` ${p.nDup ?? "1"}`} · venc. {formatarData(p.vencimento)}
                     </p>
                     {p.companyId ? (
                       <p className="mt-0.5 truncate text-xs font-medium text-muted-foreground">{nomeConta(p.companyId)}</p>
