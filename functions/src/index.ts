@@ -2663,7 +2663,9 @@ export const centralPendencias = onCall(
     const seteDias = menosDias(-7);
     for (const doc of (await db.collection("nfe_installments").get()).docs) {
       const p = doc.data();
-      if (p.statusPagamento === "pago" || !daEmpresa(p.companyId)) continue;
+      // pula pagas, de outra empresa e MIGRADAS p/ acordo (o acordo carrega a dívida —
+      // igual ao fluxo e ao Financeiro; senão a parcela migrada conta como vencida em dobro).
+      if (p.statusPagamento === "pago" || p.migradoAcordo === true || !daEmpresa(p.companyId)) continue;
       const dia = d10(p.vencimento);
       if (!dia) continue;
       if (dia < hoje) { vencQtd++; vencVal += n0(p.valor); }
