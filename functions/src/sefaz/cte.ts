@@ -144,6 +144,8 @@ export interface CteParsed {
   ufFim: string | null;
   xNomeRem: string | null;
   xNomeDest: string | null;
+  toma: string | null;      // tomador do serviço: 0=Rem 1=Exped 2=Receb 3=Dest 4=Outros
+  tomaCnpj: string | null;  // CNPJ de quem PAGA o frete (o tomador)
   situacao: string | null;
   tpEvento: string | null;
   descEvento: string | null;
@@ -174,6 +176,8 @@ export function parseCTe(xml: string, schema: string): CteParsed {
       ufFim: null,
       xNomeRem: null,
       xNomeDest: null,
+      toma: null,
+      tomaCnpj: null,
       situacao: pick(xml, "cStat"),
       tpEvento: pick(xml, "tpEvento"),
       descEvento: pick(xml, "xEvento") || pick(xml, "descEvento"),
@@ -184,6 +188,21 @@ export function parseCTe(xml: string, schema: string): CteParsed {
     const emit = bloco(xml, "emit");
     const rem = bloco(xml, "rem");
     const dest = bloco(xml, "dest");
+    // Tomador do serviço (quem paga o frete). toma3: 0=Rem 1=Exped 2=Receb 3=Dest; toma4: outros (CNPJ próprio).
+    const ide = bloco(xml, "ide") || xml;
+    const toma3 = bloco(ide, "toma3");
+    const toma4 = bloco(ide, "toma4");
+    const toma = (toma3 ? pick(toma3, "toma") : null) || (toma4 ? pick(toma4, "toma") : null);
+    const cnpjBloco = (b: string | null) => (b ? somenteDigitos(pick(b, "CNPJ") || pick(b, "CPF") || "") || null : null);
+    const exped = bloco(xml, "exped");
+    const receb = bloco(xml, "receb");
+    const tomaCnpj =
+      toma === "0" ? cnpjBloco(rem)
+        : toma === "1" ? cnpjBloco(exped)
+          : toma === "2" ? cnpjBloco(receb)
+            : toma === "3" ? cnpjBloco(dest)
+              : toma === "4" ? cnpjBloco(toma4)
+                : null;
     return {
       tipo: "cte",
       chCTe,
@@ -198,6 +217,8 @@ export function parseCTe(xml: string, schema: string): CteParsed {
       ufFim: pick(xml, "UFFim"),
       xNomeRem: rem ? pick(rem, "xNome") : null,
       xNomeDest: dest ? pick(dest, "xNome") : null,
+      toma,
+      tomaCnpj,
       // resCTe traz cSitCTe; procCTe autorizado traz protocolo cStat 100
       situacao: pick(xml, "cSitCTe") || pick(xml, "cStat"),
       tpEvento: null,
@@ -219,6 +240,8 @@ export function parseCTe(xml: string, schema: string): CteParsed {
     ufFim: null,
     xNomeRem: null,
     xNomeDest: null,
+    toma: null,
+    tomaCnpj: null,
     situacao: null,
     tpEvento: null,
     descEvento: null,
@@ -376,6 +399,8 @@ async function salvarDocCTe(companyId: string, cnpj: string, d: DocZip): Promise
       ufFim: p.ufFim,
       xNomeRem: p.xNomeRem,
       xNomeDest: p.xNomeDest,
+      toma: p.toma,
+      tomaCnpj: p.tomaCnpj,
       situacao: p.situacao,
       schema: d.schema,
       temXmlCompleto: completo,

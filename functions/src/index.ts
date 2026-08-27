@@ -2176,9 +2176,14 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     despesasManuais += n0(x.valor);
   }
   // FRETES (CT-e) e SERVIÇOS (NFS-e) — competência = dhEmi
+  // FRETES (CT-e): só é despesa da loja quando ELA é o TOMADOR do serviço (quem paga).
+  // A maioria dos fretes é CIF (pago pelo remetente/fornecedor) → tomaCnpj ≠ CNPJ da loja → não entra.
   let fretes = 0;
   for (const doc of (await db.collection("cte_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get()).docs) {
-    const r = doc.data(); if (daEmpresa(r.companyId)) fretes += n0(r.vTPrest);
+    const r = doc.data();
+    if (!daEmpresa(r.companyId)) continue;
+    const cnpjEmp = cnpjPorId.get(String(r.companyId ?? "")) ?? "";
+    if (r.tomaCnpj && cnpjEmp && somenteDigitos(String(r.tomaCnpj)) === cnpjEmp) fretes += n0(r.vTPrest);
   }
   let servicos = 0;
   for (const doc of (await db.collection("nfse_documents").where("dhEmi", ">=", de).where("dhEmi", "<", maisDiasISO(ate, 1)).get()).docs) {
