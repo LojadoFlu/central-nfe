@@ -17,6 +17,8 @@ import {
   parcelasDoDocumento,
   manifestar,
   baixarParcela,
+  contestarParcela,
+  resolverContestacao,
   listarEmpresas,
   definirPagamento,
   type NfeDocumento,
@@ -29,7 +31,7 @@ import { gerarDanfe } from "@/lib/nfe/danfe";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { Textarea } from "@/components/ui/textarea";
 import { formatBRL, formatCNPJ, formatarData, formatarDataHora } from "@/lib/utils";
-import { ArrowLeft, FileCode2, Download, FileText, ShieldCheck, Check, RotateCcw } from "lucide-react";
+import { ArrowLeft, FileCode2, Download, FileText, ShieldCheck, Check, RotateCcw, AlertTriangle } from "lucide-react";
 
 const EVENTOS: { tp: string; label: string; conclusivo: boolean }[] = [
   { tp: "210210", label: "Ciência da Operação", conclusivo: false },
@@ -229,7 +231,7 @@ export default function NotaDetalhePage() {
   const [carregandoXml, setCarregandoXml] = useState(false);
   const [gerandoPdf, setGerandoPdf] = useState(false);
   const [erroXml, setErroXml] = useState<string | null>(null);
-  const { podeAcao } = useAuth();
+  const { podeAcao, isAdmin } = useAuth();
   const [eventoPendente, setEventoPendente] = useState<string | null>(null);
   const [xJust, setXJust] = useState("");
   const [manifestando, setManifestando] = useState(false);
@@ -237,6 +239,12 @@ export default function NotaDetalhePage() {
   const [baixando, setBaixando] = useState<string | null>(null);
   const [pagando, setPagando] = useState<string | null>(null); // parcela escolhendo a conta pagadora
   const [contaPg, setContaPg] = useState("");                   // empresa de onde saiu o pagamento
+  // Contestação (divergência que bloqueia o pagamento — "em verificação")
+  const [contestando, setContestando] = useState<string | null>(null);
+  const [cMotivo, setCMotivo] = useState<"valor" | "parcelas" | "outro">("valor");
+  const [cDescricao, setCDescricao] = useState("");
+  const [cValor, setCValor] = useState("");
+  const [cParcelas, setCParcelas] = useState("");
   const podeBaixar = podeAcao("financeiro.baixar");
 
   // Sequência N/total das parcelas desta NF (ordenadas por vencimento).
@@ -272,6 +280,35 @@ export default function NotaDetalhePage() {
         contasPagamento: contaPg ? [{ empresaId: contaPg, valor: p.valor ?? 0 }] : undefined,
       });
       setPagando(null);
+      await carregar();
+    } finally {
+      setBaixando(null);
+    }
+  }
+
+  function abrirContest(p: Parcela) {
+    setPagando(null); setContestando(p.id);
+    setCMotivo("valor"); setCDescricao(""); setCValor(""); setCParcelas("");
+  }
+  async function enviarContest(p: Parcela) {
+    if (!cDescricao.trim()) return;
+    setBaixando(p.id);
+    try {
+      await contestarParcela({
+        parcelaId: p.id, motivo: cMotivo, descricao: cDescricao.trim(),
+        valorCorreto: cMotivo === "valor" && cValor ? Number(cValor) : undefined,
+        parcelasCorreto: cMotivo === "parcelas" && cParcelas ? Number(cParcelas) : undefined,
+      });
+      setContestando(null);
+      await carregar();
+    } finally {
+      setBaixando(null);
+    }
+  }
+  async function resolverContest(p: Parcela, resolucao: "aprovada" | "cancelada") {
+    setBaixando(p.id);
+    try {
+      await resolverContestacao({ parcelaId: p.id, resolucao });
       await carregar();
     } finally {
       setBaixando(null);
@@ -555,6 +592,8 @@ export default function NotaDetalhePage() {
                 const ocupado = baixando === p.id;
                 const contaPaga = p.contasPagamento?.[0]?.empresaId ?? null;
                 const escolhendo = pagando === p.id;
+                const contestada = p.contestacao?.status === "aberta";
+                const contestForm = contestando === p.id;
                 return (
                   <div key={p.id} className="py-2.5 text-sm">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -572,16 +611,22 @@ export default function NotaDetalhePage() {
                       <div className="flex items-center gap-2">
                         <span className="font-medium tnum">{formatBRL(p.valor)}</span>
                         {paga ? <Badge variant="success">Paga</Badge> : null}
-                        {podeBaixar && !escolhendo ? (
-                          <Button
-                            size="sm"
-                            variant={paga ? "ghost" : "outline"}
-                            disabled={ocupado}
-                            onClick={() => (paga ? reabrir(p) : iniciarPagamento(p))}
-                          >
-                            {paga ? <RotateCcw className="size-4" /> : <Check className="size-4" />}
-                            {ocupado ? "…" : paga ? "Reabrir" : "Marcar pago"}
-                          </Button>
+                        {contestada ? <Badge variant="destructive">Em contestação</Badge> : null}
+                        {podeBaixar && !escolhendo && !contestForm ? (
+                          paga ? (
+                            <Button size="sm" variant="ghost" disabled={ocupado} onClick={() => reabrir(p)}>
+                              <RotateCcw className="size-4" />{ocupado ? "…" : "Reabrir"}
+                            </Button>
+                          ) : contestada ? null : (
+                            <>
+                              <Button size="sm" variant="outline" disabled={ocupado} onClick={() => iniciarPagamento(p)}>
+                                <Check className="size-4" />{ocupado ? "…" : "Marcar pago"}
+                              </Button>
+                              <Button size="sm" variant="ghost" className="text-destructive" disabled={ocupado} onClick={() => abrirContest(p)}>
+                                <AlertTriangle className="size-4" /> Contestar
+                              </Button>
+                            </>
+                          )
                         ) : null}
                       </div>
                     </div>
@@ -605,12 +650,64 @@ export default function NotaDetalhePage() {
                         </Button>
                       </div>
                     ) : null}
+
+                    {/* Em contestação — bloqueado; admin aprova/cancela */}
+                    {contestada ? (
+                      <div className="mt-2 space-y-2 rounded-md border border-destructive/40 bg-destructive/5 p-2">
+                        <p className="text-xs text-destructive">
+                          ⚠ Em verificação — pagamento bloqueado{p.contestacao?.descricao ? `: ${p.contestacao.descricao}` : ""}.
+                        </p>
+                        {isAdmin ? (
+                          <div className="flex gap-2">
+                            <Button size="sm" disabled={ocupado} onClick={() => resolverContest(p, "aprovada")}>{ocupado ? "…" : "Aprovar e liberar"}</Button>
+                            <Button size="sm" variant="ghost" disabled={ocupado} onClick={() => resolverContest(p, "cancelada")}>Cancelar contestação</Button>
+                          </div>
+                        ) : <p className="text-[11px] text-muted-foreground">Aguardando um administrador aprovar a correção.</p>}
+                      </div>
+                    ) : null}
+
+                    {/* Formulário de contestação */}
+                    {contestForm ? (
+                      <div className="mt-2 space-y-2 rounded-md border border-border bg-muted/40 p-2">
+                        <div className="flex flex-wrap items-end gap-2">
+                          <div className="space-y-1">
+                            <label className="block text-xs text-muted-foreground">Tipo de divergência</label>
+                            <select value={cMotivo} onChange={(e) => setCMotivo(e.target.value as "valor" | "parcelas" | "outro")} className="h-9 w-48 rounded-md border border-input bg-background px-2 text-sm">
+                              <option value="valor">Valor cobrado errado</option>
+                              <option value="parcelas">Nº de parcelas errado</option>
+                              <option value="outro">Outro (ex.: não recebido)</option>
+                            </select>
+                          </div>
+                          {cMotivo === "valor" ? (
+                            <div className="space-y-1">
+                              <label className="block text-xs text-muted-foreground">Valor correto (R$)</label>
+                              <Input type="number" step="0.01" inputMode="decimal" value={cValor} onChange={(e) => setCValor(e.target.value)} className="h-9 w-32" />
+                            </div>
+                          ) : null}
+                          {cMotivo === "parcelas" ? (
+                            <div className="space-y-1">
+                              <label className="block text-xs text-muted-foreground">Parcelas correto</label>
+                              <Input type="number" step="1" inputMode="numeric" value={cParcelas} onChange={(e) => setCParcelas(e.target.value)} className="h-9 w-24" />
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="space-y-1">
+                          <label className="block text-xs text-muted-foreground">Descreva a divergência</label>
+                          <Input placeholder="Ex.: mercadoria não recebida; valor cobrado a maior…" value={cDescricao} onChange={(e) => setCDescricao(e.target.value)} maxLength={500} className="h-9" />
+                        </div>
+                        <div className="flex gap-2 pt-1">
+                          <Button size="sm" variant="destructive" disabled={ocupado} onClick={() => enviarContest(p)}>{ocupado ? "Salvando…" : "Marcar divergência (bloqueia)"}</Button>
+                          <Button size="sm" variant="ghost" disabled={ocupado} onClick={() => setContestando(null)}>Cancelar</Button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
               “Pago” nunca é inferido do XML — é uma baixa manual, registrada com autor e data.
+              <strong> Contestar</strong> deixa a parcela <strong>em verificação</strong> (bloqueada no Contas a pagar) até um administrador aprovar ou cancelar.
             </p>
           </CardContent>
         </Card>
