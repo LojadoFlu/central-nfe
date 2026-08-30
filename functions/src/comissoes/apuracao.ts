@@ -23,6 +23,7 @@ import {
   escolherMeta,
   escolherMetaLoja,
   escolherRegra,
+  pisoEfetivo,
 } from "./motor";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./grupos";
 import type {
@@ -114,6 +115,8 @@ export interface LinhaApuracao extends ResultadoApuracao {
   pdvVendedorId: string | null;
   regraId: string | null;
   regraNome: string | null;
+  /** De onde veio o piso: do cargo (regra) ou um acordo individual (exceção). */
+  pisoOrigem: "cargo" | "funcionario" | null;
   /** Projeção do fechamento quando o mês ainda está em curso (§22). */
   vendaProjetada: number | null;
   comissaoProjetada: number | null;
@@ -240,6 +243,8 @@ export async function calcularCompetencia(
   );
   const nomeLoja = grupos.nomeDoGrupo;
   const nomeCargo = new Map(cargos.map((c) => [c.id, c.nome]));
+  // Piso mora no CARGO; o campo do funcionário é exceção (§5, §10).
+  const pisoPorCargo = new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null]));
   const metasDaComp = metas
     .filter((m) => m.competencia === competencia)
     .map((m) => ({ ...m, lojaId: canonizar(grupos, m.lojaId) }));
@@ -258,10 +263,12 @@ export async function calcularCompetencia(
   for (const bruto of funcionarios) {
     if (!bruto.ativo) continue;
     // Cadastro antigo pode apontar para a filial irmã: normaliza na leitura.
+    const piso = pisoEfetivo(bruto, pisoPorCargo);
     const f: Funcionario = {
       ...bruto,
       lojaId: canonizar(grupos, bruto.lojaId),
       lojasGrupo: canonizarLista(grupos, bruto.lojasGrupo),
+      pisoGarantido: piso.valor,
     };
     const vendedorId = f.pdvVendedorId ?? null;
     const individual = (vendedorId && consolidado.porVendedor.get(vendedorId)) || ZERO;
@@ -304,7 +311,7 @@ export async function calcularCompetencia(
     const proj = fatorProjecao ? apurar(escalarVendas(entrada, fatorProjecao)) : null;
 
     if (!regra) semRegra.push(f.nome);
-    if (f.pisoGarantido == null) semPiso.push(f.nome);
+    if (piso.valor == null) semPiso.push(f.nome);
     if (metaIndividual == null && metaLoja == null) semMeta.push(f.nome);
     if (f.lojaId != null) {
       comissaoPorLoja.set(f.lojaId, (comissaoPorLoja.get(f.lojaId) ?? 0) + res.valorDevido);
@@ -332,6 +339,7 @@ export async function calcularCompetencia(
       pdvVendedorId: vendedorId,
       regraId: regra?.id ?? null,
       regraNome: regra?.nome ?? null,
+      pisoOrigem: piso.origem,
       vendaProjetada: proj ? proj.vendaConsiderada : null,
       comissaoProjetada: proj ? proj.comissaoTotal : null,
       valorDevidoProjetado: proj ? proj.valorDevido : null,
@@ -608,8 +616,9 @@ export async function simular(
   const linha = base.linhas.find((l) => l.funcionarioId === funcionarioId);
   if (!linha) throw new Error("Funcionário não encontrado nesta competência.");
 
-  const [funcionarios, regras, metas, bonus, ajustes, cfg, vendas] = await Promise.all([
+  const [funcionarios, cargos, regras, metas, bonus, ajustes, cfg, vendas] = await Promise.all([
     lerColecao<Funcionario>("com_funcionarios"),
+    lerColecao<Cargo>("com_cargos"),
     lerColecao<Regra>("com_regras"),
     lerColecao<Meta>("com_metas"),
     lerColecao<Bonus>("com_bonus"),
@@ -617,8 +626,13 @@ export async function simular(
     carregarConfig(),
     lerVendas(competencia),
   ]);
-  const f = funcionarios.find((x) => x.id === funcionarioId);
-  if (!f) throw new Error("Funcionário não encontrado.");
+  const bruto = funcionarios.find((x) => x.id === funcionarioId);
+  if (!bruto) throw new Error("Funcionário não encontrado.");
+  const pisoPorCargo = new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null]));
+  const f: Funcionario = {
+    ...bruto,
+    pisoGarantido: pisoEfetivo(bruto, pisoPorCargo).valor,
+  };
 
   const consolidado = consolidar(vendas);
   const individual = (f.pdvVendedorId && consolidado.porVendedor.get(f.pdvVendedorId)) || ZERO;

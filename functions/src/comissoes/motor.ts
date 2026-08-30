@@ -75,6 +75,21 @@ export function especificidade(
   return p;
 }
 
+/**
+ * Piso que vale para a pessoa (§5, §10): o do cargo, salvo acordo individual.
+ * Devolve também de onde veio — a memória de cálculo mostra isso, senão ninguém
+ * entende por que dois vendedores do mesmo cargo têm pisos diferentes.
+ */
+export function pisoEfetivo(
+  f: Funcionario,
+  pisoDoCargo: Map<string, number | null>,
+): { valor: number | null; origem: "funcionario" | "cargo" | null } {
+  if (f.pisoGarantido != null) return { valor: f.pisoGarantido, origem: "funcionario" };
+  const doCargo = f.cargoId ? (pisoDoCargo.get(f.cargoId) ?? null) : null;
+  if (doCargo != null) return { valor: doCargo, origem: "cargo" };
+  return { valor: null, origem: null };
+}
+
 /** Escolhe a regra vigente mais específica para o funcionário na competência. */
 export function escolherRegra(
   regras: Regra[],

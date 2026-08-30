@@ -48,7 +48,14 @@ function Memoria({ linha }: { linha: LinhaApuracao }) {
           <p className="font-semibold tnum">{formatBRL(linha.comissaoTotal)}</p>
         </div>
         <div>
-          <p className="text-muted-foreground">Piso garantido</p>
+          <p className="text-muted-foreground">
+            Piso garantido
+            {linha.pisoOrigem === "cargo"
+              ? " (do cargo)"
+              : linha.pisoOrigem === "funcionario"
+                ? " (acordo individual)"
+                : ""}
+          </p>
           <p className="font-semibold tnum">{formatBRL(linha.piso)}</p>
         </div>
         <div>

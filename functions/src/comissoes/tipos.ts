@@ -126,6 +126,11 @@ export interface Cargo {
   nome: string;
   /** Ordem de exibição. */
   ordem?: number;
+  /**
+   * Piso garantido do cargo (§5). É AQUI que o piso normalmente se define —
+   * um valor por cargo, em vez de repetir pessoa a pessoa.
+   */
+  pisoGarantido?: number | null;
   ativo: boolean;
 }
 
@@ -140,6 +145,7 @@ export interface Funcionario {
   pdvVendedorId?: string | null;
   /** Lojas que um supervisor acompanha (§13). Vazio = usa a própria loja. */
   lojasGrupo?: number[];
+  /** Piso individual — EXCEÇÃO. Vazio (null) = herda o piso do cargo. */
   pisoGarantido?: number | null;
   admissao?: string | null;
   ativo: boolean;

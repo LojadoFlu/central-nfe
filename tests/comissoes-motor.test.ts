@@ -6,6 +6,7 @@ import {
   apurar,
   escolherMeta,
   escolherRegra,
+  pisoEfetivo,
   vigente,
 } from "../functions/src/comissoes/motor";
 import {
@@ -300,6 +301,56 @@ describe("§17 — cancelamento e estorno", () => {
     );
     expect(r.valorDevido).toBe(1800);
     expect(r.memoria.some((l) => l.detalhe.includes("absorvido pelo piso"))).toBe(true);
+  });
+});
+
+describe("§5/§10 — piso vem do cargo, com exceção individual", () => {
+  const pisoDoCargo = new Map<string, number | null>([
+    ["vendedor", 1800],
+    ["gerente", 3000],
+    ["estagiario", null],
+  ]);
+
+  it("sem piso próprio, herda o do cargo", () => {
+    const r = pisoEfetivo({ ...JOAO, pisoGarantido: null }, pisoDoCargo);
+    expect(r).toEqual({ valor: 1800, origem: "cargo" });
+  });
+
+  it("piso individual sobrepõe o do cargo", () => {
+    const r = pisoEfetivo({ ...JOAO, pisoGarantido: 2200 }, pisoDoCargo);
+    expect(r).toEqual({ valor: 2200, origem: "funcionario" });
+  });
+
+  it("piso individual de zero é respeitado (não cai para o do cargo)", () => {
+    const r = pisoEfetivo({ ...JOAO, pisoGarantido: 0 }, pisoDoCargo);
+    expect(r).toEqual({ valor: 0, origem: "funcionario" });
+  });
+
+  it("cargo sem piso e pessoa sem piso → sem piso", () => {
+    const r = pisoEfetivo({ ...JOAO, cargoId: "estagiario", pisoGarantido: null }, pisoDoCargo);
+    expect(r).toEqual({ valor: null, origem: null });
+  });
+
+  it("funcionário sem cargo não herda nada", () => {
+    const r = pisoEfetivo({ ...JOAO, cargoId: null, pisoGarantido: null }, pisoDoCargo);
+    expect(r.valor).toBeNull();
+  });
+
+  it("o piso herdado do cargo segura o pagamento igual ao próprio", () => {
+    const piso = pisoEfetivo({ ...JOAO, pisoGarantido: null }, pisoDoCargo);
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: piso.valor },
+        regra: regraSimples(2),
+        vendas: {
+          individual: { liquida: 60_000, bruta: 60_000 },
+          loja: { liquida: 0, bruta: 0 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+      }),
+    );
+    expect(r.valorDevido).toBe(1800);
+    expect(r.pisoAplicado).toBe(true);
   });
 });
 

@@ -3952,17 +3952,20 @@ export const comissoesSalvarCargo = onCall(opcoes, async (req) => {
   const nome = texto(req.data?.nome, 60);
   if (!nome) throw new HttpsError("invalid-argument", "Informe o nome do cargo.");
   const id = novoId("com_cargos", req.data?.id);
+  const anteriorCargo = (await db.collection("com_cargos").doc(id).get()).data() ?? null;
+  const pisoGarantido = numOuNulo(req.data?.pisoGarantido);
   await db.collection("com_cargos").doc(id).set(
     {
       id,
       nome,
       ordem: num(req.data?.ordem, 99),
+      pisoGarantido,
       ativo: req.data?.ativo !== false,
       atualizadoEm: agoraISO(),
     },
     { merge: true },
   );
-  await auditar(uid, "comissoes.salvarCargo", { id, nome });
+  await auditar(uid, "comissoes.salvarCargo", { id, nome, pisoGarantido, anterior: anteriorCargo });
   return { ok: true, id };
 });
 

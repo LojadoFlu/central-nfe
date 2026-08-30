@@ -19,6 +19,7 @@ import {
   salvarFuncionario,
   sincronizarVendedoresPdv,
 } from "@/lib/comissoes/repo";
+import { pisoEfetivo } from "@/lib/comissoes/piso";
 import { Aviso, Campo, Select } from "./comum";
 
 const VAZIO: Funcionario = {
@@ -51,6 +52,9 @@ export function Funcionarios({
 }) {
   const [edicao, setEdicao] = useState<Funcionario | null>(null);
   const [novoCargo, setNovoCargo] = useState("");
+  const [novoPiso, setNovoPiso] = useState("");
+  const [nomesCargo, setNomesCargo] = useState<Record<string, string>>({});
+  const [pisosCargo, setPisosCargo] = useState<Record<string, string>>({});
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -66,6 +70,10 @@ export function Funcionarios({
     () => new Set(funcionarios.map((f) => f.pdvVendedorId).filter(Boolean)),
     [funcionarios],
   );
+  const pisoDoCargoSelecionado = useMemo(() => {
+    const c = edicao?.cargoId ? cargos.find((x) => x.id === edicao.cargoId) : undefined;
+    return c?.pisoGarantido ?? null;
+  }, [edicao?.cargoId, cargos]);
   const semCadastro = useMemo(
     () => vendedores.filter((v) => !vinculados.has(v.id) && (v.nome || v.apelido)),
     [vendedores, vinculados],
@@ -78,6 +86,8 @@ export function Funcionarios({
     try {
       await fn();
       await onRecarregar();
+      setNomesCargo({});
+      setPisosCargo({});
       setOk(mensagem);
     } catch (e) {
       setErro((e as Error).message);
@@ -118,27 +128,69 @@ export function Funcionarios({
       {mostrarCargos ? (
         <Card>
           <CardContent className="space-y-2 py-4">
-            <h2 className="text-[0.95rem] font-semibold tracking-tight">Cargos</h2>
+            <h2 className="text-[0.95rem] font-semibold tracking-tight">Cargos e piso garantido</h2>
             <p className="text-xs text-muted-foreground">
-              Os cargos são livres — crie os que a operação precisar. As regras de comissão se
-              penduram neles.
+              O piso é definido aqui, por cargo — vale para todo mundo do cargo. Só quem tiver
+              acordo diferente precisa de piso próprio na ficha.
             </p>
             <div className="divide-y divide-border">
-              {cargos.map((c) => (
-                <div key={c.id} className="flex items-center justify-between gap-2 py-2 text-sm">
-                  <span>{c.nome}</span>
-                  {podeGerir ? (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={ocupado}
-                      onClick={() => executar(() => excluirCargo(c.id), "Cargo excluído.")}
-                    >
-                      <Trash2 className="text-destructive" />
-                    </Button>
-                  ) : null}
-                </div>
-              ))}
+              {cargos.map((c) => {
+                const nome = nomesCargo[c.id] ?? c.nome;
+                const piso = pisosCargo[c.id] ?? (c.pisoGarantido == null ? "" : String(c.pisoGarantido));
+                const mudou =
+                  nome !== c.nome ||
+                  piso !== (c.pisoGarantido == null ? "" : String(c.pisoGarantido));
+                return (
+                  <div key={c.id} className="flex items-center gap-2 py-2">
+                    <Input
+                      className="h-9 min-w-0 flex-1"
+                      value={nome}
+                      disabled={!podeGerir}
+                      onChange={(e) => setNomesCargo({ ...nomesCargo, [c.id]: e.target.value })}
+                    />
+                    <Input
+                      className="h-9 w-32"
+                      type="number"
+                      step="0.01"
+                      placeholder="piso R$"
+                      value={piso}
+                      disabled={!podeGerir}
+                      onChange={(e) => setPisosCargo({ ...pisosCargo, [c.id]: e.target.value })}
+                    />
+                    {podeGerir ? (
+                      <>
+                        <Button
+                          size="sm"
+                          variant={mudou ? "default" : "outline"}
+                          disabled={ocupado || !mudou || !nome.trim()}
+                          onClick={() =>
+                            executar(
+                              () =>
+                                salvarCargo({
+                                  id: c.id,
+                                  nome: nome.trim(),
+                                  ordem: c.ordem,
+                                  pisoGarantido: piso === "" ? null : Number(piso),
+                                }),
+                              "Cargo salvo.",
+                            )
+                          }
+                        >
+                          Salvar
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={ocupado}
+                          onClick={() => executar(() => excluirCargo(c.id), "Cargo excluído.")}
+                        >
+                          <Trash2 className="text-destructive" />
+                        </Button>
+                      </>
+                    ) : null}
+                  </div>
+                );
+              })}
               {cargos.length === 0 ? (
                 <p className="py-2 text-xs text-muted-foreground">Nenhum cargo cadastrado ainda.</p>
               ) : null}
@@ -146,17 +198,31 @@ export function Funcionarios({
             {podeGerir ? (
               <div className="flex gap-2 pt-1">
                 <Input
+                  className="min-w-0 flex-1"
                   placeholder="Ex.: Vendedor, Subgerente, Gerente, Supervisor"
                   value={novoCargo}
                   onChange={(e) => setNovoCargo(e.target.value)}
+                />
+                <Input
+                  className="w-32"
+                  type="number"
+                  step="0.01"
+                  placeholder="piso R$"
+                  value={novoPiso}
+                  onChange={(e) => setNovoPiso(e.target.value)}
                 />
                 <Button
                   size="sm"
                   disabled={ocupado || !novoCargo.trim()}
                   onClick={() =>
                     executar(async () => {
-                      await salvarCargo({ nome: novoCargo.trim(), ordem: cargos.length + 1 });
+                      await salvarCargo({
+                        nome: novoCargo.trim(),
+                        ordem: cargos.length + 1,
+                        pisoGarantido: novoPiso === "" ? null : Number(novoPiso),
+                      });
                       setNovoCargo("");
+                      setNovoPiso("");
                     }, "Cargo criado.")
                   }
                 >
@@ -231,10 +297,20 @@ export function Funcionarios({
                     ))}
                 </Select>
               </Campo>
-              <Campo label="Piso garantido (R$)" hint="Mínimo do mês. Recebe o MAIOR entre piso e comissão.">
+              <Campo
+                label="Piso individual (R$)"
+                hint={
+                  pisoDoCargoSelecionado == null
+                    ? "Só preencha se esta pessoa tem acordo diferente. O piso normal vem do cargo."
+                    : `Vazio = usa o piso do cargo (${formatBRL(pisoDoCargoSelecionado)}). Preencha só para acordo individual.`
+                }
+              >
                 <Input
                   type="number"
                   step="0.01"
+                  placeholder={
+                    pisoDoCargoSelecionado == null ? "—" : String(pisoDoCargoSelecionado)
+                  }
                   value={edicao.pisoGarantido ?? ""}
                   onChange={(e) =>
                     setEdicao({
@@ -395,9 +471,17 @@ export function Funcionarios({
                 </p>
               </button>
               <div className="shrink-0 text-right">
-                <p className="text-xs text-muted-foreground">piso</p>
-                <p className="font-semibold tnum">
-                  {f.pisoGarantido == null ? "—" : formatBRL(f.pisoGarantido)}
+                <p className="text-xs text-muted-foreground">
+                  {pisoEfetivo(f, cargos).origem === "funcionario" ? "piso próprio" : "piso"}
+                </p>
+                <p
+                  className={`font-semibold tnum ${
+                    pisoEfetivo(f, cargos).valor == null ? "text-destructive" : ""
+                  }`}
+                >
+                  {pisoEfetivo(f, cargos).valor == null
+                    ? "—"
+                    : formatBRL(pisoEfetivo(f, cargos).valor!)}
                 </p>
               </div>
             </CardContent>

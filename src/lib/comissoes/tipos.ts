@@ -89,6 +89,8 @@ export interface Cargo {
   id: string;
   nome: string;
   ordem?: number;
+  /** Piso garantido do cargo — é aqui que o piso normalmente se define. */
+  pisoGarantido?: number | null;
   ativo: boolean;
 }
 
@@ -100,6 +102,7 @@ export interface Funcionario {
   lojaId: number | null;
   pdvVendedorId?: string | null;
   lojasGrupo?: number[];
+  /** Piso individual — EXCEÇÃO. Vazio (null) = herda o piso do cargo. */
   pisoGarantido?: number | null;
   admissao?: string | null;
   ativo: boolean;
@@ -175,6 +178,7 @@ export interface LinhaApuracao {
   pdvVendedorId: string | null;
   regraId: string | null;
   regraNome: string | null;
+  pisoOrigem: "cargo" | "funcionario" | null;
   vendaProjetada: number | null;
   comissaoProjetada: number | null;
   valorDevidoProjetado: number | null;
