@@ -578,7 +578,7 @@ export async function salvarDespesaManual(input: {
 }
 
 /** Baixa (ou reabre) o pagamento de uma despesa manual. */
-export async function baixarDespesaManual(input: { id: string; pago: boolean; dataPagamento?: string }): Promise<{ ok: boolean; pago: boolean }> {
+export async function baixarDespesaManual(input: { id: string; pago: boolean; dataPagamento?: string; contasPagamento?: ContaPagamento[] }): Promise<{ ok: boolean; pago: boolean }> {
   const { functions } = fb();
   const fn = httpsCallable(functions, "baixarDespesaManual");
   const res = await fn(input);

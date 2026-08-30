@@ -274,7 +274,7 @@ export default function FinanceiroPage() {
       }
       const cps = contasValidas(contasPg);
       if (p.origem === "despesa-manual") {
-        await baixarDespesaManual({ id: p.despesaManualId as string, pago: true, dataPagamento: dataPg });
+        await baixarDespesaManual({ id: p.despesaManualId as string, pago: true, dataPagamento: dataPg, contasPagamento: cps.length ? cps : undefined });
       } else if (p.origem === "acordo") {
         await baixarParcelaAcordo({ acordoId: p.acordoId as string, indice: p.indice as number, pago: true, dataPagamento: dataPg, contasPagamento: cps.length ? cps : undefined });
       } else if (p.origem === "despesa") {
@@ -807,18 +807,14 @@ export default function FinanceiroPage() {
                                   />
                                 </div>
                               ) : null}
-                              {p.origem === "despesa-manual" ? (
-                                <p className="text-[11px] text-muted-foreground">Sai da conta desta despesa ({nomeConta(p.companyId ?? "")}). Para mudar a conta, edite a despesa em Despesas manuais.</p>
-                              ) : (
-                                <div className="rounded-md border border-border p-2">
-                                  <ContasPagamento
-                                    empresas={empresas}
-                                    valorTotal={p.origem === "acordo" ? (p.valor ?? 0) : (Number(valorPg) || p.valor || 0)}
-                                    contas={contasPg}
-                                    onChange={setContasPg}
-                                  />
-                                </div>
-                              )}
+                              <div className="rounded-md border border-border p-2">
+                                <ContasPagamento
+                                  empresas={empresas}
+                                  valorTotal={p.origem === "acordo" || p.origem === "despesa-manual" ? (p.valor ?? 0) : (Number(valorPg) || p.valor || 0)}
+                                  contas={contasPg}
+                                  onChange={setContasPg}
+                                />
+                              </div>
                               </>
                               )}
                               <div className="flex gap-2 pt-1">

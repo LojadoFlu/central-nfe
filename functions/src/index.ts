@@ -2618,11 +2618,10 @@ export const fluxoCaixa = onCall(
     const dmSnap = await db.collection("manual_expenses").get();
     for (const doc of dmSnap.docs) {
       const x = doc.data();
-      const cid = x.contaEmpresaId ?? x.empresaId;
-      if (!daEmpresa(cid)) continue;
       const pago = x.pago !== false;
       const dia = pago ? d10(x.dataPagamento ?? x.dia) : d10(x.dia);
-      saida(dia, Number(x.valor ?? 0), pago, "despesasManuais");
+      // paga com rateio → sai das contas escolhidas; senão, da conta da despesa (contaEmpresaId/empresa).
+      saidaObrig(dia, Number(x.valor ?? 0), pago, "despesasManuais", x.contaEmpresaId ?? x.empresaId, x.contasPagamento);
     }
     // SAÍDAS — parcelas de acordos
     const acSnap = await db.collection("nfe_agreements").get();
@@ -3421,9 +3420,12 @@ export const baixarDespesaManual = onCall(opcoes, async (req) => {
   if (pago) {
     const dataPagamento = /^\d{4}-\d{2}-\d{2}$/.test(String(d.dataPagamento ?? ""))
       ? String(d.dataPagamento) : (String(snap.data()?.dia ?? "").slice(0, 10) || now.slice(0, 10));
-    await ref.set({ pago: true, dataPagamento, baixadoPor: uid, baixadoEm: now, atualizadoEm: now, atualizadoPor: uid }, { merge: true });
+    // Origem do pagamento (conta/rateio), como nas demais baixas. Soma tem de bater com o valor.
+    const valorRef = Number(snap.data()?.valor ?? 0);
+    const contasPagamento = parseContasPagamento(d.contasPagamento, valorRef);
+    await ref.set({ pago: true, dataPagamento, contasPagamento: contasPagamento ?? FieldValue.delete(), baixadoPor: uid, baixadoEm: now, atualizadoEm: now, atualizadoPor: uid }, { merge: true });
   } else {
-    await ref.set({ pago: false, dataPagamento: null, atualizadoEm: now, atualizadoPor: uid }, { merge: true });
+    await ref.set({ pago: false, dataPagamento: null, contasPagamento: FieldValue.delete(), atualizadoEm: now, atualizadoPor: uid }, { merge: true });
   }
   await auditar(uid, "manual.baixarDespesa", { id, pago });
   return { ok: true, pago };
