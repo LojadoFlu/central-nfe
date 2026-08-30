@@ -9,10 +9,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
-import { Check, Download, Lock, LockOpen, TriangleAlert } from "lucide-react";
+import { Check, Download, FileText, Lock, LockOpen, TriangleAlert } from "lucide-react";
 import type { ResultadoCompetencia, StatusFechamento } from "@/lib/comissoes/tipos";
 import { STATUS_LABEL } from "@/lib/comissoes/tipos";
 import { alterarStatusFechamento, fecharComissoes } from "@/lib/comissoes/repo";
+import { gerarPdfFolha } from "@/lib/comissoes/folha-pdf";
 import { Aviso, mesLabel, pctFmt } from "./comum";
 
 const FLUXO: StatusFechamento[] = ["aberto", "pre-fechamento", "conferido", "fechado"];
@@ -170,9 +171,14 @@ export function Fechamento({
                 </p>
               ) : null}
             </div>
-            <Button size="sm" variant="outline" onClick={exportar}>
-              <Download /> Exportar CSV
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={exportar}>
+                <Download /> CSV
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => gerarPdfFolha(apuracao)}>
+                <FileText /> PDF
+              </Button>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2 rounded-md bg-muted/50 p-3 text-xs sm:grid-cols-4">
