@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { listarStores, type StorePdv } from "@/lib/nfe/repo";
+import { agruparLojas } from "@/lib/comissoes/grupos";
 import {
   apurarComissoes,
   listarAjustes,
@@ -104,7 +105,8 @@ export default function ComissoesPage() {
       setRegras(r);
       setBonus(b);
       setVendedores(v);
-      setLojas(l.filter((x) => x.ativoSync !== false));
+      // Filiais agrupadas viram UMA loja — é assim que o servidor apura.
+      setLojas(agruparLojas(l));
       setConfig(cfg);
     } catch (e) {
       setErro((e as Error).message);

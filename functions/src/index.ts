@@ -24,6 +24,7 @@ import {
 import { PdvnetClient } from "./pdvnet/client";
 import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-vendas";
 import { sincronizarVendedores } from "./comissoes/vendedores";
+import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./comissoes/grupos";
 import {
   alterarStatusFechamento,
   apurarCompetencia,
@@ -3887,6 +3888,14 @@ export const _internal = { nomeSegredoCertificado };
 // pela tela. Aqui só há CRUD validado + orquestração do motor (§46).
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Grupos de loja (o PDV tem filiais separadas que aqui viram uma loja só). */
+async function gruposDeLoja() {
+  const snap = await db.collection("pdv_stores").get();
+  return construirGrupos(
+    snap.docs.map((d) => ({ id: Number(d.id), ...(d.data() as object) }) as LojaBruta),
+  );
+}
+
 /** Normaliza "YYYY-MM". */
 function competenciaValida(v: unknown): string {
   const s = String(v ?? "").slice(0, 7);
@@ -3994,16 +4003,21 @@ export const comissoesSalvarFuncionario = onCall(opcoes, async (req) => {
   }
 
   const anterior = (await db.collection("com_funcionarios").doc(id).get()).data() ?? null;
+  // Filiais que a operação trata como uma loja só entram pelo id canônico.
+  const grupos = await gruposDeLoja();
   const dados = {
     id,
     nome,
     cpf: texto(req.data?.cpf, 14).replace(/\D/g, "") || null,
     cargoId: texto(req.data?.cargoId, 80) || null,
-    lojaId: numOuNulo(req.data?.lojaId),
+    lojaId: canonizar(grupos, numOuNulo(req.data?.lojaId)),
     pdvVendedorId,
-    lojasGrupo: Array.isArray(req.data?.lojasGrupo)
-      ? req.data.lojasGrupo.map((n: unknown) => num(n)).filter((n: number) => n > 0)
-      : [],
+    lojasGrupo: canonizarLista(
+      grupos,
+      Array.isArray(req.data?.lojasGrupo)
+        ? req.data.lojasGrupo.map((n: unknown) => num(n)).filter((n: number) => n > 0)
+        : [],
+    ),
     pisoGarantido: numOuNulo(req.data?.pisoGarantido),
     admissao: texto(req.data?.admissao, 10) || null,
     ativo: req.data?.ativo !== false,
@@ -4040,9 +4054,10 @@ export const comissoesImportarVendedores = onCall(
       ? req.data.ids.map((s: unknown) => texto(s, 40)).filter(Boolean)
       : [];
 
-    const [sellers, funcionarios] = await Promise.all([
+    const [sellers, funcionarios, grupos] = await Promise.all([
       db.collection("pdv_sellers").get(),
       db.collection("com_funcionarios").get(),
+      gruposDeLoja(),
     ]);
     const jaVinculados = new Set(
       funcionarios.docs.map((d) => d.data().pdvVendedorId).filter(Boolean),
@@ -4061,7 +4076,7 @@ export const comissoesImportarVendedores = onCall(
         nome: v.nome || v.apelido,
         cpf: v.cpf ?? null,
         cargoId,
-        lojaId: v.lojaId ?? null,
+        lojaId: canonizar(grupos, v.lojaId ?? null),
         pdvVendedorId: d.id,
         lojasGrupo: [],
         pisoGarantido: null,
@@ -4131,7 +4146,7 @@ export const comissoesSalvarRegra = onCall(opcoes, async (req) => {
     ativo: req.data?.ativo !== false,
     funcionarioId: texto(req.data?.funcionarioId, 80) || null,
     cargoId: texto(req.data?.cargoId, 80) || null,
-    lojaId: numOuNulo(req.data?.lojaId),
+    lojaId: canonizar(await gruposDeLoja(), numOuNulo(req.data?.lojaId)),
     componentes,
     vigenciaDe: competenciaValida(req.data?.vigenciaDe),
     vigenciaAte: req.data?.vigenciaAte ? competenciaValida(req.data.vigenciaAte) : null,
@@ -4159,13 +4174,14 @@ export const comissoesExcluirRegra = onCall(opcoes, async (req) => {
 export const comissoesSalvarMetas = onCall(opcoes, async (req) => {
   const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
   const itens = Array.isArray(req.data?.metas) ? req.data.metas : [req.data];
+  const grupos = await gruposDeLoja();
   const batch = db.batch();
   const salvos: string[] = [];
   for (const m of itens) {
     const competencia = competenciaValida(m?.competencia);
     const funcionarioId = texto(m?.funcionarioId, 80) || null;
     const cargoId = texto(m?.cargoId, 80) || null;
-    const lojaId = numOuNulo(m?.lojaId);
+    const lojaId = canonizar(grupos, numOuNulo(m?.lojaId));
     if (!funcionarioId && !cargoId && lojaId == null) {
       throw new HttpsError("invalid-argument", "A meta precisa de um escopo (funcionário, cargo ou loja).");
     }
@@ -4214,7 +4230,7 @@ export const comissoesSalvarBonus = onCall(opcoes, async (req) => {
     ativo: req.data?.ativo !== false,
     funcionarioId: texto(req.data?.funcionarioId, 80) || null,
     cargoId: texto(req.data?.cargoId, 80) || null,
-    lojaId: numOuNulo(req.data?.lojaId),
+    lojaId: canonizar(await gruposDeLoja(), numOuNulo(req.data?.lojaId)),
     gatilho: {
       tipo: tiposGatilho.includes(String(g.tipo)) ? String(g.tipo) : "sempre",
       minimoPct: num(g.minimoPct, 100),

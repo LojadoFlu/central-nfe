@@ -9,6 +9,7 @@
 import { db } from "../lib/base";
 import type { PdvnetClient } from "../pdvnet/client";
 import { limitesDaCompetencia } from "./consolidacao";
+import { canonizar, construirGrupos, type LojaBruta } from "./grupos";
 
 export interface VendedorPdv {
   id: string; // = Codigo/VendedorId
@@ -52,9 +53,15 @@ export async function sincronizarVendedores(
 ): Promise<ResultadoSyncVendedores> {
   const agora = new Date().toISOString();
 
-  // 1) Lojas ativas.
+  // 1) Lojas ativas. A consulta ao PDV é por FILIAL (ele não sabe do agrupamento);
+  // o que gravamos depois é a loja canônica do grupo.
   const lojasSnap = await db.collection("pdv_stores").where("ativoSync", "==", true).get();
   const lojaIds = lojasSnap.docs.map((d) => Number(d.id)).filter((n) => Number.isFinite(n));
+  const todasLojas = await db.collection("pdv_stores").get();
+  const grupos = construirGrupos(
+    todasLojas.docs.map((d) => ({ id: Number(d.id), ...(d.data() as object) }) as LojaBruta),
+  );
+  const grupoDa = (id: number | null | undefined) => canonizar(grupos, id);
 
   // 2) Equipe de cada loja (nome/CPF/apelido).
   const porCodigo = new Map<string, VendedorPdv>();
@@ -72,7 +79,8 @@ export async function sincronizarVendedores(
       equipe++;
       const atual = porCodigo.get(id);
       const lojas = new Set(atual?.lojas ?? []);
-      lojas.add(lojaId);
+      const grupoLoja = grupoDa(lojaId);
+      if (grupoLoja != null) lojas.add(grupoLoja);
       porCodigo.set(id, {
         id,
         nome: limpar(v.Nome) ?? atual?.nome ?? null,
@@ -111,7 +119,7 @@ export async function sincronizarVendedores(
       };
       const id = limpar(s.vendedorId);
       if (!id || s.cancelada) continue;
-      const lojaId = s.lojaId ?? null;
+      const lojaId = grupoDa(s.lojaId ?? null);
       const valor = Number(s.valorTotal) || 0;
       const atual =
         porCodigo.get(id) ??
@@ -167,7 +175,7 @@ export async function sincronizarVendedores(
       v.nome = limpar(det.Nome);
       v.cpf = limpar(det.CPF)?.replace(/\D/g, "") ?? null;
       v.inativo = det.Inativo ?? null;
-      if (v.lojaId == null && det.LojaId != null) v.lojaId = det.LojaId;
+      if (v.lojaId == null && det.LojaId != null) v.lojaId = grupoDa(det.LojaId);
     }
     if (!v.nome) semNome++;
   }

@@ -24,6 +24,7 @@ import {
   escolherMetaLoja,
   escolherRegra,
 } from "./motor";
+import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./grupos";
 import type {
   Ajuste,
   Bonus,
@@ -228,16 +229,20 @@ export async function calcularCompetencia(
       db.collection("pdv_sellers").get(),
     ]);
 
-  const consolidado = consolidar(vendas);
-  const nomeLoja = new Map<number, string>();
-  const empresaDaLoja = new Map<number, string | null>();
-  for (const d of lojasSnap.docs) {
-    const v = d.data() as { grupoNome?: string; nome?: string; empresaId?: string | null };
-    nomeLoja.set(Number(d.id), v.grupoNome || v.nome || `Loja ${d.id}`);
-    empresaDaLoja.set(Number(d.id), v.empresaId ?? null);
-  }
+  // Uma loja da operação pode ser duas filiais no PDV (a Barra é 582 + 912).
+  // Tudo daqui para baixo trabalha na loja CANÔNICA do grupo: venda, meta,
+  // cadastro e fechamento enxergam uma loja só.
+  const grupos = construirGrupos(
+    lojasSnap.docs.map((d) => ({ id: Number(d.id), ...(d.data() as object) }) as LojaBruta),
+  );
+  const consolidado = consolidar(
+    vendas.map((v) => ({ ...v, lojaId: canonizar(grupos, v.lojaId) })),
+  );
+  const nomeLoja = grupos.nomeDoGrupo;
   const nomeCargo = new Map(cargos.map((c) => [c.id, c.nome]));
-  const metasDaComp = metas.filter((m) => m.competencia === competencia);
+  const metasDaComp = metas
+    .filter((m) => m.competencia === competencia)
+    .map((m) => ({ ...m, lojaId: canonizar(grupos, m.lojaId) }));
   const ajustesDaComp = ajustes.filter((a) => a.competencia === competencia);
   const prog = progresso(competencia);
   const fatorProjecao = prog.emCurso && prog.decorridos > 0 ? prog.totais / prog.decorridos : null;
@@ -250,8 +255,14 @@ export async function calcularCompetencia(
   const semPiso: string[] = [];
   const semMeta: string[] = [];
 
-  for (const f of funcionarios) {
-    if (!f.ativo) continue;
+  for (const bruto of funcionarios) {
+    if (!bruto.ativo) continue;
+    // Cadastro antigo pode apontar para a filial irmã: normaliza na leitura.
+    const f: Funcionario = {
+      ...bruto,
+      lojaId: canonizar(grupos, bruto.lojaId),
+      lojasGrupo: canonizarLista(grupos, bruto.lojasGrupo),
+    };
     const vendedorId = f.pdvVendedorId ?? null;
     const individual = (vendedorId && consolidado.porVendedor.get(vendedorId)) || ZERO;
     const loja = (f.lojaId != null && consolidado.porLoja.get(f.lojaId)) || ZERO;
@@ -298,7 +309,7 @@ export async function calcularCompetencia(
     if (f.lojaId != null) {
       comissaoPorLoja.set(f.lojaId, (comissaoPorLoja.get(f.lojaId) ?? 0) + res.valorDevido);
     }
-    const empresaId = f.lojaId != null ? (empresaDaLoja.get(f.lojaId) ?? null) : null;
+    const empresaId = f.lojaId != null ? (grupos.empresaDoGrupo.get(f.lojaId) ?? null) : null;
     if (empresaId) porEmpresaMap.set(empresaId, (porEmpresaMap.get(empresaId) ?? 0) + res.valorDevido);
     const chaveCargo = f.cargoId ?? null;
     const acumCargo = porCargoMap.get(chaveCargo) ?? {
