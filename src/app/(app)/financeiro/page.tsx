@@ -48,15 +48,25 @@ function parcelaDespesa(d: DespesaFixa, ym: string): number {
   }
   return n;
 }
-/** Janela de meses (YYYY-MM) de `back` meses atrás até `fwd` meses à frente. */
-function janelaMeses(back: number, fwd: number): string[] {
-  const out: string[] = [];
-  const now = new Date();
-  for (let i = -back; i <= fwd; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
-    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+/** Próxima parcela EM ABERTO (não paga) de uma despesa fixa: o 1º mês que incide,
+ * da criação em diante, sem pagamento marcado. null se está tudo pago / fora de vigência. */
+function proximaParcelaAberta(d: DespesaFixa): string | null {
+  const ini = (d.createdAt ?? "").slice(0, 7);
+  const agora = new Date();
+  let ym0 = ini || `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}`;
+  const fim = d.fimVigencia ?? "";
+  // teto p/ permanentes: não procurar além de 24 meses à frente do mês atual
+  const capD = new Date(agora.getFullYear(), agora.getMonth() + 24, 1);
+  const cap = `${capD.getFullYear()}-${String(capD.getMonth() + 1).padStart(2, "0")}`;
+  let [y, m] = ym0.split("-").map(Number);
+  for (let i = 0; i < 600; i++) {
+    const ym = `${y}-${String(m).padStart(2, "0")}`;
+    if (fim && ym > fim) return null;
+    if (!fim && ym > cap) return null;
+    if (incideNoMes(d, ym) && d.pagamentos?.[ym]?.pago !== true) return ym;
+    m++; if (m > 12) { m = 1; y++; }
   }
-  return out;
+  return null;
 }
 
 /** Conta a pagar: parcela de NF-e, parcela de acordo, mês de despesa fixa ou despesa manual. */
@@ -203,26 +213,21 @@ export default function FinanceiroPage() {
         dataPagamento: pc.dataPagamento ?? null, descricao: a.descricao ?? a.nomeFornecedor,
       }));
     });
-    // Despesas fixas — uma "conta" por mês que incide (janela recente + próximos).
-    const meses = janelaMeses(3, 1);
+    // Despesas fixas — UMA conta por despesa, na PRÓXIMA parcela em aberto (a vencer/vencida).
+    // Ao pagar, avança sozinha para a próxima. O histórico pago fica na tela de Despesas fixas.
     const df: Conta[] = despesas.flatMap((d) => {
       if (d.ativo === false) return [];
-      // Não retroagir antes da criação; nem passar do fim da vigência (qtd de parcelas).
-      const inicio = d.createdAt ? d.createdAt.slice(0, 7) : "";
-      const fim = d.fimVigencia ?? "";
-      return meses.filter((ym) => incideNoMes(d, ym) && (!inicio || ym >= inicio) && (!fim || ym <= fim)).map((ym) => {
-        const pg = d.pagamentos?.[ym];
-        return {
-          id: `despesa:${d.id}:${ym}`, origem: "despesa" as const, despesaId: d.id, ym,
-          companyId: d.companyId ?? undefined, cnpjEmit: null, xNomeEmit: d.nome,
-          nDup: ym, vencimento: vencimentoDoMes(ym, d.diaVencimento),
-          parcelaFixa: d.qtdParcelas && d.qtdParcelas > 1 ? `${parcelaDespesa(d, ym)}/${d.qtdParcelas}` : undefined,
-          valor: pg?.pago ? (pg.valor ?? d.valor) : d.valor,
-          statusPagamento: pg?.pago ? "pago" : "nao_informado",
-          dataPagamento: pg?.data ?? null, valorPago: pg?.valor ?? null,
-          contasPagamento: pg?.contasPagamento, descricao: d.categoria,
-        };
-      });
+      const ym = proximaParcelaAberta(d);
+      if (!ym) return [];
+      return [{
+        id: `despesa:${d.id}:${ym}`, origem: "despesa" as const, despesaId: d.id, ym,
+        companyId: d.companyId ?? undefined, cnpjEmit: null, xNomeEmit: d.nome,
+        nDup: ym, vencimento: vencimentoDoMes(ym, d.diaVencimento),
+        parcelaFixa: d.qtdParcelas && d.qtdParcelas > 1 ? `${parcelaDespesa(d, ym)}/${d.qtdParcelas}` : undefined,
+        valor: d.valor,
+        statusPagamento: "nao_informado" as const,
+        dataPagamento: null, descricao: d.categoria,
+      }];
     });
     // Despesas manuais NÃO pagas — cada uma é uma conta a pagar (vencimento = dia).
     const dm: Conta[] = despManuais
