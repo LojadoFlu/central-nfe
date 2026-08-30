@@ -7,6 +7,8 @@ import type {
   PdvRede,
   PdvTokenAcesso,
   PdvVenda,
+  PdvVendedor,
+  PdvVendedorFilial,
 } from "./types";
 
 export interface PdvnetConfig {
@@ -105,6 +107,30 @@ export class PdvnetClient {
       if (pagina > 40) break; // trava de segurança
     }
     return todas;
+  }
+
+  /**
+   * Equipe de uma filial. Chamada rápida (~1s) e por loja — a listagem global
+   * (/vendedores) tem ~27 mil registros de toda a rede PDVnet e é inviável.
+   * `Codigo` casa com `PdvVenda.VendedorId`.
+   */
+  async listarVendedoresDaFilial(codigoFilial: number): Promise<PdvVendedorFilial[]> {
+    const r = await this.get<PdvVendedorFilial[] | null>(
+      `/api/public/RecursoInicial/Vendedores/${codigoFilial}`,
+    );
+    return Array.isArray(r) ? r : [];
+  }
+
+  /** Cadastro completo de UM vendedor (traz Inativo, LojaId e SalarioFixo). */
+  async obterVendedor(id: string): Promise<PdvVendedor | null> {
+    try {
+      const r = await this.get<PdvVendedor | null>(
+        `/api/public/vendedores/${encodeURIComponent(id)}`,
+      );
+      return r && r.Id ? r : null;
+    } catch {
+      return null; // id desconhecido não pode derrubar a sincronização
+    }
   }
 
   /** Uma página de vendas no intervalo [inicio, fim] (datas yyyy-MM-dd). */

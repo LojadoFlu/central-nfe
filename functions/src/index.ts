@@ -23,6 +23,8 @@ import {
 } from "./lib/secrets";
 import { PdvnetClient } from "./pdvnet/client";
 import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-vendas";
+import { sincronizarVendedores } from "./comissoes/vendedores";
+import { apurarCompetencia } from "./comissoes/apuracao";
 import { parseOFX } from "./banco/ofx";
 import { parseContasPagar } from "./financeiro/contas-pagar";
 import { getStorage } from "firebase-admin/storage";
@@ -3841,3 +3843,447 @@ async function auditar(uid: string, acao: string, detalhe: Record<string, unknow
 // Placeholder de referência (não deployar sem billing/Secret Manager):
 // nomeSegredoCertificado é reexportado para uso nas Etapas 3–4 (sync/manifestação).
 export const _internal = { nomeSegredoCertificado };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// COMISSÕES — metas, bonificações e remuneração variável.
+// Toda a política (percentual, faixa, meta, piso) vive no Firestore e é editável
+// pela tela. Aqui só há CRUD validado + orquestração do motor (§46).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Normaliza "YYYY-MM". */
+function competenciaValida(v: unknown): string {
+  const s = String(v ?? "").slice(0, 7);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(s)) {
+    throw new HttpsError("invalid-argument", "Competência inválida (use AAAA-MM).");
+  }
+  return s;
+}
+function num(v: unknown, padrao = 0): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : padrao;
+}
+function numOuNulo(v: unknown): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function texto(v: unknown, max = 200): string {
+  return String(v ?? "").trim().slice(0, max);
+}
+/** Gera id novo quando não veio um. */
+function novoId(colecao: string, id?: unknown): string {
+  const s = texto(id, 80);
+  return s || db.collection(colecao).doc().id;
+}
+
+/** Sincroniza o espelho de vendedores do PDVnet (nomes, CPF, loja). */
+export const comissoesSincronizarVendedores = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "fiscal"]);
+    let cred;
+    try {
+      cred = await lerSegredoPdvnet();
+    } catch {
+      throw new HttpsError("failed-precondition", "Credenciais do PDVnet não configuradas.");
+    }
+    const comps: string[] = Array.isArray(req.data?.competencias) && req.data.competencias.length
+      ? req.data.competencias.map(competenciaValida)
+      : [hojeBRT().slice(0, 7)];
+    try {
+      const r = await sincronizarVendedores(new PdvnetClient(cred), comps);
+      await auditar(uid, "comissoes.sincronizarVendedores", { competencias: comps, ...r });
+      return { ok: true, ...r };
+    } catch (e) {
+      return { ok: false, erro: (e as Error).message };
+    }
+  },
+);
+
+/** Cria/atualiza um cargo (§4 — cargos não são fixos no código). */
+export const comissoesSalvarCargo = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const nome = texto(req.data?.nome, 60);
+  if (!nome) throw new HttpsError("invalid-argument", "Informe o nome do cargo.");
+  const id = novoId("com_cargos", req.data?.id);
+  await db.collection("com_cargos").doc(id).set(
+    {
+      id,
+      nome,
+      ordem: num(req.data?.ordem, 99),
+      ativo: req.data?.ativo !== false,
+      atualizadoEm: agoraISO(),
+    },
+    { merge: true },
+  );
+  await auditar(uid, "comissoes.salvarCargo", { id, nome });
+  return { ok: true, id };
+});
+
+export const comissoesExcluirCargo = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const id = texto(req.data?.id, 80);
+  if (!id) throw new HttpsError("invalid-argument", "Id obrigatório.");
+  const emUso = await db.collection("com_funcionarios").where("cargoId", "==", id).limit(1).get();
+  if (!emUso.empty) {
+    throw new HttpsError("failed-precondition", "Cargo em uso por funcionário(s) — desative em vez de excluir.");
+  }
+  await db.collection("com_cargos").doc(id).delete();
+  await auditar(uid, "comissoes.excluirCargo", { id });
+  return { ok: true };
+});
+
+/** Cria/atualiza um funcionário (piso, cargo, loja, vínculo com o PDV) (§4). */
+export const comissoesSalvarFuncionario = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const nome = texto(req.data?.nome, 120);
+  if (!nome) throw new HttpsError("invalid-argument", "Informe o nome do funcionário.");
+  const id = novoId("com_funcionarios", req.data?.id);
+  const pdvVendedorId = texto(req.data?.pdvVendedorId, 40) || null;
+
+  // Um código do PDV não pode estar em dois funcionários (§41 — sem venda dupla).
+  if (pdvVendedorId) {
+    const dup = await db
+      .collection("com_funcionarios")
+      .where("pdvVendedorId", "==", pdvVendedorId)
+      .get();
+    const conflito = dup.docs.find((d) => d.id !== id);
+    if (conflito) {
+      throw new HttpsError(
+        "already-exists",
+        `O código ${pdvVendedorId} do PDV já está vinculado a ${conflito.data().nome}.`,
+      );
+    }
+  }
+
+  const anterior = (await db.collection("com_funcionarios").doc(id).get()).data() ?? null;
+  const dados = {
+    id,
+    nome,
+    cpf: texto(req.data?.cpf, 14).replace(/\D/g, "") || null,
+    cargoId: texto(req.data?.cargoId, 80) || null,
+    lojaId: numOuNulo(req.data?.lojaId),
+    pdvVendedorId,
+    lojasGrupo: Array.isArray(req.data?.lojasGrupo)
+      ? req.data.lojasGrupo.map((n: unknown) => num(n)).filter((n: number) => n > 0)
+      : [],
+    pisoGarantido: numOuNulo(req.data?.pisoGarantido),
+    admissao: texto(req.data?.admissao, 10) || null,
+    ativo: req.data?.ativo !== false,
+    atualizadoEm: agoraISO(),
+  };
+  await db.collection("com_funcionarios").doc(id).set(dados, { merge: true });
+  await auditar(uid, "comissoes.salvarFuncionario", { id, nome, anterior, novo: dados });
+  return { ok: true, id };
+});
+
+export const comissoesExcluirFuncionario = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const id = texto(req.data?.id, 80);
+  if (!id) throw new HttpsError("invalid-argument", "Id obrigatório.");
+  const apurado = await db.collection("com_apuracoes").where("funcionarioId", "==", id).limit(1).get();
+  if (!apurado.empty) {
+    throw new HttpsError(
+      "failed-precondition",
+      "Funcionário já tem apuração fechada — inative em vez de excluir (o histórico não pode sumir).",
+    );
+  }
+  await db.collection("com_funcionarios").doc(id).delete();
+  await auditar(uid, "comissoes.excluirFuncionario", { id });
+  return { ok: true };
+});
+
+/** Cria funcionários a partir dos vendedores do PDV ainda não vinculados (§2). */
+export const comissoesImportarVendedores = onCall(
+  { ...opcoes, timeoutSeconds: 120 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+    const cargoId = texto(req.data?.cargoId, 80) || null;
+    const somente: string[] = Array.isArray(req.data?.ids)
+      ? req.data.ids.map((s: unknown) => texto(s, 40)).filter(Boolean)
+      : [];
+
+    const [sellers, funcionarios] = await Promise.all([
+      db.collection("pdv_sellers").get(),
+      db.collection("com_funcionarios").get(),
+    ]);
+    const jaVinculados = new Set(
+      funcionarios.docs.map((d) => d.data().pdvVendedorId).filter(Boolean),
+    );
+    let criados = 0;
+    let batch = db.batch();
+    let ops = 0;
+    for (const d of sellers.docs) {
+      const v = d.data() as { nome?: string; apelido?: string; cpf?: string; lojaId?: number | null };
+      if (jaVinculados.has(d.id)) continue;
+      if (somente.length && !somente.includes(d.id)) continue;
+      if (!v.nome && !v.apelido) continue; // sem nome não vira cadastro
+      const ref = db.collection("com_funcionarios").doc();
+      batch.set(ref, {
+        id: ref.id,
+        nome: v.nome || v.apelido,
+        cpf: v.cpf ?? null,
+        cargoId,
+        lojaId: v.lojaId ?? null,
+        pdvVendedorId: d.id,
+        lojasGrupo: [],
+        pisoGarantido: null,
+        admissao: null,
+        ativo: true,
+        origem: "pdvnet",
+        atualizadoEm: agoraISO(),
+      });
+      criados++;
+      if (++ops >= 400) {
+        await batch.commit();
+        batch = db.batch();
+        ops = 0;
+      }
+    }
+    if (ops > 0) await batch.commit();
+    await auditar(uid, "comissoes.importarVendedores", { criados, cargoId });
+    return { ok: true, criados };
+  },
+);
+
+/** Cria/atualiza uma regra de comissão com suas faixas e componentes (§35). */
+export const comissoesSalvarRegra = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const nome = texto(req.data?.nome, 120);
+  if (!nome) throw new HttpsError("invalid-argument", "Informe o nome da regra.");
+  const componentesIn = Array.isArray(req.data?.componentes) ? req.data.componentes : [];
+  if (componentesIn.length === 0) {
+    throw new HttpsError("invalid-argument", "A regra precisa de pelo menos um componente.");
+  }
+  const componentes = componentesIn.map((c: Record<string, unknown>, i: number) => {
+    const faixas = (Array.isArray(c.faixas) ? c.faixas : [])
+      .map((f: Record<string, unknown>) => ({
+        de: num(f.de),
+        percentual: num(f.percentual),
+        rotulo: texto(f.rotulo, 40) || null,
+      }))
+      .sort((a: { de: number }, b: { de: number }) => a.de - b.de);
+    if (faixas.length === 0) {
+      throw new HttpsError("invalid-argument", `Componente "${texto(c.rotulo, 40)}" sem faixas.`);
+    }
+    const condicao = c.condicao
+      ? {
+          tipo: texto((c.condicao as Record<string, unknown>).tipo, 30),
+          minimoPct: num((c.condicao as Record<string, unknown>).minimoPct, 100),
+        }
+      : null;
+    return {
+      id: texto(c.id, 40) || `c${i + 1}`,
+      rotulo: texto(c.rotulo, 60) || `Componente ${i + 1}`,
+      escopoVenda: ["individual", "loja", "grupo"].includes(String(c.escopoVenda))
+        ? String(c.escopoVenda)
+        : "individual",
+      baseCalculo: String(c.baseCalculo) === "bruta" ? "bruta" : "liquida",
+      baseFaixa: String(c.baseFaixa) === "percentualMeta" ? "percentualMeta" : "valor",
+      modelo: String(c.modelo) === "progressivo" ? "progressivo" : "integral",
+      faixas,
+      condicao,
+    };
+  });
+
+  const id = novoId("com_regras", req.data?.id);
+  const anterior = (await db.collection("com_regras").doc(id).get()).data() ?? null;
+  const dados = {
+    id,
+    nome,
+    ativo: req.data?.ativo !== false,
+    funcionarioId: texto(req.data?.funcionarioId, 80) || null,
+    cargoId: texto(req.data?.cargoId, 80) || null,
+    lojaId: numOuNulo(req.data?.lojaId),
+    componentes,
+    vigenciaDe: competenciaValida(req.data?.vigenciaDe),
+    vigenciaAte: req.data?.vigenciaAte ? competenciaValida(req.data.vigenciaAte) : null,
+    atualizadoEm: agoraISO(),
+  };
+  if (dados.vigenciaAte && dados.vigenciaAte < dados.vigenciaDe) {
+    throw new HttpsError("invalid-argument", "Fim da vigência anterior ao início.");
+  }
+  await db.collection("com_regras").doc(id).set(dados, { merge: true });
+  await auditar(uid, "comissoes.salvarRegra", { id, nome, anterior, novo: dados });
+  return { ok: true, id };
+});
+
+export const comissoesExcluirRegra = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const id = texto(req.data?.id, 80);
+  if (!id) throw new HttpsError("invalid-argument", "Id obrigatório.");
+  const anterior = (await db.collection("com_regras").doc(id).get()).data() ?? null;
+  await db.collection("com_regras").doc(id).delete();
+  await auditar(uid, "comissoes.excluirRegra", { id, anterior });
+  return { ok: true };
+});
+
+/** Metas da competência — aceita uma ou várias de uma vez (§9). */
+export const comissoesSalvarMetas = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const itens = Array.isArray(req.data?.metas) ? req.data.metas : [req.data];
+  const batch = db.batch();
+  const salvos: string[] = [];
+  for (const m of itens) {
+    const competencia = competenciaValida(m?.competencia);
+    const funcionarioId = texto(m?.funcionarioId, 80) || null;
+    const cargoId = texto(m?.cargoId, 80) || null;
+    const lojaId = numOuNulo(m?.lojaId);
+    if (!funcionarioId && !cargoId && lojaId == null) {
+      throw new HttpsError("invalid-argument", "A meta precisa de um escopo (funcionário, cargo ou loja).");
+    }
+    // Id determinístico pelo escopo: salvar de novo ATUALIZA, não duplica (§41).
+    const id = `${competencia}_${funcionarioId ?? "-"}_${cargoId ?? "-"}_${lojaId ?? "-"}`;
+    batch.set(
+      db.collection("com_metas").doc(id),
+      { id, competencia, funcionarioId, cargoId, lojaId, valor: num(m?.valor), atualizadoEm: agoraISO() },
+      { merge: true },
+    );
+    salvos.push(id);
+  }
+  await batch.commit();
+  await auditar(uid, "comissoes.salvarMetas", { qtd: salvos.length, ids: salvos.slice(0, 50) });
+  return { ok: true, salvos: salvos.length };
+});
+
+export const comissoesExcluirMeta = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const id = texto(req.data?.id, 120);
+  if (!id) throw new HttpsError("invalid-argument", "Id obrigatório.");
+  await db.collection("com_metas").doc(id).delete();
+  await auditar(uid, "comissoes.excluirMeta", { id });
+  return { ok: true };
+});
+
+/** Cria/atualiza um bônus configurável (§14). */
+export const comissoesSalvarBonus = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const nome = texto(req.data?.nome, 120);
+  if (!nome) throw new HttpsError("invalid-argument", "Informe o nome do bônus.");
+  const g = (req.data?.gatilho ?? {}) as Record<string, unknown>;
+  const p = (req.data?.premio ?? {}) as Record<string, unknown>;
+  const tiposGatilho = [
+    "sempre",
+    "atingimentoIndividual",
+    "atingimentoLoja",
+    "atingimentoGrupo",
+    "melhorVendedorLoja",
+  ];
+  const id = novoId("com_bonus", req.data?.id);
+  const anterior = (await db.collection("com_bonus").doc(id).get()).data() ?? null;
+  const dados = {
+    id,
+    nome,
+    ativo: req.data?.ativo !== false,
+    funcionarioId: texto(req.data?.funcionarioId, 80) || null,
+    cargoId: texto(req.data?.cargoId, 80) || null,
+    lojaId: numOuNulo(req.data?.lojaId),
+    gatilho: {
+      tipo: tiposGatilho.includes(String(g.tipo)) ? String(g.tipo) : "sempre",
+      minimoPct: num(g.minimoPct, 100),
+    },
+    premio: {
+      tipo: String(p.tipo) === "fixo" ? "fixo" : "percentual",
+      valor: num(p.valor),
+      escopoVenda: ["individual", "loja", "grupo"].includes(String(p.escopoVenda))
+        ? String(p.escopoVenda)
+        : "individual",
+      baseCalculo: String(p.baseCalculo) === "bruta" ? "bruta" : "liquida",
+    },
+    vigenciaDe: competenciaValida(req.data?.vigenciaDe),
+    vigenciaAte: req.data?.vigenciaAte ? competenciaValida(req.data.vigenciaAte) : null,
+    atualizadoEm: agoraISO(),
+  };
+  await db.collection("com_bonus").doc(id).set(dados, { merge: true });
+  await auditar(uid, "comissoes.salvarBonus", { id, nome, anterior, novo: dados });
+  return { ok: true, id };
+});
+
+export const comissoesExcluirBonus = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const id = texto(req.data?.id, 80);
+  if (!id) throw new HttpsError("invalid-argument", "Id obrigatório.");
+  const anterior = (await db.collection("com_bonus").doc(id).get()).data() ?? null;
+  await db.collection("com_bonus").doc(id).delete();
+  await auditar(uid, "comissoes.excluirBonus", { id, anterior });
+  return { ok: true };
+});
+
+/** Ajuste manual (bônus, desconto, correção) — exige motivo (§29). */
+export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const competencia = competenciaValida(req.data?.competencia);
+  const funcionarioId = texto(req.data?.funcionarioId, 80);
+  const motivo = texto(req.data?.motivo, 300);
+  const valor = num(req.data?.valor);
+  if (!funcionarioId) throw new HttpsError("invalid-argument", "Informe o funcionário.");
+  if (!motivo) throw new HttpsError("invalid-argument", "Ajuste exige motivo.");
+  if (!valor) throw new HttpsError("invalid-argument", "Informe um valor diferente de zero.");
+
+  const fech = (await db.collection("com_fechamentos").doc(competencia).get()).data();
+  if (fech?.status === "fechado") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Competência fechada — reabra o fechamento para lançar ajustes nela.",
+    );
+  }
+  const id = novoId("com_ajustes", req.data?.id);
+  await db.collection("com_ajustes").doc(id).set(
+    {
+      id,
+      funcionarioId,
+      competencia,
+      valor,
+      motivo,
+      tipo: "manual",
+      criadoPor: uid,
+      criadoEm: agoraISO(),
+    },
+    { merge: true },
+  );
+  await auditar(uid, "comissoes.salvarAjuste", { id, funcionarioId, competencia, valor, motivo });
+  return { ok: true, id };
+});
+
+export const comissoesExcluirAjuste = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const id = texto(req.data?.id, 120);
+  if (!id) throw new HttpsError("invalid-argument", "Id obrigatório.");
+  const snap = await db.collection("com_ajustes").doc(id).get();
+  const a = snap.data();
+  if (!a) return { ok: true };
+  if (a.tipo === "estorno") {
+    throw new HttpsError("failed-precondition", "Estorno automático não pode ser excluído — lance um ajuste manual.");
+  }
+  const fech = (await db.collection("com_fechamentos").doc(a.competencia).get()).data();
+  if (fech?.status === "fechado") {
+    throw new HttpsError("failed-precondition", "Competência fechada — reabra antes de mexer nos ajustes.");
+  }
+  await db.collection("com_ajustes").doc(id).delete();
+  await auditar(uid, "comissoes.excluirAjuste", { id, anterior: a });
+  return { ok: true };
+});
+
+/** Configuração geral do módulo (regra do piso, cargo padrão) (§5). */
+export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const regraPiso = String(req.data?.regraPiso) === "soma" ? "soma" : "maior";
+  const cargoPadraoId = texto(req.data?.cargoPadraoId, 80) || null;
+  await db
+    .collection("com_config")
+    .doc("geral")
+    .set({ regraPiso, cargoPadraoId, atualizadoEm: agoraISO(), atualizadoPor: uid }, { merge: true });
+  await auditar(uid, "comissoes.salvarConfig", { regraPiso, cargoPadraoId });
+  return { ok: true, regraPiso, cargoPadraoId };
+});
+
+/** Apura a competência (prévia, sem gravar) — base do acompanhamento e do fechamento. */
+export const comissoesApurar = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 300 },
+  async (req) => {
+    await exigirModulo(req, "comissoes", ["admin", "financeiro"]);
+    const competencia = competenciaValida(req.data?.competencia);
+    const r = await apurarCompetencia(competencia);
+    return { ok: true, ...r };
+  },
+);

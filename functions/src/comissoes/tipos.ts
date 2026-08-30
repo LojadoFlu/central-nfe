@@ -1,0 +1,214 @@
+// Comissões — tipos do domínio (motor de remuneração variável).
+//
+// Princípio (§46): NADA de percentual/meta/piso escrito no código. Tudo aqui é
+// só a FORMA das regras; os valores vivem no Firestore e são editáveis na tela.
+
+/** Competência = mês de apuração, "YYYY-MM". */
+export type Competencia = string;
+
+/** Sobre a venda de quem o componente incide. */
+export type EscopoVenda = "individual" | "loja" | "grupo";
+
+/** Qual valor da venda entra na base. */
+export type BaseCalculo =
+  | "liquida" // valorTotal da venda (já com descontos) — padrão recomendado (§16)
+  | "bruta"; // valorProdutos (antes dos descontos)
+
+/** Como as faixas são medidas. */
+export type BaseFaixa =
+  | "valor" // faixas em R$ vendidos
+  | "percentualMeta"; // faixas em % da meta (§35)
+
+/** Como o percentual da faixa se aplica (§8). */
+export type ModeloFaixa =
+  | "integral" // a faixa atingida vale para TUDO que foi vendido
+  | "progressivo"; // cada fatia usa o percentual da sua faixa
+
+/** Uma faixa da tabela de comissão. */
+export interface Faixa {
+  /** Piso da faixa: R$ (baseFaixa "valor") ou % da meta (baseFaixa "percentualMeta"). */
+  de: number;
+  /** Percentual de comissão da faixa. 1.5 = 1,5%. */
+  percentual: number;
+  /** Rótulo livre ("Meta", "Supermeta"…) — só apresentação. */
+  rotulo?: string | null;
+}
+
+/** Condição de pagamento de um componente/bônus (ex.: só se a loja bateu a meta). */
+export interface Condicao {
+  tipo: "atingimentoIndividual" | "atingimentoLoja" | "atingimentoGrupo";
+  /** Atingimento mínimo em % (100 = bateu a meta). */
+  minimoPct: number;
+}
+
+/**
+ * Um pedaço do cálculo. O vendedor normalmente tem 1 (venda própria); o gerente
+ * pode ter 2 (venda própria + % da loja quando a loja bate a meta); o supervisor
+ * tem 1 sobre o grupo de lojas (§11–13).
+ */
+export interface Componente {
+  id: string;
+  rotulo: string;
+  escopoVenda: EscopoVenda;
+  baseCalculo: BaseCalculo;
+  baseFaixa: BaseFaixa;
+  modelo: ModeloFaixa;
+  faixas: Faixa[];
+  condicao?: Condicao | null;
+}
+
+/** Regra de comissão. A hierarquia (§36) vem do escopo preenchido. */
+export interface Regra {
+  id: string;
+  nome: string;
+  ativo: boolean;
+  /** Escopo — quanto mais campos preenchidos, mais específica (§36). */
+  funcionarioId?: string | null;
+  cargoId?: string | null;
+  lojaId?: number | null;
+  componentes: Componente[];
+  /** Vigência por competência, inclusiva (§33). vigenciaAte null = em aberto. */
+  vigenciaDe: Competencia;
+  vigenciaAte?: Competencia | null;
+}
+
+/** Gatilho de um bônus (§14). */
+export interface Gatilho {
+  tipo:
+    | "sempre"
+    | "atingimentoIndividual"
+    | "atingimentoLoja"
+    | "atingimentoGrupo"
+    | "melhorVendedorLoja";
+  /** Atingimento mínimo em % (para os gatilhos de atingimento). */
+  minimoPct?: number;
+}
+
+/** Prêmio do bônus: percentual sobre uma base, ou valor fixo. */
+export interface Premio {
+  tipo: "percentual" | "fixo";
+  /** Percentual (0.2 = 0,2%) ou R$, conforme `tipo`. */
+  valor: number;
+  /** Base do percentual (ignorado quando `tipo` = "fixo"). */
+  escopoVenda?: EscopoVenda;
+  baseCalculo?: BaseCalculo;
+}
+
+/** Bônus configurável — mecanismo genérico, não só meta/supermeta (§14). */
+export interface Bonus {
+  id: string;
+  nome: string;
+  ativo: boolean;
+  funcionarioId?: string | null;
+  cargoId?: string | null;
+  lojaId?: number | null;
+  gatilho: Gatilho;
+  premio: Premio;
+  vigenciaDe: Competencia;
+  vigenciaAte?: Competencia | null;
+}
+
+/** Ajuste manual ou estorno automático (§17, §29). */
+export interface Ajuste {
+  id: string;
+  funcionarioId: string;
+  competencia: Competencia;
+  valor: number; // pode ser negativo
+  motivo: string;
+  tipo: "manual" | "estorno";
+  criadoPor?: string | null;
+  criadoEm?: string | null;
+}
+
+/** Cargo — criado pelo admin, não fixo no código (§4). */
+export interface Cargo {
+  id: string;
+  nome: string;
+  /** Ordem de exibição. */
+  ordem?: number;
+  ativo: boolean;
+}
+
+/** Funcionário (§4). O piso é o mínimo garantido do mês (§5). */
+export interface Funcionario {
+  id: string;
+  nome: string;
+  cpf?: string | null;
+  cargoId: string | null;
+  lojaId: number | null;
+  /** Id do vendedor no PDVnet (VendedorId das vendas). */
+  pdvVendedorId?: string | null;
+  /** Lojas que um supervisor acompanha (§13). Vazio = usa a própria loja. */
+  lojasGrupo?: number[];
+  pisoGarantido?: number | null;
+  admissao?: string | null;
+  ativo: boolean;
+}
+
+/** Meta de uma competência (§9). */
+export interface Meta {
+  id: string;
+  competencia: Competencia;
+  /** Escopo: funcionário, loja ou cargo+loja. */
+  funcionarioId?: string | null;
+  cargoId?: string | null;
+  lojaId?: number | null;
+  /** Alvo em R$. */
+  valor: number;
+}
+
+/** Como o piso conversa com a comissão (§5) — configurável. */
+export type RegraPiso = "maior" | "soma";
+
+/** Uma linha da memória de cálculo (§38). */
+export interface LinhaMemoria {
+  rotulo: string;
+  detalhe: string;
+  valor: number;
+  /** Linha informativa (não soma) — ex.: "condição não atendida". */
+  informativa?: boolean;
+}
+
+/** Entrada do motor — tudo já resolvido (regra vigente, metas, vendas). */
+export interface EntradaApuracao {
+  competencia: Competencia;
+  funcionario: Funcionario;
+  /** Vendas já consolidadas do mês, por escopo. */
+  vendas: {
+    individual: { liquida: number; bruta: number };
+    loja: { liquida: number; bruta: number };
+    grupo: { liquida: number; bruta: number };
+  };
+  metas: {
+    individual: number | null;
+    loja: number | null;
+    grupo: number | null;
+  };
+  regra: Regra | null;
+  bonus: Bonus[];
+  ajustes: Ajuste[];
+  /** Sinais extras vindos da consolidação. */
+  extras?: { melhorVendedorLoja?: boolean };
+  regraPiso: RegraPiso;
+}
+
+/** Saída do motor (§37). */
+export interface ResultadoApuracao {
+  funcionarioId: string;
+  competencia: Competencia;
+  vendaConsiderada: number;
+  metaConsiderada: number | null;
+  atingimentoPct: number | null;
+  /** Percentual efetivo = comissão base ÷ venda considerada. */
+  percentualEfetivo: number | null;
+  comissaoBase: number;
+  bonusTotal: number;
+  ajustesTotal: number;
+  comissaoTotal: number;
+  piso: number;
+  valorDevido: number;
+  /** true quando o piso “segurou” o pagamento (comissão < piso). */
+  pisoAplicado: boolean;
+  memoria: LinhaMemoria[];
+  divergencias: string[];
+}

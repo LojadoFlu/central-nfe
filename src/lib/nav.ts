@@ -28,6 +28,7 @@ import {
   TrendingUp,
   ArrowDownLeft,
   Coins,
+  Target,
   type LucideIcon,
 } from "lucide-react";
 
@@ -57,6 +58,7 @@ export const SECONDARY_NAV: NavItem[] = [
   { label: "Recebimento de compras", href: "/recebimento", icon: PackageCheck, modulo: "notas" },
   { label: "Pendências", href: "/pendencias", icon: ClipboardCheck, modulo: "financeiro" },
   { label: "Fluxo de caixa", href: "/fluxo", icon: LineChart, modulo: "financeiro" },
+  { label: "Comissões e metas", href: "/comissoes", icon: Target, modulo: "comissoes" },
   { label: "DRE comparativo", href: "/dre-comparativo", icon: BarChart3, modulo: "financeiro" },
   { label: "Conciliação", href: "/conciliacao", icon: Scale, modulo: "financeiro" },
   { label: "Conciliação de saídas", href: "/saidas", icon: ArrowDownLeft, modulo: "financeiro" },

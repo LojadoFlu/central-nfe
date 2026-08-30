@@ -221,6 +221,69 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ── Comissões ────────────────────────────────────────────────────────────
+    // Aqui trafega salário/piso: leitura mais restrita que o resto do app —
+    // admin/financeiro, ou perfil custom que tenha o módulo "comissoes".
+    // Escrita, como sempre, só backend.
+    function podeComissoes() {
+      return isAuth() && (
+        role() in ['admin', 'financeiro'] ||
+        (request.auth.token.status == 'ativo' &&
+         request.auth.token.roleId != null &&
+         get(/databases/$(database)/documents/nfe_roles/$(request.auth.token.roleId))
+           .data.modulos.hasAny(['comissoes']))
+      );
+    }
+
+    match /pdv_sellers/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_cargos/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_funcionarios/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_regras/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_metas/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_bonus/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_campanhas/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_ajustes/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_apuracoes/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_fechamentos/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_estornos/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_config/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+
     // Fallback: nega tudo que não foi explicitamente liberado acima.
     match /{document=**} {
       allow read, write: if false;

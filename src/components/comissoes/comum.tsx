@@ -1,0 +1,92 @@
+"use client";
+
+// Peças pequenas compartilhadas pelas abas de Comissões.
+
+import * as React from "react";
+import { cn } from "@/lib/utils";
+
+export const CLASSE_CAMPO =
+  "h-11 w-full rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+
+export function Campo({
+  label,
+  hint,
+  children,
+  className,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("space-y-1", className)}>
+      <label className="block text-xs font-medium text-muted-foreground">{label}</label>
+      {children}
+      {hint ? <p className="text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
+    </div>
+  );
+}
+
+export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  const { className, ...rest } = props;
+  return <select className={cn(CLASSE_CAMPO, className)} {...rest} />;
+}
+
+/** "2026-08" → "ago/2026". */
+export function mesLabel(competencia: string): string {
+  const [ano, mes] = (competencia ?? "").split("-").map(Number);
+  if (!ano || !mes) return competencia ?? "";
+  const nomes = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+  return `${nomes[mes - 1]}/${ano}`;
+}
+
+/** Competência atual no fuso de São Paulo. */
+export function competenciaAtual(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" }).slice(0, 7);
+}
+
+/** Lista de competências para o seletor: 18 meses para trás, 2 para frente. */
+export function competenciasDisponiveis(): string[] {
+  const [ano, mes] = competenciaAtual().split("-").map(Number);
+  const out: string[] = [];
+  for (let i = 2; i >= -18; i--) {
+    const d = new Date(Date.UTC(ano, mes - 1 + i, 1));
+    out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+  return out;
+}
+
+export function pctFmt(n: number | null | undefined, casas = 2): string {
+  if (n == null || !Number.isFinite(n)) return "—";
+  return `${n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas })}%`;
+}
+
+/** Barra de atingimento da meta (§19). */
+export function BarraMeta({ pct }: { pct: number | null }) {
+  if (pct == null) return <span className="text-xs text-muted-foreground">sem meta</span>;
+  const largura = Math.max(0, Math.min(100, pct));
+  const tom = pct >= 100 ? "bg-success" : pct >= 80 ? "bg-warning" : "bg-destructive";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+        <div className={cn("h-full rounded-full", tom)} style={{ width: `${largura}%` }} />
+      </div>
+      <span className="text-xs tnum text-muted-foreground">{pctFmt(pct, 0)}</span>
+    </div>
+  );
+}
+
+/** Aviso curto, no padrão das outras telas. */
+export function Aviso({ tipo, children }: { tipo: "erro" | "ok"; children: React.ReactNode }) {
+  return (
+    <p
+      className={cn(
+        "mb-4 rounded-md p-3 text-sm",
+        tipo === "erro" ? "bg-destructive/10 text-destructive" : "bg-success/10 text-success",
+      )}
+    >
+      {children}
+    </p>
+  );
+}

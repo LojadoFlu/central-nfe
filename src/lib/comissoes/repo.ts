@@ -1,0 +1,130 @@
+"use client";
+
+// Acesso ao módulo de comissões: leitura direta (client SDK) + escrita por
+// callable, igual ao resto do app.
+
+import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
+import { httpsCallable } from "firebase/functions";
+import { getFirebase } from "@/lib/firebase/client";
+import type {
+  Ajuste,
+  Bonus,
+  Cargo,
+  ConfigComissoes,
+  Funcionario,
+  Meta,
+  Regra,
+  ResultadoCompetencia,
+  VendedorPdv,
+} from "./tipos";
+
+function fb() {
+  const f = getFirebase();
+  if (!f) throw new Error("Firebase não configurado.");
+  return f;
+}
+
+async function ler<T>(colecao: string): Promise<T[]> {
+  const { db } = fb();
+  const snap = await getDocs(collection(db, colecao));
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as T[];
+}
+
+async function chamar<T>(nome: string, dados: unknown): Promise<T> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, nome);
+  const res = await fn(dados as Record<string, unknown>);
+  return res.data as T;
+}
+
+// ── Leituras ────────────────────────────────────────────────────────────────
+
+export async function listarCargos(): Promise<Cargo[]> {
+  const arr = await ler<Cargo>("com_cargos");
+  return arr.sort((a, b) => (a.ordem ?? 99) - (b.ordem ?? 99) || a.nome.localeCompare(b.nome));
+}
+
+export async function listarFuncionarios(): Promise<Funcionario[]> {
+  const arr = await ler<Funcionario>("com_funcionarios");
+  return arr.sort((a, b) => a.nome.localeCompare(b.nome));
+}
+
+export async function listarRegras(): Promise<Regra[]> {
+  const arr = await ler<Regra>("com_regras");
+  return arr.sort((a, b) => b.vigenciaDe.localeCompare(a.vigenciaDe) || a.nome.localeCompare(b.nome));
+}
+
+export async function listarBonus(): Promise<Bonus[]> {
+  const arr = await ler<Bonus>("com_bonus");
+  return arr.sort((a, b) => a.nome.localeCompare(b.nome));
+}
+
+export async function listarMetas(competencia?: string): Promise<Meta[]> {
+  const { db } = fb();
+  const ref = collection(db, "com_metas");
+  const snap = await getDocs(competencia ? query(ref, where("competencia", "==", competencia)) : ref);
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Meta[];
+}
+
+export async function listarAjustes(competencia?: string): Promise<Ajuste[]> {
+  const { db } = fb();
+  const ref = collection(db, "com_ajustes");
+  const snap = await getDocs(competencia ? query(ref, where("competencia", "==", competencia)) : ref);
+  return (snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Ajuste[]).sort((a, b) =>
+    (b.criadoEm ?? "").localeCompare(a.criadoEm ?? ""),
+  );
+}
+
+export async function listarVendedoresPdv(): Promise<VendedorPdv[]> {
+  const arr = await ler<VendedorPdv>("pdv_sellers");
+  return arr.sort((a, b) => (b.totalPeriodo ?? 0) - (a.totalPeriodo ?? 0));
+}
+
+export async function obterConfig(): Promise<ConfigComissoes> {
+  const { db } = fb();
+  const snap = await getDoc(doc(db, "com_config", "geral"));
+  const d = snap.data() as Partial<ConfigComissoes> | undefined;
+  return {
+    regraPiso: d?.regraPiso === "soma" ? "soma" : "maior",
+    cargoPadraoId: d?.cargoPadraoId ?? null,
+  };
+}
+
+// ── Escritas (callables) ────────────────────────────────────────────────────
+
+export const salvarCargo = (i: Partial<Cargo>) => chamar<{ ok: boolean; id: string }>("comissoesSalvarCargo", i);
+export const excluirCargo = (id: string) => chamar<{ ok: boolean }>("comissoesExcluirCargo", { id });
+
+export const salvarFuncionario = (i: Partial<Funcionario>) =>
+  chamar<{ ok: boolean; id: string }>("comissoesSalvarFuncionario", i);
+export const excluirFuncionario = (id: string) =>
+  chamar<{ ok: boolean }>("comissoesExcluirFuncionario", { id });
+
+export const importarVendedores = (i: { cargoId?: string | null; ids?: string[] }) =>
+  chamar<{ ok: boolean; criados: number }>("comissoesImportarVendedores", i);
+
+export const salvarRegra = (i: Partial<Regra>) => chamar<{ ok: boolean; id: string }>("comissoesSalvarRegra", i);
+export const excluirRegra = (id: string) => chamar<{ ok: boolean }>("comissoesExcluirRegra", { id });
+
+export const salvarMetas = (metas: Partial<Meta>[]) =>
+  chamar<{ ok: boolean; salvos: number }>("comissoesSalvarMetas", { metas });
+export const excluirMeta = (id: string) => chamar<{ ok: boolean }>("comissoesExcluirMeta", { id });
+
+export const salvarBonus = (i: Partial<Bonus>) => chamar<{ ok: boolean; id: string }>("comissoesSalvarBonus", i);
+export const excluirBonus = (id: string) => chamar<{ ok: boolean }>("comissoesExcluirBonus", { id });
+
+export const salvarAjuste = (i: { funcionarioId: string; competencia: string; valor: number; motivo: string }) =>
+  chamar<{ ok: boolean; id: string }>("comissoesSalvarAjuste", i);
+export const excluirAjuste = (id: string) => chamar<{ ok: boolean }>("comissoesExcluirAjuste", { id });
+
+export const salvarConfig = (i: Partial<ConfigComissoes>) =>
+  chamar<{ ok: boolean } & ConfigComissoes>("comissoesSalvarConfig", i);
+
+export const sincronizarVendedoresPdv = (competencias?: string[]) =>
+  chamar<{ ok: boolean; lojas?: number; gravados?: number; semNome?: number; erro?: string }>(
+    "comissoesSincronizarVendedores",
+    { competencias },
+  );
+
+export const apurarComissoes = (competencia: string) =>
+  chamar<ResultadoCompetencia>("comissoesApurar", { competencia });

@@ -14,6 +14,7 @@ export const MODULOS: ModuloDef[] = [
   { key: "ctes", label: "Fretes (CT-e)", href: "/ctes" },
   { key: "nfses", label: "Serviços (NFS-e)", href: "/nfses" },
   { key: "financeiro", label: "Financeiro", href: "/financeiro" },
+  { key: "comissoes", label: "Comissões (metas e remuneração variável)", href: "/comissoes" },
   { key: "compras", label: "Pedidos de compra", href: "/pedidos" },
   { key: "acordos", label: "Acordos", href: "/acordos" },
   { key: "despesas", label: "Despesas fixas", href: "/despesas" },
@@ -35,6 +36,8 @@ export interface AcaoDef {
 /** Ações sensíveis (interruptores por perfil). */
 export const ACOES: AcaoDef[] = [
   { key: "financeiro.baixar", label: "Dar baixa em contas / marcar pago" },
+  { key: "comissoes.gerir", label: "Configurar comissões (regras, metas, bônus, ajustes)" },
+  { key: "comissoes.fechar", label: "Fechar / reabrir a comissão do mês" },
   { key: "nfe.manifestar", label: "Manifestar NF-e na SEFAZ" },
   { key: "integracoes.sincronizar", label: "Sincronizar com SEFAZ / PDV" },
   { key: "empresas.gerir", label: "Cadastrar / editar empresas" },

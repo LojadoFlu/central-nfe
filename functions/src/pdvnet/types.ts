@@ -131,6 +131,49 @@ export interface PdvVenda {
   Cliente?: PdvCliente;
 }
 
+/** Vendedor — cadastro completo (/api/public/vendedores e /vendedores/{id}). */
+export interface PdvVendedor {
+  Id: string;
+  Nome?: string;
+  Telefone?: string;
+  PercentualComissao?: number;
+  CPF?: string;
+  Identidade?: string;
+  Observacao?: string;
+  DataNascimento?: string;
+  LojaId?: number;
+  SalarioFixo?: number;
+  DataCriacao?: string;
+  DataAtualizacao?: string;
+  Email?: string;
+  Inativo?: boolean;
+}
+
+/**
+ * Vendedor pela ótica da FILIAL (/api/public/RecursoInicial/Vendedores/{filial}).
+ * É a chamada rápida: devolve a equipe inteira de uma loja em ~1s, enquanto a
+ * listagem global tem 27 mil registros (toda a rede PDVnet). `Codigo` é o mesmo
+ * valor que aparece em `PdvVenda.VendedorId`.
+ */
+export interface PdvVendedorFilial {
+  Codigo?: string;
+  Nome?: string;
+  NomeAmigavel?: string;
+  Apelido?: string;
+  Prefixo?: string;
+  Telefone?: string;
+  Comissao?: number;
+  Comissaototal?: number;
+  Tipo?: string; // "V" = vendedor
+  Cpf?: string;
+  Identidade?: string;
+  Nascimento?: string;
+  Filial?: number;
+  Email?: string;
+  Chave?: string;
+  Tipocadastro?: number;
+}
+
 /** Pedido de compra (para conciliação NF-e ↔ PDV; usado na Etapa 6). */
 export interface PdvPedidoCompra {
   codigo_pedido?: string;
