@@ -32,27 +32,36 @@ import type {
 } from "@/lib/comissoes/tipos";
 import { Acompanhamento } from "@/components/comissoes/acompanhamento";
 import { Ajustes } from "@/components/comissoes/ajustes";
+import { Auditoria } from "@/components/comissoes/auditoria";
 import { Bonus } from "@/components/comissoes/bonus";
 import { Configuracoes } from "@/components/comissoes/configuracoes";
+import { Dashboard } from "@/components/comissoes/dashboard";
+import { Fechamento } from "@/components/comissoes/fechamento";
 import { Funcionarios } from "@/components/comissoes/funcionarios";
 import { Metas } from "@/components/comissoes/metas";
 import { Regras } from "@/components/comissoes/regras";
+import { Simulador } from "@/components/comissoes/simulador";
 import { Aviso, Select, competenciaAtual, competenciasDisponiveis, mesLabel } from "@/components/comissoes/comum";
 
 const ABAS = [
   "Acompanhamento",
+  "Dashboard",
+  "Fechamento",
+  "Simulador",
   "Funcionários",
   "Regras",
   "Metas",
   "Bônus",
   "Ajustes",
+  "Auditoria",
   "Configurações",
 ] as const;
 type Aba = (typeof ABAS)[number];
 
 export default function ComissoesPage() {
-  const { podeAcao } = useAuth();
+  const { podeAcao, isAdmin } = useAuth();
   const podeGerir = podeAcao("comissoes.gerir");
+  const podeFechar = podeAcao("comissoes.fechar");
 
   const [aba, setAba] = useState<Aba>("Acompanhamento");
   const [competencia, setCompetencia] = useState(competenciaAtual());
@@ -63,7 +72,13 @@ export default function ComissoesPage() {
   const [bonus, setBonus] = useState<BonusTipo[]>([]);
   const [vendedores, setVendedores] = useState<VendedorPdv[]>([]);
   const [lojas, setLojas] = useState<StorePdv[]>([]);
-  const [config, setConfig] = useState<ConfigComissoes>({ regraPiso: "maior", cargoPadraoId: null });
+  const [config, setConfig] = useState<ConfigComissoes>({
+    regraPiso: "maior",
+    cargoPadraoId: null,
+    diaPagamentoFolha: 5,
+    mesPagamento: "seguinte",
+    provisaoNoFluxo: false,
+  });
   const [metas, setMetas] = useState<Meta[]>([]);
   const [ajustes, setAjustes] = useState<Ajuste[]>([]);
   const [apuracao, setApuracao] = useState<ResultadoCompetencia | null>(null);
@@ -171,6 +186,20 @@ export default function ComissoesPage() {
         </div>
       ) : aba === "Acompanhamento" ? (
         <Acompanhamento apuracao={apuracao} carregando={apurando} />
+      ) : aba === "Dashboard" ? (
+        <Dashboard competencia={competencia} apuracao={apuracao} />
+      ) : aba === "Fechamento" ? (
+        <Fechamento
+          competencia={competencia}
+          apuracao={apuracao}
+          podeFechar={podeFechar}
+          isAdmin={isAdmin}
+          onRecarregar={recarregarTudo}
+        />
+      ) : aba === "Simulador" ? (
+        <Simulador competencia={competencia} funcionarios={funcionarios} />
+      ) : aba === "Auditoria" ? (
+        <Auditoria />
       ) : aba === "Funcionários" ? (
         <Funcionarios
           cargos={cargos}

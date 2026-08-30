@@ -134,6 +134,35 @@ export interface LinhaMemoria {
   informativa?: boolean;
 }
 
+export type StatusFechamento = "aberto" | "pre-fechamento" | "conferido" | "fechado" | "reaberto";
+
+export const STATUS_LABEL: Record<StatusFechamento, string> = {
+  aberto: "Em andamento",
+  "pre-fechamento": "Pré-fechamento",
+  conferido: "Conferido",
+  fechado: "Fechado",
+  reaberto: "Reaberto",
+};
+
+/** Saída crua do motor — usada pelo simulador. */
+export interface ResultadoApuracao {
+  funcionarioId: string;
+  competencia: Competencia;
+  vendaConsiderada: number;
+  metaConsiderada: number | null;
+  atingimentoPct: number | null;
+  percentualEfetivo: number | null;
+  comissaoBase: number;
+  bonusTotal: number;
+  ajustesTotal: number;
+  comissaoTotal: number;
+  piso: number;
+  valorDevido: number;
+  pisoAplicado: boolean;
+  memoria: LinhaMemoria[];
+  divergencias: string[];
+}
+
 export interface LinhaApuracao {
   funcionarioId: string;
   funcionarioNome: string;
@@ -142,9 +171,13 @@ export interface LinhaApuracao {
   cargoNome: string | null;
   lojaId: number | null;
   lojaNome: string | null;
+  empresaId: string | null;
   pdvVendedorId: string | null;
   regraId: string | null;
   regraNome: string | null;
+  vendaProjetada: number | null;
+  comissaoProjetada: number | null;
+  valorDevidoProjetado: number | null;
   vendaConsiderada: number;
   metaConsiderada: number | null;
   atingimentoPct: number | null;
@@ -165,6 +198,7 @@ export interface ResultadoCompetencia {
   competencia: Competencia;
   periodo: { de: string; ate: string };
   regraPiso: RegraPiso;
+  pagamentoEm: string;
   linhas: LinhaApuracao[];
   totais: {
     faturamento: number;
@@ -177,6 +211,7 @@ export interface ResultadoCompetencia {
     acimaDaMeta: number;
     funcionarios: number;
   };
+  porCargo: { cargoId: string | null; cargoNome: string; valor: number; funcionarios: number }[];
   porLoja: {
     lojaId: number;
     lojaNome: string | null;
@@ -184,6 +219,13 @@ export interface ResultadoCompetencia {
     meta: number | null;
     comissao: number;
   }[];
+  porEmpresa: { empresaId: string; valor: number }[];
+  projecao: {
+    faturamento: number;
+    valorDevido: number;
+    diasDecorridos: number;
+    diasTotais: number;
+  } | null;
   divergencias: {
     vendasSemVendedor: { qtd: number; valor: number; ids: string[] };
     vendedoresSemCadastro: { id: string; nome: string | null; total: number }[];
@@ -191,10 +233,39 @@ export interface ResultadoCompetencia {
     funcionariosSemPiso: string[];
     funcionariosSemMeta: string[];
   };
-  status: string;
+  status: StatusFechamento;
+  congelado: boolean;
+  fechadoPor?: string | null;
+  fechadoEm?: string | null;
 }
 
 export interface ConfigComissoes {
   regraPiso: RegraPiso;
   cargoPadraoId: string | null;
+  diaPagamentoFolha: number;
+  mesPagamento: "seguinte" | "mesmo";
+  provisaoNoFluxo: boolean;
+}
+
+export interface LogAuditoria {
+  id: string;
+  acao: string;
+  uid: string;
+  usuario: string | null;
+  at: string;
+  detalhe: Record<string, unknown>;
+}
+
+/** Custo de comissões por competência (§24). */
+export interface CustoMes {
+  competencia: Competencia;
+  status: StatusFechamento;
+  pagamentoEm: string | null;
+  faturamento: number;
+  valorDevido: number;
+  comissaoTotal: number;
+  pisoUtilizado: number;
+  bonus: number;
+  porCargo: { cargoId: string | null; cargoNome: string; valor: number; funcionarios: number }[];
+  porEmpresa: { empresaId: string; valor: number }[];
 }

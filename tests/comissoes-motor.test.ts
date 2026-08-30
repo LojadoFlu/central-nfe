@@ -10,6 +10,7 @@ import {
 } from "../functions/src/comissoes/motor";
 import {
   consolidar,
+  dataPagamentoFolha,
   estornoDeVendaCancelada,
   limitesDaCompetencia,
   somarLojas,
@@ -571,5 +572,12 @@ describe("utilitários de competência", () => {
     expect(limitesDaCompetencia("2026-08")).toEqual({ de: "2026-08-01", ate: "2026-08-31" });
     expect(limitesDaCompetencia("2026-02")).toEqual({ de: "2026-02-01", ate: "2026-02-28" });
     expect(limitesDaCompetencia("2028-02")).toEqual({ de: "2028-02-01", ate: "2028-02-29" });
+  });
+
+  it("§25 — data de pagamento da folha variável", () => {
+    expect(dataPagamentoFolha("2026-08", 5)).toBe("2026-09-05");
+    expect(dataPagamentoFolha("2026-12", 5)).toBe("2027-01-05"); // vira o ano
+    expect(dataPagamentoFolha("2026-08", 5, "mesmo")).toBe("2026-08-05");
+    expect(dataPagamentoFolha("2026-08", 31)).toBe("2026-09-28"); // limitado a 28
   });
 });

@@ -13,21 +13,6 @@ import { ChevronDown, TriangleAlert } from "lucide-react";
 import type { LinhaApuracao, ResultadoCompetencia } from "@/lib/comissoes/tipos";
 import { BarraMeta, Select, mesLabel, pctFmt } from "./comum";
 
-/** Dias transcorridos e restantes da competência (§22). */
-function progressoDoMes(periodo: { de: string; ate: string }): {
-  transcorridos: number;
-  totais: number;
-  restantes: number;
-  emCurso: boolean;
-} {
-  const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
-  const totais = Number(periodo.ate.slice(8, 10));
-  if (hoje > periodo.ate) return { transcorridos: totais, totais, restantes: 0, emCurso: false };
-  if (hoje < periodo.de) return { transcorridos: 0, totais, restantes: totais, emCurso: false };
-  const transcorridos = Number(hoje.slice(8, 10));
-  return { transcorridos, totais, restantes: totais - transcorridos, emCurso: true };
-}
-
 function Memoria({ linha }: { linha: LinhaApuracao }) {
   return (
     <div className="mt-3 space-y-2 border-t border-border/60 pt-3">
@@ -131,9 +116,7 @@ export function Acompanhamento({
   if (!apuracao) return null;
 
   const t = apuracao.totais;
-  const prog = progressoDoMes(apuracao.periodo);
-  const mediaDiaria = prog.transcorridos > 0 ? t.faturamento / prog.transcorridos : 0;
-  const projecao = prog.emCurso ? mediaDiaria * prog.totais : t.faturamento;
+  const proj = apuracao.projecao;
   const pendencias =
     apuracao.divergencias.vendedoresSemCadastro.length +
     apuracao.divergencias.funcionariosSemRegra.length +
@@ -142,14 +125,20 @@ export function Acompanhamento({
 
   return (
     <div className="space-y-4">
+      {apuracao.congelado ? (
+        <p className="rounded-md bg-success/10 p-3 text-sm text-success">
+          {mesLabel(apuracao.competencia)} está fechado — estes números são os congelados no
+          fechamento, não um novo cálculo.
+        </p>
+      ) : null}
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4">
         <StatCard
           label="Faturamento"
           value={formatBRL(t.faturamento)}
           hint={
-            prog.emCurso
-              ? `${prog.transcorridos} de ${prog.totais} dias · projeção ${formatBRL(projecao)}`
-              : `${mesLabel(apuracao.competencia)} fechado`
+            proj
+              ? `${proj.diasDecorridos} de ${proj.diasTotais} dias · projeção ${formatBRL(proj.faturamento)}`
+              : `${mesLabel(apuracao.competencia)} encerrado`
           }
         />
         <StatCard
@@ -168,7 +157,11 @@ export function Acompanhamento({
           value={formatBRL(t.pisoUtilizado)}
           hint="Quanto a empresa paga além do que a comissão gerou"
         />
-        <StatCard label="Bônus" value={formatBRL(t.bonus)} />
+        <StatCard
+          label="Folha projetada"
+          value={proj ? formatBRL(proj.valorDevido) : "—"}
+          hint={proj ? "se o ritmo do mês se mantiver" : "mês encerrado"}
+        />
         <StatCard label="Ajustes" value={formatBRL(t.ajustes)} tone={t.ajustes < 0 ? "destructive" : "default"} />
         <StatCard label="Acima da meta" value={`${t.acimaDaMeta} de ${t.funcionarios}`} tone="success" />
         <StatCard label="Pendências" value={String(pendencias)} tone={pendencias > 0 ? "destructive" : "success"} />
@@ -268,6 +261,11 @@ export function Acompanhamento({
                       <p className="text-[11px] text-muted-foreground tnum">
                         comissão {formatBRL(l.comissaoTotal)}
                       </p>
+                      {l.valorDevidoProjetado != null && l.valorDevidoProjetado !== l.valorDevido ? (
+                        <p className="text-[11px] text-muted-foreground tnum">
+                          projeção {formatBRL(l.valorDevidoProjetado)}
+                        </p>
+                      ) : null}
                       <ChevronDown
                         className={`ml-auto mt-0.5 size-4 text-muted-foreground transition-transform ${
                           aberto ? "rotate-180" : ""

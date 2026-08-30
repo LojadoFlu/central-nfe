@@ -24,7 +24,18 @@ import {
 import { PdvnetClient } from "./pdvnet/client";
 import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-vendas";
 import { sincronizarVendedores } from "./comissoes/vendedores";
-import { apurarCompetencia } from "./comissoes/apuracao";
+import {
+  alterarStatusFechamento,
+  apurarCompetencia,
+  calcularCompetencia,
+  carregarConfig as carregarConfigComissoes,
+  dataPagamentoFolha,
+  detectarEstornos,
+  fecharCompetencia,
+  simular as simularComissao,
+  STATUS_FECHAMENTO,
+  type StatusFechamento,
+} from "./comissoes/apuracao";
 import { parseOFX } from "./banco/ofx";
 import { parseContasPagar } from "./financeiro/contas-pagar";
 import { getStorage } from "firebase-admin/storage";
@@ -2533,7 +2544,7 @@ export const fluxoCaixa = onCall(
     };
     const tot = { entrada: 0, saida: 0, entradaReal: 0, saidaReal: 0 };
     // Toda origem já inicializada; o += usa (?? 0) para nunca virar NaN se surgir uma nova.
-    const porOrigem: Record<string, number> = { cartao: 0, avista: 0, nfe: 0, despesas: 0, despesasManuais: 0, acordos: 0 };
+    const porOrigem: Record<string, number> = { cartao: 0, avista: 0, nfe: 0, despesas: 0, despesasManuais: 0, acordos: 0, comissoes: 0 };
     const entrada = (dia: string, valor: number, real: boolean, origem: string) => {
       if (!noRange(dia) || !(valor > 0)) return;
       const b = buck(dia); b.entrada += valor; if (real) b.entradaReal += valor;
@@ -2633,6 +2644,29 @@ export const fluxoCaixa = onCall(
         const pago = p.statusPagamento === "pago";
         const dia = d10(pago ? p.dataPagamento : p.vencimento);
         saidaObrig(dia, Number(p.valor ?? 0), pago, "acordos", a.companyId, p.contasPagamento);
+      }
+    }
+
+    // SAÍDAS — folha variável (comissões). Sai na data de pagamento da competência.
+    // Enquanto o mês não fecha é PROVISÃO (previsto); fechado, vira compromisso
+    // firmado — mas continua "não realizado" porque a baixa é na folha, fora daqui.
+    const cfgCom = await carregarConfigComissoes();
+    const fechSnap = cfgCom.provisaoNoFluxo
+      ? await db.collection("com_fechamentos").get()
+      : { docs: [] as FirebaseFirestore.QueryDocumentSnapshot[] };
+    for (const doc of fechSnap.docs) {
+      const f = doc.data() as Record<string, unknown>;
+      const dia = d10((f.pagamentoEm as string) ?? dataPagamentoFolha(doc.id, cfgCom));
+      if (!noRange(dia)) continue;
+      const porEmpresa = (f.porEmpresa ?? []) as Array<{ empresaId?: string; valor?: number }>;
+      if (porEmpresa.length > 0) {
+        for (const e of porEmpresa) {
+          if (!daEmpresa(e.empresaId)) continue;
+          saida(dia, Number(e.valor ?? 0), false, "comissoes");
+        }
+      } else if (!empresaId) {
+        const t = (f.totais ?? {}) as Record<string, number>;
+        saida(dia, Number(t.valorDevido ?? 0), false, "comissoes");
       }
     }
 
@@ -3834,6 +3868,9 @@ async function auditar(uid: string, acao: string, detalhe: Record<string, unknow
   await db.collection("audit_logs").add({
     uid,
     acao,
+    // Prefixo da ação ("comissoes.salvarRegra" → "comissoes"): permite listar o
+    // log de um módulo sem varrer a coleção inteira.
+    modulo: acao.split(".")[0],
     detalhe,
     at: FieldValue.serverTimestamp(),
     atISO: agoraISO(),
@@ -4269,12 +4306,17 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
   const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
   const regraPiso = String(req.data?.regraPiso) === "soma" ? "soma" : "maior";
   const cargoPadraoId = texto(req.data?.cargoPadraoId, 80) || null;
+  const diaBruto = Math.floor(num(req.data?.diaPagamentoFolha, 5));
+  const diaPagamentoFolha = diaBruto >= 1 && diaBruto <= 28 ? diaBruto : 5;
+  const mesPagamento = String(req.data?.mesPagamento) === "mesmo" ? "mesmo" : "seguinte";
+  const provisaoNoFluxo = req.data?.provisaoNoFluxo === true;
+  const dados = { regraPiso, cargoPadraoId, diaPagamentoFolha, mesPagamento, provisaoNoFluxo };
   await db
     .collection("com_config")
     .doc("geral")
-    .set({ regraPiso, cargoPadraoId, atualizadoEm: agoraISO(), atualizadoPor: uid }, { merge: true });
-  await auditar(uid, "comissoes.salvarConfig", { regraPiso, cargoPadraoId });
-  return { ok: true, regraPiso, cargoPadraoId };
+    .set({ ...dados, atualizadoEm: agoraISO(), atualizadoPor: uid }, { merge: true });
+  await auditar(uid, "comissoes.salvarConfig", dados);
+  return { ok: true, ...dados };
 });
 
 /** Apura a competência (prévia, sem gravar) — base do acompanhamento e do fechamento. */
@@ -4287,3 +4329,169 @@ export const comissoesApurar = onCall(
     return { ok: true, ...r };
   },
 );
+
+/** Fecha a competência: congela a apuração de cada funcionário (§26). */
+export const comissoesFechar = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "comissoes.fechar", ["admin", "financeiro"]);
+    const competencia = competenciaValida(req.data?.competencia);
+    if (competencia > hojeBRT().slice(0, 7)) {
+      throw new HttpsError("failed-precondition", "Não dá para fechar uma competência futura.");
+    }
+    try {
+      const r = await fecharCompetencia(competencia, uid);
+      await auditar(uid, "comissoes.fechar", { competencia, ...r });
+      return { ok: true, competencia, ...r };
+    } catch (e) {
+      throw new HttpsError("failed-precondition", (e as Error).message);
+    }
+  },
+);
+
+/** Muda o status do fechamento — inclusive reabrir (§27). Reabrir é só admin. */
+export const comissoesAlterarStatus = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.fechar", ["admin", "financeiro"]);
+  const competencia = competenciaValida(req.data?.competencia);
+  const status = String(req.data?.status ?? "") as StatusFechamento;
+  if (!(STATUS_FECHAMENTO as readonly string[]).includes(status)) {
+    throw new HttpsError("invalid-argument", "Status inválido.");
+  }
+  const atual = (await db.collection("com_fechamentos").doc(competencia).get()).data() as
+    | { status?: string }
+    | undefined;
+  // Sair de "fechado" desmonta um número que já foi para a folha: só admin.
+  if (atual?.status === "fechado" && status !== "fechado" && req.auth?.token?.role !== "admin") {
+    throw new HttpsError("permission-denied", "Só o administrador pode reabrir uma competência fechada.");
+  }
+  await alterarStatusFechamento(competencia, status, uid);
+  await auditar(uid, "comissoes.alterarStatus", { competencia, de: atual?.status ?? "aberto", para: status });
+  return { ok: true, competencia, status };
+});
+
+/** Simulador "e se…" — não grava nada (§20). */
+export const comissoesSimular = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 300 },
+  async (req) => {
+    await exigirModulo(req, "comissoes", ["admin", "financeiro"]);
+    const competencia = competenciaValida(req.data?.competencia);
+    const funcionarioId = texto(req.data?.funcionarioId, 80);
+    if (!funcionarioId) throw new HttpsError("invalid-argument", "Informe o funcionário.");
+    const d = req.data ?? {};
+    try {
+      const r = await simularComissao(competencia, funcionarioId, {
+        vendaIndividual: d.vendaIndividual == null ? undefined : num(d.vendaIndividual),
+        vendaLoja: d.vendaLoja == null ? undefined : num(d.vendaLoja),
+        metaIndividual: d.metaIndividual === undefined ? undefined : numOuNulo(d.metaIndividual),
+        metaLoja: d.metaLoja === undefined ? undefined : numOuNulo(d.metaLoja),
+        piso: d.piso === undefined ? undefined : numOuNulo(d.piso),
+        regraId: texto(d.regraId, 80) || null,
+      });
+      return { ok: true, ...r };
+    } catch (e) {
+      throw new HttpsError("failed-precondition", (e as Error).message);
+    }
+  },
+);
+
+/** Log de alterações do módulo (§28). */
+export const comissoesAuditoria = onCall(opcoes, async (req) => {
+  await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const limite = Math.min(500, Math.max(1, Math.floor(num(req.data?.limite, 200))));
+  const snap = await db
+    .collection("audit_logs")
+    .where("modulo", "==", "comissoes")
+    .orderBy("atISO", "desc")
+    .limit(limite)
+    .get();
+  const uids = [...new Set(snap.docs.map((d) => String(d.data().uid ?? "")).filter(Boolean))];
+  const nomes = new Map<string, string>();
+  await Promise.all(
+    uids.slice(0, 30).map(async (u) => {
+      const d = (await db.collection("nfe_users").doc(u).get()).data();
+      if (d?.email || d?.nome) nomes.set(u, String(d.nome ?? d.email));
+    }),
+  );
+  return {
+    ok: true,
+    logs: snap.docs.map((d) => {
+      const v = d.data();
+      return {
+        id: d.id,
+        acao: String(v.acao ?? ""),
+        uid: String(v.uid ?? ""),
+        usuario: nomes.get(String(v.uid ?? "")) ?? null,
+        at: String(v.atISO ?? ""),
+        detalhe: (v.detalhe ?? {}) as Record<string, unknown>,
+      };
+    }),
+  };
+});
+
+/**
+ * Provisão diária da folha variável (§25). Roda depois da sync de vendas das 6h
+ * e deixa `com_fechamentos/{mês}` atualizado — é dali que o fluxo de caixa lê.
+ */
+export const comissoesProvisaoAgendada = onSchedule(
+  {
+    schedule: "every day 07:00",
+    timeZone: "America/Sao_Paulo",
+    region: REGIAO,
+    memory: "512MiB",
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const hoje = hojeBRT();
+    const atual = hoje.slice(0, 7);
+    // Mês corrente sempre; no começo do mês, o anterior também ainda se mexe.
+    const comps = Number(hoje.slice(8, 10)) <= 10 ? [mesAnteriorComp(atual), atual] : [atual];
+    for (const comp of comps) {
+      try {
+        const fech = (await db.collection("com_fechamentos").doc(comp).get()).data() as
+          | { status?: string }
+          | undefined;
+        if (fech?.status === "fechado") continue;
+        await apurarCompetencia(comp);
+        logger.info("comissoesProvisaoAgendada ok", { competencia: comp });
+      } catch (e) {
+        logger.error("comissoesProvisaoAgendada falhou", { competencia: comp, erro: (e as Error).message });
+      }
+    }
+  },
+);
+
+/** "2026-08" → "2026-07". */
+function mesAnteriorComp(competencia: string): string {
+  const [ano, mes] = competencia.split("-").map(Number);
+  const d = new Date(Date.UTC(ano, mes - 2, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Custo de comissões consolidado por competência (§24) — usado no financeiro. */
+export const comissoesCusto = onCall(opcoes, async (req) => {
+  await exigirModulo(req, "comissoes", ["admin", "financeiro"]);
+  const de = competenciaValida(req.data?.de);
+  const ate = competenciaValida(req.data?.ate);
+  if (de > ate) throw new HttpsError("invalid-argument", "Período invertido.");
+  const snap = await db.collection("com_fechamentos").get();
+  const meses = snap.docs
+    .filter((d) => d.id >= de && d.id <= ate)
+    .map((d) => {
+      const v = d.data() as Record<string, unknown>;
+      const t = (v.totais ?? {}) as Record<string, number>;
+      return {
+        competencia: d.id,
+        status: String(v.status ?? "aberto"),
+        pagamentoEm: (v.pagamentoEm as string) ?? null,
+        faturamento: Number(t.faturamento ?? 0),
+        valorDevido: Number(t.valorDevido ?? 0),
+        comissaoTotal: Number(t.comissaoTotal ?? 0),
+        pisoUtilizado: Number(t.pisoUtilizado ?? 0),
+        bonus: Number(t.bonus ?? 0),
+        porCargo: (v.porCargo ?? []) as unknown[],
+        porEmpresa: (v.porEmpresa ?? []) as unknown[],
+      };
+    })
+    .sort((a, b) => a.competencia.localeCompare(b.competencia));
+  return { ok: true, meses };
+});

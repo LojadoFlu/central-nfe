@@ -11,10 +11,14 @@ import type {
   Bonus,
   Cargo,
   ConfigComissoes,
+  CustoMes,
   Funcionario,
+  LogAuditoria,
   Meta,
   Regra,
+  ResultadoApuracao,
   ResultadoCompetencia,
+  StatusFechamento,
   VendedorPdv,
 } from "./tipos";
 
@@ -84,9 +88,13 @@ export async function obterConfig(): Promise<ConfigComissoes> {
   const { db } = fb();
   const snap = await getDoc(doc(db, "com_config", "geral"));
   const d = snap.data() as Partial<ConfigComissoes> | undefined;
+  const dia = Number(d?.diaPagamentoFolha);
   return {
     regraPiso: d?.regraPiso === "soma" ? "soma" : "maior",
     cargoPadraoId: d?.cargoPadraoId ?? null,
+    diaPagamentoFolha: Number.isFinite(dia) && dia >= 1 && dia <= 28 ? Math.floor(dia) : 5,
+    mesPagamento: d?.mesPagamento === "mesmo" ? "mesmo" : "seguinte",
+    provisaoNoFluxo: d?.provisaoNoFluxo === true,
   };
 }
 
@@ -128,3 +136,34 @@ export const sincronizarVendedoresPdv = (competencias?: string[]) =>
 
 export const apurarComissoes = (competencia: string) =>
   chamar<ResultadoCompetencia>("comissoesApurar", { competencia });
+
+export const fecharComissoes = (competencia: string) =>
+  chamar<{ ok: boolean; linhas: number; valorDevido: number; estornos: number }>(
+    "comissoesFechar",
+    { competencia },
+  );
+
+export const alterarStatusFechamento = (competencia: string, status: StatusFechamento) =>
+  chamar<{ ok: boolean; status: StatusFechamento }>("comissoesAlterarStatus", {
+    competencia,
+    status,
+  });
+
+export const simularComissao = (i: {
+  competencia: string;
+  funcionarioId: string;
+  vendaIndividual?: number;
+  vendaLoja?: number;
+  metaIndividual?: number | null;
+  piso?: number | null;
+}) =>
+  chamar<{ ok: boolean; atual: ResultadoApuracao; simulado: ResultadoApuracao }>(
+    "comissoesSimular",
+    i,
+  );
+
+export const listarAuditoria = (limite = 200) =>
+  chamar<{ ok: boolean; logs: LogAuditoria[] }>("comissoesAuditoria", { limite });
+
+export const custoComissoes = (de: string, ate: string) =>
+  chamar<{ ok: boolean; meses: CustoMes[] }>("comissoesCusto", { de, ate });

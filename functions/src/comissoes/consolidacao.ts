@@ -140,3 +140,19 @@ export function limitesDaCompetencia(competencia: string): { de: string; ate: st
     ate: `${competencia}-${String(ultimo).padStart(2, "0")}`,
   };
 }
+
+/**
+ * Data em que a folha variável de uma competência sai do caixa.
+ * `mesPagamento` "seguinte" (padrão) joga para o mês seguinte.
+ */
+export function dataPagamentoFolha(
+  competencia: string,
+  diaPagamento: number,
+  mesPagamento: "seguinte" | "mesmo" = "seguinte",
+): string {
+  const [ano, mes] = competencia.split("-").map(Number);
+  const desloc = mesPagamento === "seguinte" ? 1 : 0;
+  const dia = Math.min(Math.max(Math.floor(diaPagamento) || 1, 1), 28);
+  const d = new Date(Date.UTC(ano, mes - 1 + desloc, dia));
+  return d.toISOString().slice(0, 10);
+}

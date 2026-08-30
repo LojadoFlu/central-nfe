@@ -5,6 +5,7 @@
 import { useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import type { Cargo, ConfigComissoes } from "@/lib/comissoes/tipos";
 import { salvarConfig } from "@/lib/comissoes/repo";
 import { Aviso, Campo, Select } from "./comum";
@@ -22,6 +23,9 @@ export function Configuracoes({
 }) {
   const [regraPiso, setRegraPiso] = useState(config.regraPiso);
   const [cargoPadraoId, setCargoPadraoId] = useState(config.cargoPadraoId ?? "");
+  const [diaPagamentoFolha, setDiaPagamentoFolha] = useState(String(config.diaPagamentoFolha));
+  const [mesPagamento, setMesPagamento] = useState(config.mesPagamento);
+  const [provisaoNoFluxo, setProvisaoNoFluxo] = useState(config.provisaoNoFluxo);
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -75,6 +79,43 @@ export function Configuracoes({
             </Select>
           </Campo>
 
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Campo label="Dia de pagamento da folha variável" hint="Usado como data da saída no fluxo de caixa.">
+              <Input
+                type="number"
+                min={1}
+                max={28}
+                disabled={!podeGerir}
+                value={diaPagamentoFolha}
+                onChange={(e) => setDiaPagamentoFolha(e.target.value)}
+              />
+            </Campo>
+            <Campo label="A comissão do mês é paga">
+              <Select
+                value={mesPagamento}
+                disabled={!podeGerir}
+                onChange={(e) => setMesPagamento(e.target.value as ConfigComissoes["mesPagamento"])}
+              >
+                <option value="seguinte">No mês seguinte</option>
+                <option value="mesmo">No próprio mês</option>
+              </Select>
+            </Campo>
+          </div>
+
+          <Campo
+            label="Lançar a provisão de comissões no fluxo de caixa"
+            hint="Deixe desligado se a folha já entra no fluxo como despesa manual — senão o mesmo dinheiro sai duas vezes."
+          >
+            <Select
+              value={provisaoNoFluxo ? "1" : "0"}
+              disabled={!podeGerir}
+              onChange={(e) => setProvisaoNoFluxo(e.target.value === "1")}
+            >
+              <option value="0">Não lançar (padrão)</option>
+              <option value="1">Lançar como saída prevista</option>
+            </Select>
+          </Campo>
+
           {podeGerir ? (
             <Button
               size="sm"
@@ -84,7 +125,13 @@ export function Configuracoes({
                 setErro(null);
                 setOk(null);
                 try {
-                  await salvarConfig({ regraPiso, cargoPadraoId: cargoPadraoId || null });
+                  await salvarConfig({
+                    regraPiso,
+                    cargoPadraoId: cargoPadraoId || null,
+                    diaPagamentoFolha: Number(diaPagamentoFolha) || 5,
+                    mesPagamento,
+                    provisaoNoFluxo,
+                  });
                   await onRecarregar();
                   setOk("Configuração salva.");
                 } catch (e) {
