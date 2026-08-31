@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   acharPorNome,
+  colunaDoCabecalho,
   competenciaDaSemana,
   dataDoCsv,
   indicesDasSemanas,
@@ -64,7 +65,7 @@ describe("parse do arquivo", () => {
     const r = parseCsvMetas("semana_inicio;codigo_pdv;meta\n04/08/2026;09120002;abc");
     expect(r.linhas).toHaveLength(0);
     expect(r.erros[0]).toContain("Linha 2");
-    expect(r.erros[0]).toContain("meta inválida");
+    expect(r.erros[0]).toContain("não reconheci a meta");
   });
 
   it("recusa linha sem código e sem nome", () => {
@@ -168,5 +169,89 @@ describe("casar o nome curto do arquivo com o nome do cadastro", () => {
 
   it("quem não existe não casa com ninguém", () => {
     expect(acharPorNome("FULANO", QUADRO).achado).toBeNull();
+  });
+});
+
+describe("variações de arquivo que um exportador costuma produzir", () => {
+  it("data com hora grudada", () => {
+    expect(dataDoCsv("30/08/2026 00:00:00")).toBe("2026-08-30");
+    expect(dataDoCsv("2026-08-30T00:00:00Z")).toBe("2026-08-30");
+    expect(dataDoCsv("2026-08-30 03:00")).toBe("2026-08-30");
+  });
+
+  it("data entre aspas e com ponto", () => {
+    expect(dataDoCsv('"30/08/2026"')).toBe("2026-08-30");
+    expect(dataDoCsv("30.08.2026")).toBe("2026-08-30");
+  });
+
+  it("valor entre aspas e com espaço fino", () => {
+    expect(valorDoCsv('"4.600,00"')).toBe(4600);
+    expect(valorDoCsv("4 600,00")).toBe(4600);
+  });
+
+  it("linha inteira entre aspas, com cabeçalho", () => {
+    const r = parseCsvMetas(
+      ['"loja";"inicio";"fim";"nome";"meta"', '"Flu Laranjeiras";"30/08/2026";"31/08/2026";"Lazlo";"4.600,00"'].join(
+        "\n",
+      ),
+    );
+    expect(r.erros).toEqual([]);
+    expect(r.linhas[0]).toMatchObject({ semanaInicio: "2026-08-30", nome: "Lazlo", meta: 4600 });
+  });
+
+  it("cabeçalho apontando para a coluna errada cai na leitura por formato", () => {
+    // "data" casa com a coluna da LOJA por azar; a leitura por formato salva.
+    const r = parseCsvMetas(
+      ["data;inicio;fim;nome;meta", "Flu Laranjeiras;30/08/2026;31/08/2026;Lazlo;4600,00"].join("\n"),
+    );
+    expect(r.erros).toEqual([]);
+    expect(r.linhas[0]).toMatchObject({ semanaInicio: "2026-08-30", nome: "Lazlo", meta: 4600 });
+  });
+
+  it("quando não dá mesmo, o erro mostra a linha inteira", () => {
+    const r = parseCsvMetas(["loja;inicio;fim;nome;meta", "Flu;ontem;hoje;Lazlo;muito"].join("\n"));
+    expect(r.linhas).toHaveLength(0);
+    expect(r.erros[0]).toContain("Flu;ontem;hoje;Lazlo;muito");
+  });
+});
+
+describe("o arquivo real (metas-semanais_31-08-2026.csv)", () => {
+  // Bytes como saem do exportador: BOM, CRLF, títulos descritivos, acento.
+  const REAL =
+    "﻿Loja;Início da semana;Fim da semana;Vendedor;Meta da semana\r\n" +
+    "Flu Barra;01/07/2026;04/07/2026;Daniel;8284,40\r\n" +
+    "Flu Barra;01/07/2026;04/07/2026;Gabriel;8284,40\r\n" +
+    "Flu Laranjeiras;30/08/2026;31/08/2026;Lazlo;4600,00\r\n";
+
+  it("reconhece as colunas pelo título descritivo", () => {
+    expect(colunaDoCabecalho("Início da semana")).toBe("semanaInicio");
+    expect(colunaDoCabecalho("Fim da semana")).toBe("semanaFim");
+    expect(colunaDoCabecalho("Meta da semana")).toBe("meta");
+    expect(colunaDoCabecalho("Vendedor")).toBe("nome");
+    expect(colunaDoCabecalho("Loja")).toBe("loja");
+  });
+
+  it('"Meta da semana" é meta, não semana', () => {
+    // Contém as duas palavras; a ordem do teste é que decide.
+    expect(colunaDoCabecalho("Meta da semana")).not.toBe("semanaInicio");
+  });
+
+  it("lê o arquivo inteiro sem erro", () => {
+    const r = parseCsvMetas(REAL);
+    expect(r.erros).toEqual([]);
+    expect(r.linhas).toHaveLength(3);
+    expect(r.linhas[0]).toMatchObject({
+      loja: "Flu Barra",
+      semanaInicio: "2026-07-01",
+      semanaFim: "2026-07-04",
+      nome: "Daniel",
+      meta: 8284.4,
+    });
+  });
+
+  it("separa as competências pelo início da semana", () => {
+    const r = parseCsvMetas(REAL);
+    expect(competenciaDaSemana(r.linhas[0].semanaInicio)).toBe("2026-07");
+    expect(competenciaDaSemana(r.linhas[2].semanaInicio)).toBe("2026-08");
   });
 });

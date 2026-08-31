@@ -27,18 +27,34 @@ export interface ResultadoParse {
 
 /** "1.234,56" | "1234.56" | "1234" → número. */
 export function valorDoCsv(texto: string): number | null {
-  const t = (texto ?? "").trim().replace(/\s/g, "").replace(/^R\$/i, "");
+  const t = limparCampo(texto).replace(/\s/g, "").replace(/^R\$/i, "");
   if (!t) return null;
   const normalizado = t.includes(",") ? t.replace(/\./g, "").replace(",", ".") : t;
   const n = Number(normalizado);
   return Number.isFinite(n) ? n : null;
 }
 
-/** "2026-08-04" | "04/08/2026" | "4/8/26" → yyyy-MM-dd. */
+/** Tira aspas, espaços e espaço fino que planilha às vezes deixa no campo. */
+export function limparCampo(texto: string): string {
+  return (texto ?? "")
+    .replace(/\u00a0/g, " ")
+    .trim()
+    .replace(/^["']+|["']+$/g, "")
+    .trim();
+}
+
+/**
+ * Data do arquivo → yyyy-MM-dd. Aceita o que costuma sair de exportador:
+ * "2026-08-04", "04/08/2026", "4/8/26", "04.08.2026", entre aspas, e com hora
+ * grudada ("30/08/2026 00:00:00", "2026-08-30T00:00:00Z").
+ */
 export function dataDoCsv(texto: string): string | null {
-  const t = (texto ?? "").trim();
+  let t = limparCampo(texto);
+  if (!t) return null;
+  // Descarta a hora, venha depois de espaço ou de "T".
+  t = t.split(/[T ]/)[0].trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-  const m = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  const m = t.match(/^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/);
   if (!m) return null;
   const dia = Number(m[1]);
   const mes = Number(m[2]);
@@ -59,26 +75,29 @@ export function normalizarNome(s: string | null | undefined): string {
     .toUpperCase();
 }
 
-const CABECALHOS: Record<string, string> = {
-  semana: "semanaInicio",
-  semana_inicio: "semanaInicio",
-  semanainicio: "semanaInicio",
-  data: "semanaInicio",
-  inicio: "semanaInicio",
-  data_inicio: "semanaInicio",
-  fim: "semanaFim",
-  data_fim: "semanaFim",
-  semana_fim: "semanaFim",
-  codigo: "codigoPdv",
-  codigo_pdv: "codigoPdv",
-  codigopdv: "codigoPdv",
-  vendedor_id: "codigoPdv",
-  nome: "nome",
-  vendedor: "nome",
-  loja: "loja",
-  meta: "meta",
-  valor: "meta",
-};
+/**
+ * Qual coluna é qual, pelo que o título CONTÉM — não por igualdade.
+ *
+ * O export real vem com "Início da semana", "Fim da semana", "Meta da semana":
+ * títulos descritivos, não chaves. Exigir o nome exato fazia o leitor achar a
+ * coluna de loja e a de vendedor, decidir que havia cabeçalho, e então não
+ * encontrar a data — que foi exatamente o "data inválida" que apareceu.
+ *
+ * A ORDEM importa: "Meta da semana" contém "semana", então meta é testada
+ * antes.
+ */
+export function colunaDoCabecalho(titulo: string): string | null {
+  const c = normalizarNome(titulo).toLowerCase();
+  if (!c) return null;
+  if (c.includes("codigo") || c.includes("vendedor id")) return "codigoPdv";
+  if (c.includes("meta") || c.includes("valor")) return "meta";
+  if (c.includes("inicio") || c.includes("de ")) return "semanaInicio";
+  if (c.includes("fim") || c.includes("termino")) return "semanaFim";
+  if (c.includes("vendedor") || c.includes("nome") || c.includes("pessoa")) return "nome";
+  if (c.includes("loja") || c.includes("filial")) return "loja";
+  if (c.includes("semana") || c.includes("data")) return "semanaInicio";
+  return null;
+}
 
 function separador(linha: string): string {
   const ponto = (linha.match(/;/g) ?? []).length;
@@ -153,15 +172,13 @@ export function parseCsvMetas(texto: string): ResultadoParse {
   if (cruas.length === 0) return { linhas, erros: ["Arquivo vazio."] };
 
   const sep = separador(cruas[0]);
-  const primeira = cruas[0].split(sep);
-  const mapa = primeira.map(
-    (c) => CABECALHOS[normalizarNome(c).toLowerCase().replace(/ /g, "_")] ?? null,
-  );
+  const primeira = cruas[0].split(sep).map(limparCampo);
+  const mapa = primeira.map(colunaDoCabecalho);
   // Cabeçalho é opcional: o export do Controle de Vez vem sem.
   const temCabecalho = mapa.filter(Boolean).length >= 2 && !primeira.some((c) => dataDoCsv(c));
 
   for (let i = temCabecalho ? 1 : 0; i < cruas.length; i++) {
-    const campos = cruas[i].split(sep).map((c) => c.trim());
+    const campos = cruas[i].split(sep).map(limparCampo);
     const numero = i + 1;
 
     if (!temCabecalho) {
@@ -187,12 +204,26 @@ export function parseCsvMetas(texto: string): ResultadoParse {
     const codigoPdv = (registro.codigoPdv ?? "").trim() || null;
     const nome = (registro.nome ?? "").trim() || null;
 
+    // O cabeçalho pode apontar para a coluna errada (nome batendo por acaso,
+    // coluna a mais no export). Antes de recusar, tenta ler a linha pelo
+    // FORMATO dos campos, que é como as linhas sem cabeçalho são lidas.
+    if (!semanaInicio || meta == null) {
+      const porFormato = lerLinhaSemCabecalho(campos);
+      if (porFormato && (porFormato.codigoPdv || porFormato.nome)) {
+        linhas.push({ ...porFormato, linha: numero });
+        continue;
+      }
+    }
     if (!semanaInicio) {
-      erros.push(`Linha ${numero}: data da semana inválida ("${registro.semanaInicio ?? ""}").`);
+      erros.push(
+        `Linha ${numero}: não reconheci a data da semana ("${registro.semanaInicio ?? ""}") em: ${cruas[i].slice(0, 80)}`,
+      );
       continue;
     }
     if (meta == null) {
-      erros.push(`Linha ${numero}: meta inválida ("${registro.meta ?? ""}").`);
+      erros.push(
+        `Linha ${numero}: não reconheci a meta ("${registro.meta ?? ""}") em: ${cruas[i].slice(0, 80)}`,
+      );
       continue;
     }
     if (!codigoPdv && !nome) {
