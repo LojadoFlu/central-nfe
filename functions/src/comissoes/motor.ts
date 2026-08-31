@@ -167,6 +167,33 @@ export function metaPorVendedor(
   return centavos(metaLoja / vendedoresNaLoja);
 }
 
+/**
+ * Meta da pessoa somando SEMANA A SEMANA: em cada semana, a meta da loja
+ * dividida entre quem estava lá naquela semana.
+ *
+ * Quem tira férias na semana 3 não leva meta da semana 3 — e quem ficou divide
+ * entre menos gente, então a meta deles sobe. Dividir o mês inteiro por quem
+ * está hoje ignoraria as duas coisas.
+ */
+export function metaDistribuidaPorSemana(
+  metaDaLojaPorSemana: (number | null)[],
+  participaNaSemana: boolean[],
+  participantesPorSemana: number[],
+): number | null {
+  let total = 0;
+  let achouAlguma = false;
+  for (let i = 0; i < metaDaLojaPorSemana.length; i++) {
+    const meta = metaDaLojaPorSemana[i];
+    if (meta == null || meta === 0) continue;
+    achouAlguma = true;
+    if (!participaNaSemana[i]) continue;
+    const quantos = participantesPorSemana[i] ?? 0;
+    if (quantos <= 0) continue;
+    total += meta / quantos;
+  }
+  return achouAlguma ? centavos(total) : null;
+}
+
 /** Meta da LOJA na competência (escopo só-loja, sem cargo/funcionário). */
 export function escolherMetaLoja(
   metas: Meta[],
@@ -182,6 +209,21 @@ export function escolherMetaLoja(
       !x.cargoId,
   );
   return m ? m.valor : null;
+}
+
+/** Metas semanais da loja; meta antiga (sem semanas) vira a semana 1. */
+export function semanasDaMetaDaLoja(
+  metas: Meta[],
+  lojaId: number | null,
+  competencia: Competencia,
+): (number | null)[] | null {
+  if (lojaId == null) return null;
+  const m = metas.find(
+    (x) => x.competencia === competencia && x.lojaId === lojaId && !x.funcionarioId && !x.cargoId,
+  );
+  if (!m) return null;
+  const base = m.semanas?.length ? m.semanas : [m.valor, null, null, null, null, null];
+  return [0, 1, 2, 3, 4, 5].map((i) => base[i] ?? null);
 }
 
 function faixasOrdenadas(faixas: Faixa[]): Faixa[] {

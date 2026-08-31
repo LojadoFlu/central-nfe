@@ -4677,3 +4677,36 @@ export const pdvnetProcurarVendedor = onCall(
     return { ok: true, busca: alvo, varridas, achados };
   },
 );
+
+/**
+ * Quem entra na meta em cada semana. Férias, afastamento, entrada no meio do
+ * mês: a pessoa sai das semanas em que não esteve, e a meta daquelas semanas
+ * se divide entre quem ficou.
+ */
+export const comissoesSalvarParticipacoes = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const competencia = competenciaValida(req.data?.competencia);
+  const fech = (await db.collection("com_fechamentos").doc(competencia).get()).data();
+  if (fech?.status === "fechado") {
+    throw new HttpsError("failed-precondition", "Competência fechada — reabra para alterar.");
+  }
+  const itens = Array.isArray(req.data?.itens) ? req.data.itens : [];
+  const batch = db.batch();
+  let salvos = 0;
+  for (const i of itens) {
+    const funcionarioId = texto(i?.funcionarioId, 80);
+    if (!funcionarioId) continue;
+    const semanas = [0, 1, 2, 3, 4, 5].map((k) => (Array.isArray(i?.semanas) ? i.semanas[k] !== false : true));
+    const id = `${competencia}_${funcionarioId}`;
+    batch.set(
+      db.collection("com_participacoes").doc(id),
+      { id, competencia, funcionarioId, semanas, atualizadoEm: agoraISO() },
+      { merge: true },
+    );
+    salvos++;
+  }
+  if (salvos === 0) throw new HttpsError("invalid-argument", "Nada para salvar.");
+  await batch.commit();
+  await auditar(uid, "comissoes.salvarParticipacoes", { competencia, qtd: salvos });
+  return { ok: true, salvos };
+});

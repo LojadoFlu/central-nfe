@@ -180,6 +180,19 @@ export interface Meta {
   semanas?: (number | null)[];
 }
 
+/**
+ * Em quais semanas a pessoa entra na meta da loja. Quem está de férias na
+ * semana 3 não divide a meta daquela semana — e, por consequência, os que
+ * ficaram dividem entre menos gente.
+ */
+export interface Participacao {
+  id: string;
+  competencia: Competencia;
+  funcionarioId: string;
+  /** Semana 1 a 6. Sem documento = participa de todas.  */
+  semanas: boolean[];
+}
+
 /** Como o piso conversa com a comissão (§5) — configurável. */
 export type RegraPiso = "maior" | "soma";
 

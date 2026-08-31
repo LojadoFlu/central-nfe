@@ -10,7 +10,12 @@ import { formatBRL } from "@/lib/utils";
 import { Copy, Save } from "lucide-react";
 import type { Cargo, Funcionario, Meta, ResultadoCompetencia } from "@/lib/comissoes/tipos";
 import type { StorePdv } from "@/lib/nfe/repo";
-import { listarMetas, salvarMetas } from "@/lib/comissoes/repo";
+import {
+  listarMetas,
+  listarParticipacoes,
+  salvarMetas,
+  salvarParticipacoes,
+} from "@/lib/comissoes/repo";
 import { Aviso, InputNumero, mesLabel } from "./comum";
 
 const SEMANAS = [0, 1, 2, 3, 4, 5];
@@ -47,6 +52,7 @@ export function Metas({
 }) {
   const [porLoja, setPorLoja] = useState<Record<number, (number | null)[]>>({});
   const [porFuncionario, setPorFuncionario] = useState<Record<string, number | null>>({});
+  const [participacao, setParticipacao] = useState<Record<string, boolean[]>>({});
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -69,17 +75,43 @@ export function Metas({
     setPorFuncionario(f);
   }, [metas, competencia]);
 
+  // Quem entra na meta em cada semana (férias, afastamento, entrada no meio
+  // do mês). Sem registro, entra em todas.
+  useEffect(() => {
+    let vivo = true;
+    void listarParticipacoes(competencia).then((lista) => {
+      if (!vivo) return;
+      const m: Record<string, boolean[]> = {};
+      for (const p of lista) {
+        m[p.funcionarioId] = [0, 1, 2, 3, 4, 5].map((i) => p.semanas?.[i] !== false);
+      }
+      setParticipacao(m);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [competencia]);
+
+  const semanasDe = (id: string) => participacao[id] ?? [true, true, true, true, true, true];
+
   const ativos = useMemo(() => funcionarios.filter((f) => f.ativo), [funcionarios]);
   /** Quem divide a meta da loja: cargo marcado como "recebe meta individual". */
-  const vendedoresPorLoja = useMemo(() => {
-    const comMeta = new Set(cargos.filter((c) => c.recebeMetaIndividual).map((c) => c.id));
-    const m = new Map<number, number>();
-    for (const f of funcionarios) {
-      if (!f.ativo || !f.cargoId || !comMeta.has(f.cargoId) || f.lojaId == null) continue;
-      m.set(f.lojaId, (m.get(f.lojaId) ?? 0) + 1);
+  const comMetaIndividual = useMemo(() => {
+    const ids = new Set(cargos.filter((c) => c.recebeMetaIndividual).map((c) => c.id));
+    return funcionarios.filter((f) => f.ativo && f.cargoId && ids.has(f.cargoId) && f.lojaId != null);
+  }, [funcionarios, cargos]);
+
+  /** Por loja e por semana: quantos dividem a meta daquela semana. */
+  const participantesPorLojaSemana = useMemo(() => {
+    const m = new Map<number, number[]>();
+    for (const f of comMetaIndividual) {
+      const sem = semanasDe(f.id);
+      const atual = m.get(f.lojaId!) ?? [0, 0, 0, 0, 0, 0];
+      for (let i = 0; i < 6; i++) if (sem[i]) atual[i] += 1;
+      m.set(f.lojaId!, atual);
     }
     return m;
-  }, [funcionarios, cargos]);
+  }, [comMetaIndividual, participacao]);
   const totalLojas = useMemo(
     () => Object.values(porLoja).reduce<number>((s, sem) => s + somaSemanas(sem), 0),
     [porLoja],
@@ -113,6 +145,8 @@ export function Metas({
     }
     if (lote.length === 0) throw new Error("Nada para salvar — preencha ao menos uma meta.");
     await salvarMetas(lote);
+    const itens = comMetaIndividual.map((f) => ({ funcionarioId: f.id, semanas: semanasDe(f.id) }));
+    if (itens.length > 0) await salvarParticipacoes(competencia, itens);
   }
 
   async function copiarDoMesAnterior() {
@@ -168,19 +202,24 @@ export function Metas({
             {lojas.map((l) => {
               const semanas = porLoja[l.id] ?? [null, null, null, null, null, null];
               const total = somaSemanas(semanas);
-              const qtd = vendedoresPorLoja.get(l.id) ?? 0;
-              const porVendedor = qtd > 0 && total > 0 ? total / qtd : null;
+              const participantes = participantesPorLojaSemana.get(l.id) ?? [0, 0, 0, 0, 0, 0];
+              const daLoja = comMetaIndividual.filter((f) => f.lojaId === l.id);
+              // Rateio semana a semana: quem está de férias numa semana não
+              // divide a daquela semana, e os que ficam dividem entre menos.
+              const fatiaCheia = SEMANAS.reduce(
+                (acc, i) =>
+                  acc + (semanas[i] && participantes[i] > 0 ? semanas[i]! / participantes[i] : 0),
+                0,
+              );
               return (
                 <div key={l.id} className="rounded-md border border-border/60 p-2.5">
                   <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
                     <span className="text-sm font-medium">{l.grupoNome || l.nome}</span>
                     <span className="text-xs text-muted-foreground tnum">
                       mês {formatBRL(total)}
-                      {porVendedor != null
-                        ? ` · ${formatBRL(porVendedor)} para cada um dos ${qtd} com meta individual`
-                        : qtd === 0
-                          ? " · nenhum cargo com meta individual nesta loja"
-                          : ""}
+                      {daLoja.length === 0
+                        ? " · nenhum cargo com meta individual nesta loja"
+                        : ` · ${formatBRL(fatiaCheia)} para quem trabalha o mês inteiro (${daLoja.length} pessoa(s))`}
                     </span>
                   </div>
                   <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6">
@@ -207,6 +246,66 @@ export function Metas({
                       </div>
                     ))}
                   </div>
+
+                  {daLoja.length > 0 ? (
+                    <div className="mt-2 border-t border-border/60 pt-2">
+                      <p className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Quem entra na meta em cada semana
+                      </p>
+                      <div className="space-y-1">
+                        {daLoja.map((f) => {
+                          const sem = semanasDe(f.id);
+                          const minha = SEMANAS.reduce(
+                            (acc, i) =>
+                              acc +
+                              (sem[i] && semanas[i] && participantes[i] > 0
+                                ? semanas[i]! / participantes[i]
+                                : 0),
+                            0,
+                          );
+                          return (
+                            <div key={f.id} className="flex items-center gap-2 text-xs">
+                              <span className="min-w-0 flex-1 truncate">{f.nome}</span>
+                              <div className="flex shrink-0 gap-1">
+                                {SEMANAS.map((i) => (
+                                  <label
+                                    key={i}
+                                    className="flex w-7 flex-col items-center text-[9px] text-muted-foreground"
+                                    title={`Semana ${i + 1}`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      className="size-3.5"
+                                      disabled={!podeGerir}
+                                      checked={sem[i]}
+                                      onChange={(e) =>
+                                        setParticipacao((atual) => {
+                                          const base = atual[f.id] ?? [
+                                            true, true, true, true, true, true,
+                                          ];
+                                          const novo = [...base];
+                                          novo[i] = e.target.checked;
+                                          return { ...atual, [f.id]: novo };
+                                        })
+                                      }
+                                    />
+                                    S{i + 1}
+                                  </label>
+                                ))}
+                              </div>
+                              <span className="w-24 shrink-0 text-right tnum">
+                                {formatBRL(minha)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        Desmarque a semana em que a pessoa não trabalha (férias, afastamento). A
+                        meta daquela semana se divide entre quem ficou.
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               );
             })}

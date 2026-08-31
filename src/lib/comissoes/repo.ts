@@ -16,6 +16,7 @@ import type {
   Funcionario,
   LogAuditoria,
   Meta,
+  Participacao,
   Regra,
   ResultadoApuracao,
   ResultadoCompetencia,
@@ -80,6 +81,19 @@ export async function listarAjustes(competencia?: string): Promise<Ajuste[]> {
     (b.criadoEm ?? "").localeCompare(a.criadoEm ?? ""),
   );
 }
+
+export async function listarParticipacoes(competencia: string): Promise<Participacao[]> {
+  const { db } = fb();
+  const snap = await getDocs(
+    query(collection(db, "com_participacoes"), where("competencia", "==", competencia)),
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Participacao[];
+}
+
+export const salvarParticipacoes = (
+  competencia: string,
+  itens: { funcionarioId: string; semanas: boolean[] }[],
+) => chamar<{ ok: boolean; salvos: number }>("comissoesSalvarParticipacoes", { competencia, itens });
 
 export async function listarVendedoresPdv(): Promise<VendedorPdv[]> {
   const arr = await ler<VendedorPdv>("pdv_sellers");

@@ -23,13 +23,15 @@ import {
   escolherMeta,
   escolherMetaLoja,
   escolherRegra,
-  metaPorVendedor,
+  metaDistribuidaPorSemana,
   pisoEfetivo,
+  semanasDaMetaDaLoja,
 } from "./motor";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./grupos";
 import type {
   Ajuste,
   EscopoVenda,
+  Participacao,
   Bonus,
   Cargo,
   EntradaApuracao,
@@ -247,8 +249,10 @@ interface ContextoCalculo {
   nomeCargo: Map<string, string>;
   pisoPorCargo: Map<string, number | null>;
   nomeVendedor: Map<string, string | null>;
-  /** Quantas pessoas com meta individual cada loja tem — para dividir a meta. */
-  vendedoresPorLoja: Map<number, number>;
+  /** Por loja: quantos dividem a meta em CADA semana (férias mudam isso). */
+  participantesPorLojaSemana: Map<number, number[]>;
+  /** Por funcionário: em quais semanas ele entra na meta. */
+  participacaoPorFuncionario: Map<string, boolean[]>;
   cargosComMetaIndividual: Set<string>;
 }
 
@@ -263,7 +267,7 @@ function recebeMetaIndividual(f: Funcionario, cargosComMeta: Set<string>): boole
 }
 
 async function montarContexto(competencia: string): Promise<ContextoCalculo> {
-  const [cfg, funcionarios, cargos, regras, metas, bonus, ajustes, vendas, lojasSnap, sellersSnap] =
+  const [cfg, funcionarios, cargos, regras, metas, bonus, ajustes, participacoes, vendas, lojasSnap, sellersSnap] =
     await Promise.all([
       carregarConfig(),
       lerColecao<Funcionario>("com_funcionarios"),
@@ -272,6 +276,7 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
       lerColecao<Meta>("com_metas"),
       lerColecao<Bonus>("com_bonus"),
       lerColecao<Ajuste>("com_ajustes"),
+      lerColecao<Participacao>("com_participacoes"),
       lerVendas(competencia),
       db.collection("pdv_stores").get(),
       db.collection("pdv_sellers").get(),
@@ -289,12 +294,24 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
   const cargosComMetaIndividual = new Set(
     cargos.filter((c) => c.recebeMetaIndividual === true).map((c) => c.id),
   );
-  const vendedoresPorLoja = new Map<number, number>();
+  // Sem documento de participação, a pessoa entra em todas as semanas.
+  const participacaoPorFuncionario = new Map<string, boolean[]>();
+  for (const p of participacoes) {
+    if (p.competencia !== competencia) continue;
+    participacaoPorFuncionario.set(
+      p.funcionarioId,
+      [0, 1, 2, 3, 4, 5].map((i) => p.semanas?.[i] !== false),
+    );
+  }
+  const participantesPorLojaSemana = new Map<number, number[]>();
   for (const f of funcionarios) {
     if (!recebeMetaIndividual(f, cargosComMetaIndividual)) continue;
     const loja = canonizar(grupos, f.lojaId);
     if (loja == null) continue;
-    vendedoresPorLoja.set(loja, (vendedoresPorLoja.get(loja) ?? 0) + 1);
+    const semanas = participacaoPorFuncionario.get(f.id) ?? [true, true, true, true, true, true];
+    const atual = participantesPorLojaSemana.get(loja) ?? [0, 0, 0, 0, 0, 0];
+    for (let i = 0; i < 6; i++) if (semanas[i]) atual[i] += 1;
+    participantesPorLojaSemana.set(loja, atual);
   }
 
   return {
@@ -315,7 +332,8 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     // Piso mora no CARGO; o campo do funcionário é exceção (§5, §10).
     pisoPorCargo: new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null])),
     nomeVendedor,
-    vendedoresPorLoja,
+    participantesPorLojaSemana,
+    participacaoPorFuncionario,
     cargosComMetaIndividual,
   };
 }
@@ -356,7 +374,11 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
   const metaIndividual =
     metaPropria ??
     (recebeMetaIndividual(f, ctx.cargosComMetaIndividual) && f.lojaId != null
-      ? metaPorVendedor(metaLoja, ctx.vendedoresPorLoja.get(f.lojaId) ?? 0)
+      ? metaDistribuidaPorSemana(
+          semanasDaMetaDaLoja(metasDaComp, f.lojaId, competencia) ?? [],
+          ctx.participacaoPorFuncionario.get(f.id) ?? [true, true, true, true, true, true],
+          ctx.participantesPorLojaSemana.get(f.lojaId) ?? [0, 0, 0, 0, 0, 0],
+        )
       : null);
   // Meta do supervisor = soma das metas das lojas que ele supervisiona.
   // Se faltar a meta de alguma, a soma seria menor que a real e inflaria o

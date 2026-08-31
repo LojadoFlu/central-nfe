@@ -7,7 +7,9 @@ import {
   escolherMeta,
   escolherMetaLoja,
   escolherRegra,
+  metaDistribuidaPorSemana,
   metaPorVendedor,
+  semanasDaMetaDaLoja,
   pisoEfetivo,
   vigente,
 } from "../functions/src/comissoes/motor";
@@ -1165,5 +1167,53 @@ describe("meta da loja não vira meta individual de cada um", () => {
     expect(r.escopoMeta).toBe("loja");
     expect(r.metaConsiderada).toBe(10_000);
     expect(r.atingimentoPct).toBe(120);
+  });
+});
+
+describe("férias: quem não trabalha a semana não divide a meta dela", () => {
+  // Loja com meta de 2.000 por semana em 5 semanas = 10.000 no mês.
+  const SEMANAS_LOJA = [2000, 2000, 2000, 2000, 2000, null];
+  const TODAS = [true, true, true, true, true, true];
+
+  it("com 5 pessoas o mês inteiro, cada uma leva 2.000", () => {
+    const r = metaDistribuidaPorSemana(SEMANAS_LOJA, TODAS, [5, 5, 5, 5, 5, 0]);
+    expect(r).toBe(2000);
+  });
+
+  it("quem tira férias na semana 3 perde só aquela semana", () => {
+    const deFerias = [true, true, false, true, true, true];
+    // Nas semanas 1,2,4,5 são 5 pessoas; na 3, só 4 (ele saiu da conta).
+    const r = metaDistribuidaPorSemana(SEMANAS_LOJA, deFerias, [5, 5, 4, 5, 5, 0]);
+    expect(r).toBe(1600); // 4 semanas × 400
+  });
+
+  it("e quem ficou divide entre menos gente, então recebe mais", () => {
+    const r = metaDistribuidaPorSemana(SEMANAS_LOJA, TODAS, [5, 5, 4, 5, 5, 0]);
+    expect(r).toBe(2100); // 4×400 + 1×500
+  });
+
+  it("a meta da loja continua inteira: a soma das fatias fecha", () => {
+    const comFerias = metaDistribuidaPorSemana(SEMANAS_LOJA, [true, true, false, true, true, true], [5, 5, 4, 5, 5, 0]);
+    const semFerias = metaDistribuidaPorSemana(SEMANAS_LOJA, TODAS, [5, 5, 4, 5, 5, 0]);
+    expect(comFerias! + semFerias! * 4).toBe(10_000);
+  });
+
+  it("mês inteiro de férias: sem meta", () => {
+    const r = metaDistribuidaPorSemana(SEMANAS_LOJA, [false, false, false, false, false, false], [4, 4, 4, 4, 4, 0]);
+    expect(r).toBe(0);
+  });
+
+  it("loja sem meta nenhuma continua sem meta", () => {
+    expect(metaDistribuidaPorSemana([null, null, null, null, null, null], TODAS, [5, 5, 5, 5, 5, 5])).toBeNull();
+  });
+
+  it("meta antiga (só o total do mês) cai na semana 1 e divide igual", () => {
+    const semanas = semanasDaMetaDaLoja(
+      [{ id: "m", competencia: "2026-08", lojaId: 582, valor: 10_000 }],
+      582,
+      "2026-08",
+    );
+    expect(semanas).toEqual([10_000, null, null, null, null, null]);
+    expect(metaDistribuidaPorSemana(semanas!, TODAS, [5, 0, 0, 0, 0, 0])).toBe(2000);
   });
 });
