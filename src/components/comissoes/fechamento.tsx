@@ -189,7 +189,7 @@ export function Fechamento({
                 <Download /> CSV
               </Button>
               <Button size="sm" variant="outline" onClick={() => void gerarPdfFolha(apuracao)}>
-                <FileText /> PDF
+                <FileText /> PDF geral
               </Button>
               {/* O que vai para a loja: uma página por loja, piso e o que veio
                   além dele. */}

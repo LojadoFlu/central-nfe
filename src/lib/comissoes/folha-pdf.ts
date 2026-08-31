@@ -81,6 +81,17 @@ function cabecalhoFlu(
  * Uma linha por pessoa; no fim, o total que a empresa deve pagar.
  */
 export async function gerarPdfFolha(apuracao: ResultadoCompetencia, empresa?: string): Promise<void> {
+  montarPdfFolha(apuracao, { empresa, escudo: await carregarEscudo() }).save(
+    `fechamento-comissoes-${apuracao.competencia}.pdf`,
+  );
+}
+
+/** Monta o documento (sem salvar) — o script de conferência usa daqui. */
+export function montarPdfFolha(
+  apuracao: ResultadoCompetencia,
+  opts: { empresa?: string; escudo?: string | null } = {},
+): jsPDF {
+  const { empresa, escudo } = opts;
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
   const M = 12;
   let y = cabecalhoFlu(doc, {
@@ -88,7 +99,7 @@ export async function gerarPdfFolha(apuracao: ResultadoCompetencia, empresa?: st
     subtitulo: `${empresa ? empresa + "  ·  " : ""}Período ${formatarData(apuracao.periodo.de)} a ${formatarData(
       apuracao.periodo.ate,
     )}  ·  ${STATUS_LABEL[apuracao.status]}  ·  Pagamento em ${formatarData(apuracao.pagamentoEm)}`,
-    escudo: await carregarEscudo(),
+    escudo,
   });
   y += 7;
 
@@ -184,7 +195,7 @@ export async function gerarPdfFolha(apuracao: ResultadoCompetencia, empresa?: st
     Math.min(depois + 6, 200),
   );
 
-  doc.save(`fechamento-comissoes-${apuracao.competencia}.pdf`);
+  return doc;
 }
 
 // ── Folha por loja: piso × gratificação ──────────────────────────────────────
