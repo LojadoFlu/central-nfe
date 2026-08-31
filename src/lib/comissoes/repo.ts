@@ -126,6 +126,11 @@ export async function obterConfig(): Promise<ConfigComissoes> {
   return {
     sincronizarFuncionarios: d?.sincronizarFuncionarios !== false,
     cargosPorTipoPdv: d?.cargosPorTipoPdv ?? {},
+    // Sem estes dois aqui, salvar um de-para apagava o outro: amarrar a loja
+    // desfazia as pessoas, amarrar a pessoa desfazia a loja, e a tela ficava
+    // pedindo os dois em looping.
+    lojasImport: d?.lojasImport ?? {},
+    vendedoresImport: d?.vendedoresImport ?? {},
     regraPiso: d?.regraPiso === "soma" ? "soma" : "maior",
     cargoPadraoId: d?.cargoPadraoId ?? null,
     diaPagamentoFolha: Number.isFinite(dia) && dia >= 1 && dia <= 28 ? Math.floor(dia) : 5,

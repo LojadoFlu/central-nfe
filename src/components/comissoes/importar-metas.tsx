@@ -30,7 +30,10 @@ export function ImportarMetas({
   const [ok, setOk] = useState<string | null>(null);
   const arquivoRef = useRef<HTMLInputElement>(null);
 
-  /** Amarra um nome do arquivo a um funcionário — ou marca como fora do quadro. */
+  /**
+   * Amarra um nome do arquivo a um funcionário — ou marca como fora do quadro.
+   * Manda só o de-para de pessoas: o servidor preserva o resto da configuração.
+   */
   async function amarrarVendedor(chave: string, valor: string) {
     if (!valor) return;
     setOcupado(true);

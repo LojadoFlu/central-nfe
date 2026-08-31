@@ -4379,22 +4379,33 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
   const diaPagamentoFolha = diaBruto >= 1 && diaBruto <= 28 ? diaBruto : 5;
   const mesPagamento = String(req.data?.mesPagamento) === "mesmo" ? "mesmo" : "seguinte";
   const provisaoNoFluxo = req.data?.provisaoNoFluxo === true;
-  // De-para dos nomes de vendedor do arquivo ("FLU BARRA|GABRIEL" → id, ou
-  // "-" para quem não está no quadro: desligado no período, por exemplo).
-  const vendedoresImport: Record<string, string> = {};
-  const mapaVend = (req.data?.vendedoresImport ?? {}) as Record<string, unknown>;
-  for (const [chave, valor] of Object.entries(mapaVend)) {
-    const k = texto(chave, 160);
-    const v = texto(valor, 80);
-    if (k && v) vendedoresImport[k] = v;
+  // De-para do import. Campo AUSENTE mantém o que já está gravado — salvar uma
+  // parte da configuração não pode apagar a outra. Foi assim que amarrar a
+  // loja desfazia as pessoas e a tela entrava em looping.
+  const atual = (await db.collection("com_config").doc("geral").get()).data() as
+    | { lojasImport?: Record<string, number>; vendedoresImport?: Record<string, string> }
+    | undefined;
+
+  let vendedoresImport = atual?.vendedoresImport ?? {};
+  if (req.data?.vendedoresImport) {
+    const novo: Record<string, string> = {};
+    for (const [chave, valor] of Object.entries(req.data.vendedoresImport as Record<string, unknown>)) {
+      const k = texto(chave, 160);
+      const v = texto(valor, 80);
+      if (k && v) novo[k] = v;
+    }
+    vendedoresImport = novo;
   }
-  // De-para dos nomes de loja do arquivo de metas ("FLU LARANJEIRAS" → 335).
-  const lojasImport: Record<string, number> = {};
-  const mapaLojas = (req.data?.lojasImport ?? {}) as Record<string, unknown>;
-  for (const [nome, loja] of Object.entries(mapaLojas)) {
-    const chave = normalizarNome(nome);
-    const id = numOuNulo(loja);
-    if (chave && id != null) lojasImport[chave] = id;
+
+  let lojasImport = atual?.lojasImport ?? {};
+  if (req.data?.lojasImport) {
+    const novo: Record<string, number> = {};
+    for (const [nome, loja] of Object.entries(req.data.lojasImport as Record<string, unknown>)) {
+      const chave = normalizarNome(nome);
+      const id = numOuNulo(loja);
+      if (chave && id != null) novo[chave] = id;
+    }
+    lojasImport = novo;
   }
   const sincronizarFuncionarios = req.data?.sincronizarFuncionarios !== false;
   const cargosPorTipoPdv: Record<string, string> = {};
