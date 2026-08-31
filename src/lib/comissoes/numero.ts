@@ -22,8 +22,15 @@ export function parseNumeroBR(texto: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/** Número → texto editável (vírgula, sem separador de milhar). */
-export function numeroParaTexto(n: number | null | undefined): string {
+/**
+ * Número → texto para o campo, sempre com 2 casas ("1.712,50").
+ *
+ * Sem isso, ao sair do campo "1712,50" virava "1712,5" e "1712,00" virava
+ * "1712" — o valor gravado está certo, mas quem digitou jura que perdeu os
+ * centavos. Usado só quando o campo perde o foco; enquanto se digita, o texto
+ * é livre.
+ */
+export function numeroParaTexto(n: number | null | undefined, casas = 2): string {
   if (n == null || !Number.isFinite(n)) return "";
-  return String(n).replace(".", ",");
+  return n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
 }

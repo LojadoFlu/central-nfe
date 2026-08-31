@@ -10,7 +10,7 @@ import {
 } from "../functions/src/comissoes/grupos";
 import { consolidar, type VendaBruta } from "../functions/src/comissoes/consolidacao";
 import { pareceCodigoDeLoja } from "../functions/src/comissoes/vendedores";
-import { parseNumeroBR } from "../src/lib/comissoes/numero";
+import { numeroParaTexto, parseNumeroBR } from "../src/lib/comissoes/numero";
 
 const LOJAS: LojaBruta[] = [
   { id: 335, nome: "FLU CLUBE", grupoNome: "FLU CLUBE", empresaId: "30623074000145", ativoSync: true },
@@ -139,5 +139,25 @@ describe("números digitados em pt-BR", () => {
 
   it("negativo funciona (ajuste de desconto)", () => {
     expect(parseNumeroBR("-20,50")).toBe(-20.5);
+  });
+});
+
+describe("número no campo mantém os centavos", () => {
+  it("2 casas ao sair do campo — o zero à direita não some", () => {
+    expect(numeroParaTexto(1712.5)).toBe("1.712,50");
+    expect(numeroParaTexto(1712)).toBe("1.712,00");
+    expect(numeroParaTexto(2.3)).toBe("2,30");
+    expect(numeroParaTexto(0)).toBe("0,00");
+  });
+
+  it("vazio continua vazio (não vira 0,00)", () => {
+    expect(numeroParaTexto(null)).toBe("");
+    expect(numeroParaTexto(undefined)).toBe("");
+  });
+
+  it("o que ele escreve, o parser lê de volta igual", () => {
+    for (const n of [1712.5, 1712, 2.3, 0.15, 2000000, -20.5]) {
+      expect(parseNumeroBR(numeroParaTexto(n))).toBe(n);
+    }
   });
 });

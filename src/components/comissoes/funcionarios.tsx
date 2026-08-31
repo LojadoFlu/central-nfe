@@ -26,6 +26,7 @@ import {
   salvarFuncionario,
   sincronizarVendedoresPdv,
 } from "@/lib/comissoes/repo";
+import { numeroParaTexto } from "@/lib/comissoes/numero";
 import { pisoEfetivo } from "@/lib/comissoes/piso";
 import { Aviso, Campo, InputNumero, Select } from "./comum";
 
@@ -378,7 +379,9 @@ export function Funcionarios({
               >
                 <InputNumero
                   placeholder={
-                    pisoDoCargoSelecionado == null ? "—" : String(pisoDoCargoSelecionado)
+                    pisoDoCargoSelecionado == null
+                      ? "—"
+                      : numeroParaTexto(pisoDoCargoSelecionado)
                   }
                   value={edicao.pisoGarantido ?? null}
                   onChange={(n) => setEdicao({ ...edicao, pisoGarantido: n })}
