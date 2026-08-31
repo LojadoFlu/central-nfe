@@ -188,12 +188,12 @@ export function Fechamento({
               <Button size="sm" variant="outline" onClick={exportar}>
                 <Download /> CSV
               </Button>
-              <Button size="sm" variant="outline" onClick={() => gerarPdfFolha(apuracao)}>
+              <Button size="sm" variant="outline" onClick={() => void gerarPdfFolha(apuracao)}>
                 <FileText /> PDF
               </Button>
               {/* O que vai para a loja: uma página por loja, piso e o que veio
                   além dele. */}
-              <Button size="sm" variant="outline" onClick={() => gerarPdfPorLoja(apuracao)}>
+              <Button size="sm" variant="outline" onClick={() => void gerarPdfPorLoja(apuracao)}>
                 <Store /> PDF por loja
               </Button>
             </div>

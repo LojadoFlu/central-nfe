@@ -18,34 +18,89 @@ function pct(n: number | null | undefined): string {
     : `${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 
+// Tricolor, amostrado do próprio escudo em /public/escudo-flu.png.
+const GRENA: [number, number, number] = [159, 2, 47];
+const VERDE: [number, number, number] = [0, 105, 64];
+const CINZA_CLARO: [number, number, number] = [245, 247, 246];
+
+/**
+ * O escudo em data URI, para o jsPDF. Sem ele o relatório sai igual, só que
+ * sem a marca — nunca vale derrubar a folha por causa da imagem.
+ */
+async function carregarEscudo(): Promise<string | null> {
+  try {
+    // Versão reduzida (173 × 200): o escudo grande virava PDF de 900 kB, e a
+    // folha vai por e-mail.
+    const r = await fetch("/escudo-flu-pdf.png");
+    if (!r.ok) return null;
+    const blob = await r.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.onerror = () => reject(new Error("escudo"));
+      fr.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Faixa grená com o escudo, título e subtítulo. Devolve o Y livre abaixo. */
+function cabecalhoFlu(
+  doc: jsPDF,
+  opts: { titulo: string; subtitulo: string; escudo?: string | null },
+): number {
+  const larguraPagina = doc.internal.pageSize.getWidth();
+  const M = 14;
+  const altura = 26;
+  doc.setFillColor(...GRENA);
+  doc.rect(0, 0, larguraPagina, altura, "F");
+  doc.setFillColor(...VERDE);
+  doc.rect(0, altura, larguraPagina, 1.6, "F");
+
+  let x = M;
+  if (opts.escudo) {
+    const h = 16;
+    // Proporção do arquivo (173 × 200): esticar o escudo seria pior que não pô-lo.
+    // O alias faz o jsPDF gravar o escudo UMA vez e reusar em todas as páginas
+    // — sem ele o arquivo engorda uma cópia por loja.
+    doc.addImage(opts.escudo, "PNG", x, 5, (h * 173) / 200, h, "escudo-flu");
+    x += (h * 173) / 200 + 6;
+  }
+  doc.setTextColor(255, 255, 255);
+  doc.setFont("helvetica", "bold").setFontSize(15);
+  doc.text(opts.titulo, x, 13);
+  doc.setFont("helvetica", "normal").setFontSize(8.5);
+  doc.text(opts.subtitulo, x, 19.5);
+  doc.setTextColor(20, 20, 20);
+  return altura + 1.6;
+}
+
 /**
  * Relatório de fechamento de comissões (§44) — o papel que vai junto com a folha.
  * Uma linha por pessoa; no fim, o total que a empresa deve pagar.
  */
-export function gerarPdfFolha(apuracao: ResultadoCompetencia, empresa?: string): void {
+export async function gerarPdfFolha(apuracao: ResultadoCompetencia, empresa?: string): Promise<void> {
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
   const M = 12;
-  let y = 15;
-
-  doc.setFont("helvetica", "bold").setFontSize(14);
-  doc.text(`Fechamento de comissões — ${mesExtenso(apuracao.competencia)}`, M, y);
-  y += 6;
+  let y = cabecalhoFlu(doc, {
+    titulo: `Fechamento de comissões — ${mesExtenso(apuracao.competencia)}`,
+    subtitulo: `${empresa ? empresa + "  ·  " : ""}Período ${formatarData(apuracao.periodo.de)} a ${formatarData(
+      apuracao.periodo.ate,
+    )}  ·  ${STATUS_LABEL[apuracao.status]}  ·  Pagamento em ${formatarData(apuracao.pagamentoEm)}`,
+    escudo: await carregarEscudo(),
+  });
+  y += 7;
 
   doc.setFont("helvetica", "normal").setFontSize(9);
   doc.text(
-    `${empresa ? empresa + "  ·  " : ""}Período ${formatarData(apuracao.periodo.de)} a ${formatarData(
-      apuracao.periodo.ate,
-    )}  ·  Situação: ${STATUS_LABEL[apuracao.status]}  ·  Pagamento em ${formatarData(apuracao.pagamentoEm)}`,
-    M,
-    y,
-  );
-  y += 5;
-  doc.text(
     `Faturamento ${formatBRL(apuracao.totais.faturamento)}  ·  Comissões ${formatBRL(
       apuracao.totais.comissaoTotal,
-    )}  ·  Piso garantido ${formatBRL(apuracao.totais.pisoUtilizado)}  ·  Folha variável ${formatBRL(
-      apuracao.totais.valorDevido,
-    )}`,
+    )}  ·  Piso garantido ${formatBRL(apuracao.totais.pisoUtilizado)}${
+      apuracao.totais.pisoSemComissao > 0
+        ? `  ·  Piso de quem não comissiona ${formatBRL(apuracao.totais.pisoSemComissao)}`
+        : ""
+    }  ·  Folha variável ${formatBRL(apuracao.totais.valorDevido)}`,
     M,
     y,
   );
@@ -103,8 +158,9 @@ export function gerarPdfFolha(apuracao: ResultadoCompetencia, empresa?: string):
       ],
     ],
     styles: { fontSize: 7.5, cellPadding: 1.4 },
-    headStyles: { fillColor: [30, 41, 59], fontSize: 7.5 },
-    footStyles: { fillColor: [241, 245, 249], textColor: 20, fontStyle: "bold" },
+    headStyles: { fillColor: VERDE, fontSize: 7.5 },
+    alternateRowStyles: { fillColor: CINZA_CLARO },
+    footStyles: { fillColor: CINZA_CLARO, textColor: GRENA, fontStyle: "bold" },
     columnStyles: {
       3: { halign: "right" },
       4: { halign: "right" },
@@ -119,7 +175,7 @@ export function gerarPdfFolha(apuracao: ResultadoCompetencia, empresa?: string):
   });
 
   const depois = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y;
-  doc.setFontSize(7.5).setTextColor(110);
+  doc.setFontSize(7.5).setTextColor(110).setCharSpace(0);
   doc.text(
     apuracao.congelado
       ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. "Valor devido" = maior entre piso garantido e comissão.`
@@ -197,35 +253,43 @@ export function folhaPorLoja(linhas: LinhaApuracao[]): FolhaDaLoja[] {
  * Uma página por loja, com piso e gratificação de cada funcionário — o papel
  * que vai para a loja depois do fechamento.
  */
-export function gerarPdfPorLoja(apuracao: ResultadoCompetencia, empresa?: string): void {
-  montarPdfPorLoja(apuracao, empresa).save(`folha-por-loja-${apuracao.competencia}.pdf`);
+export async function gerarPdfPorLoja(apuracao: ResultadoCompetencia, empresa?: string): Promise<void> {
+  const doc = montarPdfPorLoja(apuracao, { empresa, escudo: await carregarEscudo() });
+  doc.save(`folha-por-loja-${apuracao.competencia}.pdf`);
 }
 
 /** Monta o documento (sem salvar) — o script de conferência usa daqui. */
-export function montarPdfPorLoja(apuracao: ResultadoCompetencia, empresa?: string): jsPDF {
+export function montarPdfPorLoja(
+  apuracao: ResultadoCompetencia,
+  opts: { empresa?: string; escudo?: string | null } = {},
+): jsPDF {
+  const { empresa, escudo } = opts;
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
   const M = 14;
   const lojas = folhaPorLoja(apuracao.linhas);
 
   lojas.forEach((loja, i) => {
     if (i > 0) doc.addPage();
-    let y = 18;
-    doc.setFont("helvetica", "bold").setFontSize(14);
-    doc.text(loja.lojaNome, M, y);
-    y += 6;
-    doc.setFont("helvetica", "normal").setFontSize(9);
-    doc.text(
-      `Folha de ${mesExtenso(apuracao.competencia)}${empresa ? "  ·  " + empresa : ""}  ·  Pagamento em ${formatarData(
+    const y = cabecalhoFlu(doc, {
+      titulo: loja.lojaNome,
+      subtitulo: `Folha de ${mesExtenso(apuracao.competencia)}${empresa ? "  ·  " + empresa : ""}  ·  Pagamento em ${formatarData(
         apuracao.pagamentoEm,
       )}  ·  ${STATUS_LABEL[apuracao.status]}`,
-      M,
-      y,
-    );
+      escudo,
+    });
 
     autoTable(doc, {
-      startY: y + 4,
+      startY: y + 8,
       margin: { left: M, right: M },
-      head: [["Funcionário", "Cargo", "Piso", "Gratificação", "Total"]],
+      head: [
+        [
+          "Funcionário",
+          "Cargo",
+          { content: "Piso", styles: { halign: "right" as const } },
+          { content: "Gratificação", styles: { halign: "right" as const } },
+          { content: "Total", styles: { halign: "right" as const } },
+        ],
+      ],
       body: loja.pessoas.map((p) => [
         p.nome,
         p.cargo,
@@ -243,8 +307,9 @@ export function montarPdfPorLoja(apuracao: ResultadoCompetencia, empresa?: strin
         ],
       ],
       styles: { fontSize: 9, cellPadding: 1.8 },
-      headStyles: { fillColor: [30, 41, 59], fontSize: 9 },
-      footStyles: { fillColor: [241, 245, 249], textColor: 20, fontStyle: "bold" },
+      headStyles: { fillColor: VERDE, fontSize: 9 },
+      alternateRowStyles: { fillColor: CINZA_CLARO },
+      footStyles: { fillColor: CINZA_CLARO, textColor: GRENA, fontStyle: "bold" },
       columnStyles: {
         2: { halign: "right" },
         3: { halign: "right" },
@@ -253,11 +318,11 @@ export function montarPdfPorLoja(apuracao: ResultadoCompetencia, empresa?: strin
     });
 
     const depois = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y;
-    doc.setFontSize(7.5).setTextColor(110);
+    doc.setFontSize(7.5).setTextColor(110).setCharSpace(0);
     doc.text(
       apuracao.congelado
-        ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. Gratificação = total − piso.`
-        : "Competência ainda aberta — os valores podem mudar até o fechamento. Gratificação = total − piso.",
+        ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. Gratificação = total - piso.`
+        : "Competência ainda aberta — os valores podem mudar até o fechamento. Gratificação = total - piso.",
       M,
       Math.min(depois + 6, 285),
     );
@@ -266,14 +331,25 @@ export function montarPdfPorLoja(apuracao: ResultadoCompetencia, empresa?: strin
 
   if (lojas.length > 1) {
     doc.addPage();
-    let y = 18;
-    doc.setFont("helvetica", "bold").setFontSize(14);
-    doc.text(`Resumo da rede — ${mesExtenso(apuracao.competencia)}`, M, y);
-    y += 4;
+    const y = cabecalhoFlu(doc, {
+      titulo: "Resumo da rede",
+      subtitulo: `Folha de ${mesExtenso(apuracao.competencia)}${empresa ? "  ·  " + empresa : ""}  ·  Pagamento em ${formatarData(
+        apuracao.pagamentoEm,
+      )}  ·  ${STATUS_LABEL[apuracao.status]}`,
+      escudo,
+    });
     autoTable(doc, {
-      startY: y + 4,
+      startY: y + 8,
       margin: { left: M, right: M },
-      head: [["Loja", "Pessoas", "Piso", "Gratificação", "Total"]],
+      head: [
+        [
+          "Loja",
+          { content: "Pessoas", styles: { halign: "right" as const } },
+          { content: "Piso", styles: { halign: "right" as const } },
+          { content: "Gratificação", styles: { halign: "right" as const } },
+          { content: "Total", styles: { halign: "right" as const } },
+        ],
+      ],
       body: lojas.map((l) => [
         l.lojaNome,
         String(l.pessoas.length),
@@ -291,8 +367,9 @@ export function montarPdfPorLoja(apuracao: ResultadoCompetencia, empresa?: strin
         ],
       ],
       styles: { fontSize: 9, cellPadding: 1.8 },
-      headStyles: { fillColor: [30, 41, 59], fontSize: 9 },
-      footStyles: { fillColor: [241, 245, 249], textColor: 20, fontStyle: "bold" },
+      headStyles: { fillColor: VERDE, fontSize: 9 },
+      alternateRowStyles: { fillColor: CINZA_CLARO },
+      footStyles: { fillColor: CINZA_CLARO, textColor: GRENA, fontStyle: "bold" },
       columnStyles: {
         1: { halign: "right" },
         2: { halign: "right" },
