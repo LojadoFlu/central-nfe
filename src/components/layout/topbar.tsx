@@ -5,6 +5,7 @@ import { ROLE_LABEL } from "@/lib/auth/roles";
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
 import { BrandMark } from "@/components/brand";
+import { Versao } from "@/components/layout/versao";
 
 export function Topbar() {
   const { user, role, signOutUser } = useAuth();
@@ -13,6 +14,9 @@ export function Topbar() {
       {/* Marca só aparece no mobile (no desktop a sidebar já mostra). */}
       <BrandMark compact className="lg:hidden" />
       <div className="ml-auto flex items-center gap-3">
+        {/* Carimbo do build sempre à vista: é como se sabe, sem adivinhar, se a
+            correção de agora já chegou ao navegador. */}
+        <Versao className="text-[10px] leading-tight text-muted-foreground" />
         <div className="hidden text-right sm:block">
           <p className="text-sm font-medium leading-tight">{user?.email ?? "—"}</p>
           {role ? (
