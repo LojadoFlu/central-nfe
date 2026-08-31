@@ -147,8 +147,14 @@ export interface Funcionario {
   cpf?: string | null;
   cargoId: string | null;
   lojaId: number | null;
-  /** Id do vendedor no PDVnet (VendedorId das vendas). */
+  /** Id do vendedor no PDVnet (VendedorId das vendas). Legado: use `pdvVendedorIds`. */
   pdvVendedorId?: string | null;
+  /**
+   * TODOS os códigos desta pessoa no PDV. A mesma pessoa pode ter um código
+   * por filial (a Barra é 582 + 912, e lá cada vendedor aparece duas vezes).
+   * Para meta e resultado ela é UMA pessoa: as vendas dos códigos somam.
+   */
+  pdvVendedorIds?: string[];
   /**
    * Não vende no PDV — gerente, supervisor, caixa, gente contratada fora.
    * A comissão vem da loja ou do grupo de lojas, pela regra do cargo, e a

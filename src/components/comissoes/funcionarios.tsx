@@ -39,6 +39,7 @@ const VAZIO: Funcionario = {
   cargoId: null,
   lojaId: null,
   pdvVendedorId: null,
+  pdvVendedorIds: [],
   semPdv: false,
   lojasGrupo: [],
   pisoGarantido: null,
@@ -84,10 +85,20 @@ export function Funcionarios({
     [lojas],
   );
   const nomeCargo = useMemo(() => new Map(cargos.map((c) => [c.id, c.nome])), [cargos]);
-  const vinculados = useMemo(
-    () => new Set(funcionarios.map((f) => f.pdvVendedorId).filter(Boolean)),
-    [funcionarios],
-  );
+  /** Todos os códigos já vinculados a alguém (uma pessoa pode ter vários). */
+  const vinculados = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of funcionarios) {
+      for (const c of [...(f.pdvVendedorIds ?? []), ...(f.pdvVendedorId ? [f.pdvVendedorId] : [])]) {
+        if (c) s.add(c);
+      }
+    }
+    return s;
+  }, [funcionarios]);
+  const codigosDe = (f: Funcionario) =>
+    [...new Set([...(f.pdvVendedorIds ?? []), ...(f.pdvVendedorId ? [f.pdvVendedorId] : [])])].filter(
+      Boolean,
+    ) as string[];
   const pisoDoCargoSelecionado = useMemo(() => {
     const c = edicao?.cargoId ? cargos.find((x) => x.id === edicao.cargoId) : undefined;
     return c?.pisoGarantido ?? null;
@@ -277,6 +288,7 @@ export function Funcionarios({
                             nome: a.nome ?? "",
                             cpf: a.cpf ?? null,
                             pdvVendedorId: a.codigo,
+                            pdvVendedorIds: a.codigo ? [a.codigo] : [],
                             cargoId: cargos[0]?.id ?? null,
                           })
                         }
@@ -495,65 +507,53 @@ export function Funcionarios({
               </Campo>
               {!edicao.semPdv ? (
                 <Campo
-                  label="Código no PDV"
-                  hint="É o código que aparece na venda. Sem ele, o sistema não sabe quais vendas são desta pessoa."
+                  label="Códigos no PDV"
+                  hint="A mesma pessoa pode ter um código por filial — na Barra, cada vendedor aparece nas duas. Marque todos os dela: as vendas somam e ela conta como UMA pessoa na meta."
                 >
-                  <Select
-                    value={edicao.pdvVendedorId ?? ""}
-                    onChange={(e) => setEdicao({ ...edicao, pdvVendedorId: e.target.value || null })}
-                  >
-                    <option value="">— sem vínculo —</option>
-                    {edicao.pdvVendedorId &&
-                    !vendedores.some((v) => v.id === edicao.pdvVendedorId) ? (
-                      <option value={edicao.pdvVendedorId}>
-                        {edicao.pdvVendedorId} · (código de fora das nossas lojas)
-                      </option>
-                    ) : null}
+                  <div className="max-h-44 space-y-1 overflow-y-auto rounded-md border border-input p-2">
                     {vendedores
-                      .filter((v) => !vinculados.has(v.id) || v.id === edicao.pdvVendedorId)
-                      .map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.id} · {v.nome ?? v.apelido ?? "sem nome"}
-                          {v.lojaId != null ? ` · ${nomeLoja.get(v.lojaId) ?? v.lojaId}` : ""}
-                        </option>
-                      ))}
-                  </Select>
+                      .filter(
+                        (v) =>
+                          !v.ignorado &&
+                          (!vinculados.has(v.id) ||
+                            (edicao.pdvVendedorIds ?? []).includes(v.id)),
+                      )
+                      .map((v) => {
+                        const marcado = (edicao.pdvVendedorIds ?? []).includes(v.id);
+                        return (
+                          <label key={v.id} className="flex items-center gap-2 text-xs">
+                            <input
+                              type="checkbox"
+                              className="size-3.5 shrink-0"
+                              checked={marcado}
+                              onChange={() =>
+                                setEdicao({
+                                  ...edicao,
+                                  pdvVendedorIds: marcado
+                                    ? (edicao.pdvVendedorIds ?? []).filter((c) => c !== v.id)
+                                    : [...(edicao.pdvVendedorIds ?? []), v.id],
+                                })
+                              }
+                            />
+                            <span className="min-w-0 truncate">
+                              {v.nome ?? v.apelido ?? "sem nome"}
+                              <span className="text-muted-foreground">
+                                {" "}
+                                · {v.id}
+                                {v.lojaId != null ? ` · ${nomeLoja.get(v.lojaId) ?? v.lojaId}` : ""}
+                              </span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    {vendedores.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        Nenhum código disponível — sincronize com o PDV.
+                      </p>
+                    ) : null}
+                  </div>
                 </Campo>
               ) : null}
-              <Campo
-                label="Piso individual (R$)"
-                hint={
-                  pisoDoCargoSelecionado == null
-                    ? "Só preencha se esta pessoa tem acordo diferente. O piso normal vem do cargo."
-                    : `Vazio = usa o piso do cargo (${formatBRL(pisoDoCargoSelecionado)}). Preencha só para acordo individual.`
-                }
-              >
-                <InputNumero
-                  placeholder={
-                    pisoDoCargoSelecionado == null
-                      ? "—"
-                      : numeroParaTexto(pisoDoCargoSelecionado)
-                  }
-                  value={edicao.pisoGarantido ?? null}
-                  onChange={(n) => setEdicao({ ...edicao, pisoGarantido: n })}
-                />
-              </Campo>
-              <Campo label="Admissão">
-                <Input
-                  type="date"
-                  value={edicao.admissao ?? ""}
-                  onChange={(e) => setEdicao({ ...edicao, admissao: e.target.value || null })}
-                />
-              </Campo>
-              <Campo label="Situação">
-                <Select
-                  value={edicao.ativo ? "1" : "0"}
-                  onChange={(e) => setEdicao({ ...edicao, ativo: e.target.value === "1" })}
-                >
-                  <option value="1">Ativo</option>
-                  <option value="0">Inativo</option>
-                </Select>
-              </Campo>
             </div>
 
             <Campo
@@ -687,15 +687,21 @@ export function Funcionarios({
             <CardContent className="flex items-center justify-between gap-3 py-3">
               <button
                 className="min-w-0 flex-1 text-left"
-                onClick={() => (podeGerir ? setEdicao({ ...VAZIO, ...f }) : undefined)}
+                onClick={() =>
+                  podeGerir
+                    ? setEdicao({ ...VAZIO, ...f, pdvVendedorIds: codigosDe(f) })
+                    : undefined
+                }
               >
                 <p className="flex items-center gap-2 truncate text-sm font-medium">
                   {f.nome}
                   {!f.ativo ? <Badge variant="neutral">inativo</Badge> : null}
                   {f.semPdv ? (
                     <Badge variant="neutral">não vende no PDV</Badge>
-                  ) : !f.pdvVendedorId ? (
+                  ) : codigosDe(f).length === 0 ? (
                     <Badge variant="destructive">sem PDV</Badge>
+                  ) : codigosDe(f).length > 1 ? (
+                    <Badge variant="neutral">{codigosDe(f).length} códigos</Badge>
                   ) : null}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">

@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   apurar,
+  codigosPdv,
   escolherMeta,
   escolherMetaLoja,
   escolherRegra,
@@ -1215,5 +1216,57 @@ describe("férias: quem não trabalha a semana não divide a meta dela", () => {
     );
     expect(semanas).toEqual([10_000, null, null, null, null, null]);
     expect(metaDistribuidaPorSemana(semanas!, TODAS, [5, 0, 0, 0, 0, 0])).toBe(2000);
+  });
+});
+
+describe("mesma pessoa com mais de um código no PDV (Barra = 582 + 912)", () => {
+  it("junta os códigos, sem repetir, e aceita o campo antigo", () => {
+    expect(
+      codigosPdv({ ...JOAO, pdvVendedorId: null, pdvVendedorIds: ["05820041", "09120001"] }),
+    ).toEqual(["05820041", "09120001"]);
+
+    // Cadastro meio-migrado: o código legado não pode sumir da conta.
+    expect(
+      codigosPdv({ ...JOAO, pdvVendedorId: "05820001", pdvVendedorIds: ["09120001"] }),
+    ).toEqual(["09120001", "05820001"]);
+    // cadastro legado, com um código só
+    expect(codigosPdv({ ...JOAO, pdvVendedorIds: undefined, pdvVendedorId: "05820041" })).toEqual([
+      "05820041",
+    ]);
+    // o legado repetido dentro da lista não duplica
+    expect(
+      codigosPdv({ ...JOAO, pdvVendedorIds: ["05820041"], pdvVendedorId: "05820041" }),
+    ).toEqual(["05820041"]);
+    expect(codigosPdv({ ...JOAO, pdvVendedorId: null, pdvVendedorIds: [] })).toEqual([]);
+  });
+
+  it("as vendas dos dois códigos somam numa pessoa só", () => {
+    const vendas: VendaBruta[] = [
+      { id: "a", lojaId: 582, dia: "2026-08-01", vendedorId: "05820041", valorTotal: 36_139 },
+      { id: "b", lojaId: 912, dia: "2026-08-02", vendedorId: "09120001", valorTotal: 63_171 },
+    ];
+    const c = consolidar(vendas);
+    const codigos = codigosPdv({
+      ...JOAO,
+      pdvVendedorId: null,
+      pdvVendedorIds: ["05820041", "09120001"],
+    });
+    const total = codigos.reduce((s, k) => s + (c.porVendedor.get(k)?.liquida ?? 0), 0);
+    expect(total).toBe(99_310);
+  });
+
+  it("com os códigos juntos, a comissão sai sobre a venda somada", () => {
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra: regraSimples(2),
+        vendas: {
+          individual: { liquida: 99_310, bruta: 99_310 },
+          loja: { liquida: 0, bruta: 0 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+      }),
+    );
+    expect(r.comissaoBase).toBe(1986.2);
   });
 });

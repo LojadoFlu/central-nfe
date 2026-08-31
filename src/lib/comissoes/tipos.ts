@@ -103,6 +103,11 @@ export interface Funcionario {
   cargoId: string | null;
   lojaId: number | null;
   pdvVendedorId?: string | null;
+  /**
+   * Todos os códigos desta pessoa no PDV. A mesma pessoa pode ter um código por
+   * filial (a Barra é 582 + 912); para meta e resultado ela é UMA pessoa.
+   */
+  pdvVendedorIds?: string[];
   /** Não vende no PDV: comissiona pela loja/grupo, e a sync não mexe nele. */
   semPdv?: boolean;
   lojasGrupo?: number[];

@@ -76,6 +76,17 @@ export function especificidade(
 }
 
 /**
+ * Códigos do PDV desta pessoa, sem repetir. Aceita o campo antigo (um código
+ * só) e o novo (vários) — a mesma pessoa pode ter um código por filial.
+ */
+export function codigosPdv(f: Funcionario): string[] {
+  const todos = [...(f.pdvVendedorIds ?? []), ...(f.pdvVendedorId ? [f.pdvVendedorId] : [])]
+    .map((c) => (c ?? "").trim())
+    .filter(Boolean);
+  return [...new Set(todos)];
+}
+
+/**
  * Piso que vale para a pessoa (§5, §10): o do cargo, salvo acordo individual.
  * Devolve também de onde veio — a memória de cálculo mostra isso, senão ninguém
  * entende por que dois vendedores do mesmo cargo têm pisos diferentes.

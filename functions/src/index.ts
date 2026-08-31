@@ -3997,20 +3997,27 @@ export const comissoesSalvarFuncionario = onCall(opcoes, async (req) => {
   const id = novoId("com_funcionarios", req.data?.id);
   // Quem não vende no PDV não tem (nem pode ter) código de vendedor.
   const semPdv = req.data?.semPdv === true;
-  const pdvVendedorId = semPdv ? null : texto(req.data?.pdvVendedorId, 40) || null;
+  // A mesma pessoa pode ter um código por filial (Barra = 582 + 912).
+  const codigosIn = Array.isArray(req.data?.pdvVendedorIds)
+    ? req.data.pdvVendedorIds.map((c: unknown) => texto(c, 40)).filter(Boolean)
+    : [texto(req.data?.pdvVendedorId, 40)].filter(Boolean);
+  const pdvVendedorIds: string[] = semPdv ? [] : [...new Set(codigosIn as string[])];
+  const pdvVendedorId = pdvVendedorIds[0] ?? null;
 
   // Um código do PDV não pode estar em dois funcionários (§41 — sem venda dupla).
-  if (pdvVendedorId) {
-    const dup = await db
-      .collection("com_funcionarios")
-      .where("pdvVendedorId", "==", pdvVendedorId)
-      .get();
-    const conflito = dup.docs.find((d) => d.id !== id);
-    if (conflito) {
-      throw new HttpsError(
-        "already-exists",
-        `O código ${pdvVendedorId} do PDV já está vinculado a ${conflito.data().nome}.`,
-      );
+  if (pdvVendedorIds.length > 0) {
+    const todos = await db.collection("com_funcionarios").get();
+    for (const d of todos.docs) {
+      if (d.id === id) continue;
+      const f = d.data() as { nome?: string; pdvVendedorId?: string | null; pdvVendedorIds?: string[] };
+      const dele = new Set([...(f.pdvVendedorIds ?? []), ...(f.pdvVendedorId ? [f.pdvVendedorId] : [])]);
+      const choque = pdvVendedorIds.find((c) => dele.has(c));
+      if (choque) {
+        throw new HttpsError(
+          "already-exists",
+          `O código ${choque} do PDV já está vinculado a ${f.nome}.`,
+        );
+      }
     }
   }
 
@@ -4024,6 +4031,7 @@ export const comissoesSalvarFuncionario = onCall(opcoes, async (req) => {
     cargoId: texto(req.data?.cargoId, 80) || null,
     lojaId: canonizar(grupos, numOuNulo(req.data?.lojaId)),
     pdvVendedorId,
+    pdvVendedorIds,
     semPdv,
     lojasGrupo: canonizarLista(
       grupos,
@@ -4091,6 +4099,7 @@ export const comissoesImportarVendedores = onCall(
         cargoId,
         lojaId: canonizar(grupos, v.lojaId ?? null),
         pdvVendedorId: d.id,
+        pdvVendedorIds: [d.id],
         lojasGrupo: [],
         pisoGarantido: null,
         admissao: null,

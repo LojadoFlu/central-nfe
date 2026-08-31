@@ -20,6 +20,7 @@ import {
 import {
   apurar,
   bonusAplicaveis,
+  codigosPdv,
   escolherMeta,
   escolherMetaLoja,
   escolherRegra,
@@ -253,6 +254,8 @@ interface ContextoCalculo {
   participantesPorLojaSemana: Map<number, number[]>;
   /** Por funcionário: em quais semanas ele entra na meta. */
   participacaoPorFuncionario: Map<string, boolean[]>;
+  /** Melhor vendedor de cada loja, por PESSOA (somando os códigos dela). */
+  melhorFuncionarioPorLoja: Map<number, string>;
   cargosComMetaIndividual: Set<string>;
 }
 
@@ -314,6 +317,28 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     participantesPorLojaSemana.set(loja, atual);
   }
 
+  const consolidado = consolidar(
+    vendas.map((v) => ({ ...v, lojaId: canonizar(grupos, v.lojaId) })),
+  );
+
+  // Melhor vendedor por PESSOA: soma os códigos de cada um antes de comparar.
+  const melhorFuncionarioPorLoja = new Map<number, string>();
+  const maiorPorLoja = new Map<number, number>();
+  for (const f of funcionarios) {
+    if (!f.ativo) continue;
+    const loja = canonizar(grupos, f.lojaId);
+    if (loja == null) continue;
+    const total = codigosPdv(f).reduce(
+      (acc, c) => acc + (consolidado.porVendedor.get(c)?.liquida ?? 0),
+      0,
+    );
+    if (total <= 0) continue;
+    if (total > (maiorPorLoja.get(loja) ?? -Infinity)) {
+      maiorPorLoja.set(loja, total);
+      melhorFuncionarioPorLoja.set(loja, f.id);
+    }
+  }
+
   return {
     competencia,
     cfg,
@@ -326,7 +351,7 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
       .map((m) => ({ ...m, lojaId: canonizar(grupos, m.lojaId) })),
     ajustesDaComp: ajustes.filter((a) => a.competencia === competencia),
     grupos,
-    consolidado: consolidar(vendas.map((v) => ({ ...v, lojaId: canonizar(grupos, v.lojaId) }))),
+    consolidado,
     nomeLoja: grupos.nomeDoGrupo,
     nomeCargo: new Map(cargos.map((c) => [c.id, c.nome])),
     // Piso mora no CARGO; o campo do funcionário é exceção (§5, §10).
@@ -334,6 +359,7 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     nomeVendedor,
     participantesPorLojaSemana,
     participacaoPorFuncionario,
+    melhorFuncionarioPorLoja,
     cargosComMetaIndividual,
   };
 }
@@ -361,8 +387,15 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
     lojasGrupo: canonizarLista(grupos, bruto.lojasGrupo),
     pisoGarantido: piso.valor,
   };
-  const vendedorId = f.pdvVendedorId ?? null;
-  const individual = (vendedorId && consolidado.porVendedor.get(vendedorId)) || ZERO;
+  // A pessoa pode ter mais de um código (um por filial): as vendas somam.
+  const codigos = codigosPdv(f);
+  const individual = codigos.reduce(
+    (acc, c) => {
+      const t = consolidado.porVendedor.get(c);
+      return t ? { liquida: acc.liquida + t.liquida, bruta: acc.bruta + t.bruta, qtd: acc.qtd + t.qtd } : acc;
+    },
+    { ...ZERO },
+  );
   const loja = (f.lojaId != null && consolidado.porLoja.get(f.lojaId)) || ZERO;
   const lojasGrupo = f.lojasGrupo?.length ? f.lojasGrupo : f.lojaId != null ? [f.lojaId] : [];
   const grupo = somarLojas(consolidado.porLoja, lojasGrupo);
@@ -405,10 +438,10 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
     bonus: bonusAplicaveis(ctx.bonus, f, competencia),
     ajustes: ctx.ajustesDaComp.filter((a) => a.funcionarioId === f.id),
     extras: {
+      // Melhor vendedor é por PESSOA, não por código: quem tem dois códigos na
+      // Barra perderia para si mesmo se a conta fosse por código.
       melhorVendedorLoja:
-        f.lojaId != null && !!vendedorId
-          ? consolidado.melhorVendedorPorLoja.get(f.lojaId) === vendedorId
-          : false,
+        f.lojaId != null ? ctx.melhorFuncionarioPorLoja.get(f.lojaId) === f.id : false,
     },
     regraPiso: ctx.cfg.regraPiso,
   };
@@ -438,8 +471,11 @@ export async function calcularCompetencia(
   for (const bruto of funcionarios) {
     if (!bruto.ativo) {
       // Inativo que vendeu: a venda não comissiona ninguém. Melhor gritar.
-      const t = bruto.pdvVendedorId ? consolidado.porVendedor.get(bruto.pdvVendedorId) : undefined;
-      if (t && t.liquida > 0) inativosComVenda.push({ nome: bruto.nome, total: t.liquida });
+      const total = codigosPdv(bruto).reduce(
+        (acc, c) => acc + (consolidado.porVendedor.get(c)?.liquida ?? 0),
+        0,
+      );
+      if (total > 0) inativosComVenda.push({ nome: bruto.nome, total });
       continue;
     }
     const { f, entrada, regra, piso, metaIndividual, metaLoja, metaGrupo, lojasGrupo, lojasSemMeta } =
@@ -479,7 +515,7 @@ export async function calcularCompetencia(
       lojaId: f.lojaId,
       lojaNome: f.lojaId != null ? (nomeLoja.get(f.lojaId) ?? null) : null,
       empresaId,
-      pdvVendedorId: f.pdvVendedorId ?? null,
+      pdvVendedorId: codigosPdv(f).join(" + ") || null,
       regraId: regra?.id ?? null,
       regraNome: regra?.nome ?? null,
       pisoOrigem: piso.origem,
@@ -495,9 +531,7 @@ export async function calcularCompetencia(
       a.funcionarioNome.localeCompare(b.funcionarioNome),
   );
 
-  const vinculados = new Set(
-    funcionarios.map((f) => f.pdvVendedorId).filter((v): v is string => !!v),
-  );
+  const vinculados = new Set(funcionarios.flatMap((f) => codigosPdv(f)));
   const vendedoresSemCadastro = [...consolidado.porVendedor.entries()]
     .filter(([id]) => !vinculados.has(id))
     .map(([id, t]) => ({ id, nome: ctx.nomeVendedor.get(id) ?? null, total: t.liquida }))
