@@ -371,12 +371,24 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
   // Meta de referência da pessoa = o escopo MAIS ABRANGENTE da regra dela.
   // O gerente é medido pela loja; o supervisor, pelo grupo de lojas; o vendedor,
   // pela venda própria. É o que aparece como "meta" e "% atingido" na tela.
+  //
+  // Sem regra cadastrada, a regra não pode dizer nada — aí vale o formato da
+  // pessoa: quem tem lojas marcadas para supervisionar é medido pelo grupo, e
+  // quem não vende no PDV, pela loja. Sem isso, um supervisor recém-cadastrado
+  // aparecia medido por uma venda própria que ele nem faz.
   const escopos = new Set((e.regra?.componentes ?? []).map((c) => c.escopoVenda));
+  const supervisiona = (e.funcionario.lojasGrupo ?? []).length > 1;
   const escopoPrincipal: EscopoVenda = escopos.has("grupo")
     ? "grupo"
     : escopos.has("loja")
       ? "loja"
-      : "individual";
+      : escopos.size > 0
+        ? "individual"
+        : supervisiona
+          ? "grupo"
+          : e.funcionario.semPdv
+            ? "loja"
+            : "individual";
   if (e.regra) {
     for (const c of e.regra.componentes ?? []) {
       if (c.baseFaixa === "percentualMeta" && !e.metas[c.escopoVenda]) {

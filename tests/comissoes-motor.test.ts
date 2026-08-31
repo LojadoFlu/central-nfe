@@ -991,3 +991,64 @@ describe("funcionário que não vende no PDV (gerente, supervisor, contratado de
     expect(r.comissaoBase).toBe(1200); // 800.000 × 0,15%
   });
 });
+
+describe("sem regra cadastrada, o escopo segue o formato da pessoa", () => {
+  const semVendas = {
+    individual: { liquida: 500, bruta: 500 },
+    loja: { liquida: 300_000, bruta: 300_000 },
+    grupo: { liquida: 800_000, bruta: 800_000 },
+  };
+
+  it("supervisor com lojas marcadas é medido pelo grupo, não pela venda própria", () => {
+    const r = apurar(
+      entrada({
+        funcionario: {
+          ...JOAO,
+          cargoId: "supervisor",
+          lojasGrupo: [582, 371],
+          semPdv: true,
+          pisoGarantido: 2396.99,
+        },
+        regra: null,
+        metas: { individual: null, loja: 400_000, grupo: 700_000 },
+        vendas: semVendas,
+      }),
+    );
+    expect(r.escopoMeta).toBe("grupo");
+    expect(r.vendaConsiderada).toBe(800_000);
+    expect(r.metaConsiderada).toBe(700_000);
+  });
+
+  it("quem não vende no PDV e não supervisiona é medido pela loja", () => {
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, cargoId: "gerente", semPdv: true, lojasGrupo: [] },
+        regra: null,
+        metas: { individual: null, loja: 400_000, grupo: null },
+        vendas: semVendas,
+      }),
+    );
+    expect(r.escopoMeta).toBe("loja");
+    expect(r.metaConsiderada).toBe(400_000);
+  });
+
+  it("vendedor sem regra continua medido pela venda própria", () => {
+    const r = apurar(
+      entrada({ funcionario: JOAO, regra: null, metas: { individual: 80_000, loja: null, grupo: null }, vendas: semVendas }),
+    );
+    expect(r.escopoMeta).toBe("individual");
+  });
+
+  it("a regra manda quando existe: regra individual vence as lojas marcadas", () => {
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, lojasGrupo: [582, 371], pisoGarantido: 0 },
+        regra: regraSimples(2),
+        metas: { individual: 80_000, loja: null, grupo: 700_000 },
+        vendas: semVendas,
+      }),
+    );
+    expect(r.escopoMeta).toBe("individual");
+    expect(r.comissaoBase).toBe(10); // 500 × 2%
+  });
+});
