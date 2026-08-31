@@ -9,7 +9,7 @@
 import { db } from "../lib/base";
 import type { PdvnetClient } from "../pdvnet/client";
 import { limitesDaCompetencia } from "./consolidacao";
-import { canonizar, construirGrupos, type LojaBruta } from "./grupos";
+import { canonizar, construirGrupos, pareceCodigoDeLoja, type LojaBruta } from "./grupos";
 
 export interface VendedorPdv {
   id: string; // = Codigo/VendedorId
@@ -46,22 +46,6 @@ export interface ResultadoSyncVendedores {
   inativados: number;
   ignorados: number;
   reconciliado: boolean;
-}
-
-/**
- * Código do PDV que representa a LOJA, não uma pessoa ("LOJA TIJUCA",
- * "FLU MARACANÃ 1"). Vira comissão de ninguém: se virasse funcionário, a loja
- * ganharia piso e comissão.
- */
-export function pareceCodigoDeLoja(nome: string | null, nomesDeLoja: Set<string>): boolean {
-  const n = (nome ?? "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toUpperCase();
-  if (!n) return false;
-  if (nomesDeLoja.has(n)) return true;
-  return /^(LOJA|FLU)\b/.test(n);
 }
 
 function limpar(s: unknown): string | null {

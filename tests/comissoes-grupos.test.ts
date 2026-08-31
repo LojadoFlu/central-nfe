@@ -6,10 +6,10 @@ import {
   canonizarLista,
   construirGrupos,
   lojasCanonicas,
+  pareceCodigoDeLoja,
   type LojaBruta,
 } from "../functions/src/comissoes/grupos";
 import { consolidar, type VendaBruta } from "../functions/src/comissoes/consolidacao";
-import { pareceCodigoDeLoja } from "../functions/src/comissoes/vendedores";
 import { numeroParaTexto, parseNumeroBR } from "../src/lib/comissoes/numero";
 
 const LOJAS: LojaBruta[] = [

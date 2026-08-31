@@ -1,4 +1,8 @@
-// Agrupamento de lojas — FUNÇÕES PURAS.
+// Agrupamento de lojas e nomes de loja — FUNÇÕES PURAS.
+//
+// Puro de propósito: os testes importam daqui, e o `tsc` da raiz segue os
+// imports. Se este arquivo tocasse Firestore ou firebase-functions, o build da
+// Netlify quebraria — ela não instala functions/node_modules.
 //
 // O PDV às vezes tem duas filiais para o que, na operação, é UMA loja (a Barra
 // é 582 + 912). No PDV isso não pode ser unificado; aqui pode. A junção já
@@ -88,4 +92,20 @@ export function lojasCanonicas(g: Grupos): { id: number; nome: string; membros: 
   return [...g.nomeDoGrupo.entries()]
     .map(([id, nome]) => ({ id, nome, membros: g.membros.get(id) ?? [id] }))
     .sort((a, b) => a.nome.localeCompare(b.nome));
+}
+
+/**
+ * Código do PDV que representa a LOJA, não uma pessoa ("LOJA TIJUCA",
+ * "FLU MARACANÃ 1"). Vira comissão de ninguém: se virasse funcionário, a loja
+ * ganharia piso e comissão.
+ */
+export function pareceCodigoDeLoja(nome: string | null, nomesDeLoja: Set<string>): boolean {
+  const n = (nome ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toUpperCase();
+  if (!n) return false;
+  if (nomesDeLoja.has(n)) return true;
+  return /^(LOJA|FLU)\b/.test(n);
 }
