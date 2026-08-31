@@ -6,6 +6,7 @@ import { PRIMARY_NAV, SECONDARY_NAV, filtrarPorPermissao } from "@/lib/nav";
 import { useAuth } from "@/lib/auth/auth-provider";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "@/components/brand";
+import { Versao } from "@/components/layout/versao";
 
 /** Sidebar — só no desktop (lg+). No mobile a navegação é a BottomNav. */
 export function Sidebar() {
@@ -28,6 +29,7 @@ export function Sidebar() {
         {secundarios.map((i) => (
           <NavLink key={i.href} href={i.href} pathname={pathname} icon={i.icon} label={i.label} />
         ))}
+        <Versao className="px-3 pt-3 text-[10px] text-muted-foreground" />
       </nav>
     </aside>
   );

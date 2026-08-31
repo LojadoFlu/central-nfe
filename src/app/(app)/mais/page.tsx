@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Card } from "@/components/ui/card";
 import { SECONDARY_NAV, filtrarPorPermissao } from "@/lib/nav";
 import { useAuth } from "@/lib/auth/auth-provider";
+import { Versao } from "@/components/layout/versao";
 
 /** Tela "Mais" do bottom-nav mobile: agrupa os itens secundários. */
 export default function MaisPage() {
@@ -31,6 +32,7 @@ export default function MaisPage() {
           );
         })}
       </Card>
+      <Versao className="mt-4 text-center text-[10px] text-muted-foreground" />
     </div>
   );
 }
