@@ -66,6 +66,10 @@ export interface ConfigComissoes {
    * veria o mesmo dinheiro sair duas vezes.
    */
   provisaoNoFluxo: boolean;
+  /** O cadastro de funcionários segue o PDV automaticamente (§2). */
+  sincronizarFuncionarios: boolean;
+  /** Tipo do vendedor no PDV ("V", "G"…) → cargo daqui, na criação. */
+  cargosPorTipoPdv: Record<string, string>;
 }
 
 export async function carregarConfig(): Promise<ConfigComissoes> {
@@ -79,6 +83,8 @@ export async function carregarConfig(): Promise<ConfigComissoes> {
     diaPagamentoFolha: Number.isFinite(dia) && dia >= 1 && dia <= 28 ? Math.floor(dia) : 5,
     mesPagamento: d?.mesPagamento === "mesmo" ? "mesmo" : "seguinte",
     provisaoNoFluxo: d?.provisaoNoFluxo === true,
+    sincronizarFuncionarios: d?.sincronizarFuncionarios !== false, // nasce ligado
+    cargosPorTipoPdv: d?.cargosPorTipoPdv ?? {},
   };
 }
 
@@ -159,6 +165,10 @@ export interface ResultadoCompetencia {
     funcionariosSemRegra: string[];
     funcionariosSemPiso: string[];
     funcionariosSemMeta: string[];
+    /** Supervisor cuja soma de metas está incompleta. */
+    gruposSemMeta: string[];
+    /** Vendeu no mês, mas o cadastro está inativo — a venda não comissiona ninguém. */
+    inativosComVenda: { nome: string; total: number }[];
   };
   status: StatusFechamento;
   /** true quando os números vêm do fechamento congelado, não de um novo cálculo. */
@@ -259,9 +269,16 @@ export async function calcularCompetencia(
   const semRegra: string[] = [];
   const semPiso: string[] = [];
   const semMeta: string[] = [];
+  const semMetaGrupo: string[] = [];
+  const inativosComVenda: { nome: string; total: number }[] = [];
 
   for (const bruto of funcionarios) {
-    if (!bruto.ativo) continue;
+    if (!bruto.ativo) {
+      // Inativo que vendeu: a venda não comissiona ninguém. Melhor gritar.
+      const t = bruto.pdvVendedorId ? consolidado.porVendedor.get(bruto.pdvVendedorId) : undefined;
+      if (t && t.liquida > 0) inativosComVenda.push({ nome: bruto.nome, total: t.liquida });
+      continue;
+    }
     // Cadastro antigo pode apontar para a filial irmã: normaliza na leitura.
     const piso = pisoEfetivo(bruto, pisoPorCargo);
     const f: Funcionario = {
@@ -278,13 +295,21 @@ export async function calcularCompetencia(
 
     const metaIndividual = escolherMeta(metasDaComp, f, competencia);
     const metaLoja = escolherMetaLoja(metasDaComp, f.lojaId, competencia);
-    const metasGrupo = lojasGrupo
-      .map((l) => escolherMetaLoja(metasDaComp, l, competencia))
-      .filter((v): v is number => v != null);
+    // Meta do supervisor = soma das metas das lojas que ele supervisiona.
+    // Se faltar a meta de alguma, a soma seria menor que a real e inflaria o
+    // atingimento — então fica sem meta e a loja que falta é apontada.
+    const lojasSemMeta = lojasGrupo.filter(
+      (l) => escolherMetaLoja(metasDaComp, l, competencia) == null,
+    );
     const metaGrupo =
-      metasGrupo.length === lojasGrupo.length && metasGrupo.length > 0
-        ? metasGrupo.reduce((a, b) => a + b, 0)
+      lojasGrupo.length > 0 && lojasSemMeta.length === 0
+        ? lojasGrupo.reduce((a, l) => a + (escolherMetaLoja(metasDaComp, l, competencia) ?? 0), 0)
         : null;
+    if (lojasGrupo.length > 1 && lojasSemMeta.length > 0) {
+      semMetaGrupo.push(
+        `${bruto.nome}: falta a meta de ${lojasSemMeta.map((l) => nomeLoja.get(l) ?? l).join(", ")}`,
+      );
+    }
 
     const regra = escolherRegra(regras, f, competencia);
     const entrada: EntradaApuracao = {
@@ -312,7 +337,7 @@ export async function calcularCompetencia(
 
     if (!regra) semRegra.push(f.nome);
     if (piso.valor == null) semPiso.push(f.nome);
-    if (metaIndividual == null && metaLoja == null) semMeta.push(f.nome);
+    if (metaIndividual == null && metaLoja == null && metaGrupo == null) semMeta.push(f.nome);
     if (f.lojaId != null) {
       comissaoPorLoja.set(f.lojaId, (comissaoPorLoja.get(f.lojaId) ?? 0) + res.valorDevido);
     }
@@ -418,6 +443,8 @@ export async function calcularCompetencia(
       funcionariosSemRegra: semRegra,
       funcionariosSemPiso: semPiso,
       funcionariosSemMeta: semMeta,
+      gruposSemMeta: semMetaGrupo,
+      inativosComVenda,
     },
     status,
     congelado: false,
@@ -486,14 +513,17 @@ async function lerFechamentoCongelado(
     porLoja: fechamento.porLoja ?? [],
     porEmpresa: fechamento.porEmpresa ?? [],
     projecao: null,
-    divergencias:
-      fechamento.divergencias ?? {
-        vendasSemVendedor: { qtd: 0, valor: 0, ids: [] },
-        vendedoresSemCadastro: [],
-        funcionariosSemRegra: [],
-        funcionariosSemPiso: [],
-        funcionariosSemMeta: [],
-      },
+    // Fechamento antigo não tem os campos novos: começa dos vazios e sobrepõe.
+    divergencias: {
+      vendasSemVendedor: { qtd: 0, valor: 0, ids: [] },
+      vendedoresSemCadastro: [],
+      funcionariosSemRegra: [],
+      funcionariosSemPiso: [],
+      funcionariosSemMeta: [],
+      gruposSemMeta: [],
+      inativosComVenda: [],
+      ...(fechamento.divergencias ?? {}),
+    },
     status: "fechado",
     congelado: true,
     fechadoPor: fechamento.fechadoPor ?? null,

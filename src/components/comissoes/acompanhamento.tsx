@@ -128,6 +128,8 @@ export function Acompanhamento({
     apuracao.divergencias.vendedoresSemCadastro.length +
     apuracao.divergencias.funcionariosSemRegra.length +
     apuracao.divergencias.funcionariosSemPiso.length +
+    apuracao.divergencias.gruposSemMeta.length +
+    apuracao.divergencias.inativosComVenda.length +
     (apuracao.divergencias.vendasSemVendedor.qtd > 0 ? 1 : 0);
 
   return (
@@ -205,6 +207,15 @@ export function Acompanhamento({
             {apuracao.divergencias.funcionariosSemMeta.length > 0 ? (
               <p>Sem meta: {apuracao.divergencias.funcionariosSemMeta.join(", ")}.</p>
             ) : null}
+            {apuracao.divergencias.gruposSemMeta.map((g, i) => (
+              <p key={i}>{g}.</p>
+            ))}
+            {apuracao.divergencias.inativosComVenda.map((v, i) => (
+              <p key={i}>
+                {v.nome} está inativo mas vendeu {formatBRL(v.total)} — essa venda não gera
+                comissão para ninguém.
+              </p>
+            ))}
           </CardContent>
         </Card>
       ) : null}

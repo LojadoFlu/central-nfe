@@ -410,6 +410,75 @@ describe("§33 — vigência histórica", () => {
   });
 });
 
+describe("a meta que vale para cada cargo", () => {
+  it("vendedor é medido pela venda própria", () => {
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra: regraSimples(2),
+        metas: { individual: 80_000, loja: 400_000, grupo: null },
+        vendas: {
+          individual: { liquida: 100_000, bruta: 100_000 },
+          loja: { liquida: 500_000, bruta: 500_000 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+      }),
+    );
+    expect(r.escopoMeta).toBe("individual");
+    expect(r.metaConsiderada).toBe(80_000);
+    expect(r.atingimentoPct).toBe(125);
+  });
+
+  it("gerente é medido pela loja, mesmo tendo componente de venda própria", () => {
+    const regra = regraSimples(1);
+    regra.componentes.push({
+      id: "c2",
+      rotulo: "Loja",
+      escopoVenda: "loja",
+      baseCalculo: "liquida",
+      baseFaixa: "valor",
+      modelo: "integral",
+      faixas: [{ de: 0, percentual: 0.5 }],
+    });
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra,
+        metas: { individual: 80_000, loja: 400_000, grupo: null },
+        vendas: {
+          individual: { liquida: 20_000, bruta: 20_000 },
+          loja: { liquida: 500_000, bruta: 500_000 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+      }),
+    );
+    expect(r.escopoMeta).toBe("loja");
+    expect(r.metaConsiderada).toBe(400_000);
+    expect(r.atingimentoPct).toBe(125);
+  });
+
+  it("supervisor é medido pelo grupo de lojas", () => {
+    const regra = regraSimples(0);
+    regra.componentes[0].escopoVenda = "grupo";
+    regra.componentes[0].faixas = [{ de: 0, percentual: 0.15 }];
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra,
+        metas: { individual: 80_000, loja: 400_000, grupo: 1_800_000 },
+        vendas: {
+          individual: { liquida: 0, bruta: 0 },
+          loja: { liquida: 500_000, bruta: 500_000 },
+          grupo: { liquida: 2_000_000, bruta: 2_000_000 },
+        },
+      }),
+    );
+    expect(r.escopoMeta).toBe("grupo");
+    expect(r.metaConsiderada).toBe(1_800_000);
+    expect(r.comissaoBase).toBe(3000);
+  });
+});
+
 describe("§11/§13 — gerente e supervisor", () => {
   const GERENTE: Funcionario = {
     id: "ana",

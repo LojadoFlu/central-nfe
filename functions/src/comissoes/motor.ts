@@ -350,7 +350,15 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
 
   // 1) Comissão base — soma dos componentes da regra.
   let comissaoBase = 0;
-  const escopoPrincipal: EscopoVenda = e.regra?.componentes?.[0]?.escopoVenda ?? "individual";
+  // Meta de referência da pessoa = o escopo MAIS ABRANGENTE da regra dela.
+  // O gerente é medido pela loja; o supervisor, pelo grupo de lojas; o vendedor,
+  // pela venda própria. É o que aparece como "meta" e "% atingido" na tela.
+  const escopos = new Set((e.regra?.componentes ?? []).map((c) => c.escopoVenda));
+  const escopoPrincipal: EscopoVenda = escopos.has("grupo")
+    ? "grupo"
+    : escopos.has("loja")
+      ? "loja"
+      : "individual";
   if (e.regra) {
     for (const c of e.regra.componentes ?? []) {
       if (c.baseFaixa === "percentualMeta" && !e.metas[c.escopoVenda]) {
@@ -434,6 +442,7 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
     competencia: e.competencia,
     vendaConsiderada,
     metaConsiderada,
+    escopoMeta: escopoPrincipal,
     atingimentoPct: atingimentos[escopoPrincipal],
     percentualEfetivo: vendaConsiderada > 0 ? (comissaoBase / vendaConsiderada) * 100 : null,
     comissaoBase,

@@ -9,6 +9,7 @@ import {
   type LojaBruta,
 } from "../functions/src/comissoes/grupos";
 import { consolidar, type VendaBruta } from "../functions/src/comissoes/consolidacao";
+import { pareceCodigoDeLoja } from "../functions/src/comissoes/vendedores";
 
 const LOJAS: LojaBruta[] = [
   { id: 335, nome: "FLU CLUBE", grupoNome: "FLU CLUBE", empresaId: "30623074000145", ativoSync: true },
@@ -71,5 +72,38 @@ describe("agrupamento de filiais do PDV", () => {
     const g2 = construirGrupos([{ id: 700, nome: "FLU NOVA", grupoNome: null, ativoSync: true }]);
     expect(canonizar(g2, 700)).toBe(700);
     expect(g2.nomeDoGrupo.get(700)).toBe("FLU NOVA");
+  });
+});
+
+describe("código do PDV que é a loja, não uma pessoa", () => {
+  const nomesDeLoja = new Set(["FLU CLUBE", "FLU TIJUCA", "FLU BARRA", "FLU NOVA AMERICA"]);
+
+  it("pega os códigos institucionais que aparecem na base", () => {
+    for (const n of ["LOJA TIJUCA", "LOJA NOVA AMERICA", "LOJA BARRA", "FLU MARACANA 1"]) {
+      expect(pareceCodigoDeLoja(n, nomesDeLoja)).toBe(true);
+    }
+  });
+
+  it("não confunde com gente de verdade", () => {
+    for (const n of [
+      "MARCOS COSTA DA SILVA",
+      "LEONARDO BATTEMARCO",
+      "TAIS MAC DOWELL ROSSI",
+      "RAÍ FERREIRA",
+      "LUIZ GUSTAVO BARRA",
+      "GABI CX",
+      "ABRÃAO",
+    ]) {
+      expect(pareceCodigoDeLoja(n, nomesDeLoja)).toBe(false);
+    }
+  });
+
+  it("acento não engana (FLU MARACANÃ = FLU MARACANA)", () => {
+    expect(pareceCodigoDeLoja("Flu Maracanã 1", nomesDeLoja)).toBe(true);
+  });
+
+  it("nome vazio não é marcado", () => {
+    expect(pareceCodigoDeLoja(null, nomesDeLoja)).toBe(false);
+    expect(pareceCodigoDeLoja("  ", nomesDeLoja)).toBe(false);
   });
 });

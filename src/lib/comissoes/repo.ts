@@ -18,6 +18,7 @@ import type {
   Regra,
   ResultadoApuracao,
   ResultadoCompetencia,
+  ResultadoSyncQuadro,
   StatusFechamento,
   VendedorPdv,
 } from "./tipos";
@@ -90,6 +91,8 @@ export async function obterConfig(): Promise<ConfigComissoes> {
   const d = snap.data() as Partial<ConfigComissoes> | undefined;
   const dia = Number(d?.diaPagamentoFolha);
   return {
+    sincronizarFuncionarios: d?.sincronizarFuncionarios !== false,
+    cargosPorTipoPdv: d?.cargosPorTipoPdv ?? {},
     regraPiso: d?.regraPiso === "soma" ? "soma" : "maior",
     cargoPadraoId: d?.cargoPadraoId ?? null,
     diaPagamentoFolha: Number.isFinite(dia) && dia >= 1 && dia <= 28 ? Math.floor(dia) : 5,
@@ -129,10 +132,10 @@ export const salvarConfig = (i: Partial<ConfigComissoes>) =>
   chamar<{ ok: boolean } & ConfigComissoes>("comissoesSalvarConfig", i);
 
 export const sincronizarVendedoresPdv = (competencias?: string[]) =>
-  chamar<{ ok: boolean; lojas?: number; gravados?: number; semNome?: number; erro?: string }>(
-    "comissoesSincronizarVendedores",
-    { competencias },
-  );
+  chamar<ResultadoSyncQuadro>("comissoesSincronizarVendedores", { competencias });
+
+export const marcarVendedor = (id: string, ignorado: boolean) =>
+  chamar<{ ok: boolean; ignorado: boolean }>("comissoesMarcarVendedor", { id, ignorado });
 
 export const apurarComissoes = (competencia: string) =>
   chamar<ResultadoCompetencia>("comissoesApurar", { competencia });

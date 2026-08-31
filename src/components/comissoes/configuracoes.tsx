@@ -26,6 +26,12 @@ export function Configuracoes({
   const [diaPagamentoFolha, setDiaPagamentoFolha] = useState(String(config.diaPagamentoFolha));
   const [mesPagamento, setMesPagamento] = useState(config.mesPagamento);
   const [provisaoNoFluxo, setProvisaoNoFluxo] = useState(config.provisaoNoFluxo);
+  const [sincronizarFuncionarios, setSincronizarFuncionarios] = useState(
+    config.sincronizarFuncionarios,
+  );
+  const [cargosPorTipoPdv, setCargosPorTipoPdv] = useState<Record<string, string>>(
+    config.cargosPorTipoPdv ?? {},
+  );
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -116,6 +122,53 @@ export function Configuracoes({
             </Select>
           </Campo>
 
+          <Campo
+            label="Cadastro de funcionários segue o PDV"
+            hint="Ligado, o quadro é reconciliado todo dia às 7h: quem entra no PDV vira funcionário, quem sai é inativado."
+          >
+            <Select
+              value={sincronizarFuncionarios ? "1" : "0"}
+              disabled={!podeGerir}
+              onChange={(e) => setSincronizarFuncionarios(e.target.value === "1")}
+            >
+              <option value="1">Sim, seguir o PDV (recomendado)</option>
+              <option value="0">Não, só cadastro manual</option>
+            </Select>
+          </Campo>
+
+          <div className="space-y-1">
+            <label className="block text-xs font-medium text-muted-foreground">
+              Cargo de quem entra pelo PDV
+            </label>
+            <p className="text-[11px] text-muted-foreground">
+              O PDV classifica cada vendedor por um tipo. Diga qual cargo daqui corresponde a cada
+              um — vale só no momento da criação; depois o cargo é seu e a sincronização não mexe.
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[
+                { tipo: "V", label: 'Tipo "V" (vendedor)' },
+                { tipo: "G", label: 'Tipo "G" (gerente)' },
+              ].map(({ tipo, label }) => (
+                <Campo key={tipo} label={label}>
+                  <Select
+                    value={cargosPorTipoPdv[tipo] ?? ""}
+                    disabled={!podeGerir}
+                    onChange={(e) =>
+                      setCargosPorTipoPdv({ ...cargosPorTipoPdv, [tipo]: e.target.value })
+                    }
+                  >
+                    <option value="">— usar o cargo padrão —</option>
+                    {cargos.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nome}
+                      </option>
+                    ))}
+                  </Select>
+                </Campo>
+              ))}
+            </div>
+          </div>
+
           {podeGerir ? (
             <Button
               size="sm"
@@ -131,6 +184,10 @@ export function Configuracoes({
                     diaPagamentoFolha: Number(diaPagamentoFolha) || 5,
                     mesPagamento,
                     provisaoNoFluxo,
+                    sincronizarFuncionarios,
+                    cargosPorTipoPdv: Object.fromEntries(
+                      Object.entries(cargosPorTipoPdv).filter(([, v]) => v),
+                    ),
                   });
                   await onRecarregar();
                   setOk("Configuração salva.");

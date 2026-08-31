@@ -9,12 +9,19 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { formatBRL } from "@/lib/utils";
 import { Plus, RefreshCw, Trash2, UserPlus } from "lucide-react";
-import type { Cargo, Funcionario, VendedorPdv } from "@/lib/comissoes/tipos";
+import type {
+  Cargo,
+  ConfigComissoes,
+  Funcionario,
+  ResultadoSyncQuadro,
+  VendedorPdv,
+} from "@/lib/comissoes/tipos";
 import type { StorePdv } from "@/lib/nfe/repo";
 import {
   excluirCargo,
   excluirFuncionario,
   importarVendedores,
+  marcarVendedor,
   salvarCargo,
   salvarFuncionario,
   sincronizarVendedoresPdv,
@@ -40,6 +47,7 @@ export function Funcionarios({
   funcionarios,
   vendedores,
   lojas,
+  config,
   podeGerir,
   onRecarregar,
 }: {
@@ -47,6 +55,7 @@ export function Funcionarios({
   funcionarios: Funcionario[];
   vendedores: VendedorPdv[];
   lojas: StorePdv[];
+  config: ConfigComissoes;
   podeGerir: boolean;
   onRecarregar: () => Promise<void>;
 }) {
@@ -60,6 +69,8 @@ export function Funcionarios({
   const [ok, setOk] = useState<string | null>(null);
   const [cargoImport, setCargoImport] = useState("");
   const [mostrarCargos, setMostrarCargos] = useState(false);
+  const [mostrarInativos, setMostrarInativos] = useState(false);
+  const [resultadoSync, setResultadoSync] = useState<ResultadoSyncQuadro | null>(null);
 
   const nomeLoja = useMemo(
     () => new Map(lojas.map((l) => [l.id, l.grupoNome || l.nome || `Loja ${l.id}`])),
@@ -75,9 +86,12 @@ export function Funcionarios({
     return c?.pisoGarantido ?? null;
   }, [edicao?.cargoId, cargos]);
   const semCadastro = useMemo(
-    () => vendedores.filter((v) => !vinculados.has(v.id) && (v.nome || v.apelido)),
+    () => vendedores.filter((v) => !v.ignorado && !vinculados.has(v.id) && (v.nome || v.apelido)),
     [vendedores, vinculados],
   );
+  const naoSaoPessoas = useMemo(() => vendedores.filter((v) => v.ignorado), [vendedores]);
+  const ativos = useMemo(() => funcionarios.filter((f) => f.ativo), [funcionarios]);
+  const inativos = useMemo(() => funcionarios.filter((f) => !f.ativo), [funcionarios]);
 
   async function executar(fn: () => Promise<unknown>, mensagem: string) {
     setOcupado(true);
@@ -114,15 +128,74 @@ export function Funcionarios({
               executar(async () => {
                 const r = await sincronizarVendedoresPdv();
                 if (!r.ok) throw new Error(r.erro ?? "Falha ao sincronizar.");
-              }, "Vendedores do PDV atualizados.")
+                setResultadoSync(r);
+              }, "Quadro sincronizado com o PDV.")
             }
           >
-            <RefreshCw className={ocupado ? "animate-spin" : ""} /> Buscar vendedores no PDV
+            <RefreshCw className={ocupado ? "animate-spin" : ""} /> Sincronizar com o PDV
           </Button>
           <Button size="sm" variant="outline" onClick={() => setMostrarCargos((v) => !v)}>
             Cargos ({cargos.length})
           </Button>
         </div>
+      ) : null}
+
+      <Card className="bg-muted/30">
+        <CardContent className="space-y-1 py-3 text-xs text-muted-foreground">
+          <p>
+            <strong className="text-foreground">O quadro segue o PDV.</strong>{" "}
+            {config.sincronizarFuncionarios
+              ? "Vendedor novo lá vira funcionário aqui sozinho (todo dia, às 7h); quem sai é inativado, nunca excluído — o histórico e os meses fechados dependem disso."
+              : "A sincronização automática está DESLIGADA nas Configurações: hoje o cadastro só muda no botão acima ou na mão."}
+          </p>
+          <p>
+            O PDV manda no nome e na loja. Cargo, piso e lojas do supervisor são nossos — a
+            sincronização não mexe neles depois de definidos.
+          </p>
+          {resultadoSync ? (
+            <p className="text-foreground">
+              Última sincronização: {resultadoSync.criados ?? 0} criado(s) ·{" "}
+              {resultadoSync.atualizados ?? 0} atualizado(s) · {resultadoSync.inativados ?? 0}{" "}
+              inativado(s) · {resultadoSync.gravados ?? 0} código(s) no espelho.
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      {naoSaoPessoas.length > 0 ? (
+        <Card>
+          <CardContent className="space-y-2 py-4">
+            <h2 className="text-[0.95rem] font-semibold tracking-tight">
+              Códigos que não são pessoas
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Códigos institucionais da loja (a venda foi feita sem vendedor identificado). Não
+              geram comissão nem piso para ninguém — se gerassem, a loja receberia.
+            </p>
+            {naoSaoPessoas.map((v) => (
+              <div key={v.id} className="flex items-center justify-between gap-2 text-xs">
+                <span className="truncate">
+                  {v.nome ?? v.apelido} <span className="text-muted-foreground">· {v.id}</span>
+                </span>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-muted-foreground tnum">{formatBRL(v.totalPeriodo)}</span>
+                  {podeGerir ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={ocupado}
+                      onClick={() =>
+                        executar(() => marcarVendedor(v.id, false), "Marcado como pessoa de verdade.")
+                      }
+                    >
+                      É uma pessoa
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       ) : null}
 
       {mostrarCargos ? (
@@ -339,8 +412,8 @@ export function Funcionarios({
             </div>
 
             <Campo
-              label="Lojas do grupo (supervisor)"
-              hint="Marque as lojas que esta pessoa acompanha. Vazio = só a loja dela."
+              label="Lojas que supervisiona"
+              hint="Para supervisor: a meta dele é a SOMA das metas destas lojas, e a comissão incide sobre a venda somada. Vazio = só a loja dele."
             >
               <div className="flex flex-wrap gap-1.5">
                 {lojas.map((l) => {
@@ -419,7 +492,19 @@ export function Funcionarios({
                   <span className="truncate">
                     {v.nome ?? v.apelido} <span className="text-muted-foreground">· {v.id}</span>
                   </span>
-                  <span className="shrink-0 text-muted-foreground tnum">{formatBRL(v.totalPeriodo)}</span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="text-muted-foreground tnum">{formatBRL(v.totalPeriodo)}</span>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={ocupado}
+                      onClick={() =>
+                        executar(() => marcarVendedor(v.id, true), "Marcado como código da loja.")
+                      }
+                    >
+                      Não é pessoa
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>

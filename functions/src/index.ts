@@ -4329,7 +4329,23 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
   const diaPagamentoFolha = diaBruto >= 1 && diaBruto <= 28 ? diaBruto : 5;
   const mesPagamento = String(req.data?.mesPagamento) === "mesmo" ? "mesmo" : "seguinte";
   const provisaoNoFluxo = req.data?.provisaoNoFluxo === true;
-  const dados = { regraPiso, cargoPadraoId, diaPagamentoFolha, mesPagamento, provisaoNoFluxo };
+  const sincronizarFuncionarios = req.data?.sincronizarFuncionarios !== false;
+  const cargosPorTipoPdv: Record<string, string> = {};
+  const mapaIn = (req.data?.cargosPorTipoPdv ?? {}) as Record<string, unknown>;
+  for (const [tipo, cargo] of Object.entries(mapaIn)) {
+    const t = texto(tipo, 4);
+    const c = texto(cargo, 80);
+    if (t && c) cargosPorTipoPdv[t] = c;
+  }
+  const dados = {
+    regraPiso,
+    cargoPadraoId,
+    diaPagamentoFolha,
+    mesPagamento,
+    provisaoNoFluxo,
+    sincronizarFuncionarios,
+    cargosPorTipoPdv,
+  };
   await db
     .collection("com_config")
     .doc("geral")
@@ -4348,6 +4364,38 @@ export const comissoesApurar = onCall(
     return { ok: true, ...r };
   },
 );
+
+/**
+ * Marca (ou desmarca) um código do PDV como "não é uma pessoa" — os códigos
+ * institucionais da loja, tipo "LOJA TIJUCA". Marcado, ele não vira funcionário
+ * e o cadastro vinculado é inativado.
+ */
+export const comissoesMarcarVendedor = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const id = texto(req.data?.id, 40);
+  if (!id) throw new HttpsError("invalid-argument", "Informe o código do vendedor.");
+  const ignorado = req.data?.ignorado !== false;
+  const ref = db.collection("pdv_sellers").doc(id);
+  if (!(await ref.get()).exists) {
+    throw new HttpsError("not-found", "Código não encontrado no espelho do PDV.");
+  }
+  await ref.set({ ignorado, atualizadoEm: agoraISO() }, { merge: true });
+
+  // Reflete no cadastro: marcado sai de cena, desmarcado volta.
+  const vinc = await db.collection("com_funcionarios").where("pdvVendedorId", "==", id).get();
+  for (const d of vinc.docs) {
+    await d.ref.set(
+      {
+        ativo: !ignorado,
+        motivoInativacao: ignorado ? "Código da loja, não é uma pessoa" : null,
+        atualizadoEm: agoraISO(),
+      },
+      { merge: true },
+    );
+  }
+  await auditar(uid, "comissoes.marcarVendedor", { id, ignorado, funcionarios: vinc.size });
+  return { ok: true, id, ignorado };
+});
 
 /** Fecha a competência: congela a apuração de cada funcionário (§26). */
 export const comissoesFechar = onCall(
@@ -4462,6 +4510,18 @@ export const comissoesProvisaoAgendada = onSchedule(
   async () => {
     const hoje = hojeBRT();
     const atual = hoje.slice(0, 7);
+    // O cadastro segue o PDV: sincroniza o quadro antes de calcular.
+    try {
+      const cred = await lerSegredoPdvnet();
+      const r = await sincronizarVendedores(new PdvnetClient(cred), [atual]);
+      logger.info("comissoes: quadro sincronizado", {
+        criados: r.criados,
+        atualizados: r.atualizados,
+        inativados: r.inativados,
+      });
+    } catch (e) {
+      logger.error("comissoes: falha ao sincronizar o quadro", { erro: (e as Error).message });
+    }
     // Mês corrente sempre; no começo do mês, o anterior também ainda se mexe.
     const comps = Number(hoje.slice(8, 10)) <= 10 ? [mesAnteriorComp(atual), atual] : [atual];
     for (const comp of comps) {

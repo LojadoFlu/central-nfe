@@ -79,6 +79,8 @@ export default function ComissoesPage() {
     diaPagamentoFolha: 5,
     mesPagamento: "seguinte",
     provisaoNoFluxo: false,
+    sincronizarFuncionarios: true,
+    cargosPorTipoPdv: {},
   });
   const [metas, setMetas] = useState<Meta[]>([]);
   const [ajustes, setAjustes] = useState<Ajuste[]>([]);
@@ -208,6 +210,7 @@ export default function ComissoesPage() {
           funcionarios={funcionarios}
           vendedores={vendedores}
           lojas={lojas}
+          config={config}
           podeGerir={podeGerir}
           onRecarregar={recarregarTudo}
         />
@@ -225,6 +228,7 @@ export default function ComissoesPage() {
           competencia={competencia}
           metas={metas}
           funcionarios={funcionarios}
+          apuracao={apuracao}
           lojas={lojas}
           podeGerir={podeGerir}
           onRecarregar={recarregarTudo}

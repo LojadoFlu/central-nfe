@@ -204,6 +204,8 @@ export interface ResultadoApuracao {
   competencia: Competencia;
   vendaConsiderada: number;
   metaConsiderada: number | null;
+  /** Por qual escopo a pessoa é medida: venda própria, da loja ou do grupo. */
+  escopoMeta: EscopoVenda;
   atingimentoPct: number | null;
   /** Percentual efetivo = comissão base ÷ venda considerada. */
   percentualEfetivo: number | null;

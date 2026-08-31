@@ -81,6 +81,13 @@ export function Fechamento({
     if (d.funcionariosSemMeta.length > 0) {
       itens.push({ texto: `Sem meta: ${d.funcionariosSemMeta.join(", ")}`, grave: false });
     }
+    for (const g of d.gruposSemMeta) itens.push({ texto: g, grave: true });
+    for (const v of d.inativosComVenda) {
+      itens.push({
+        texto: `${v.nome} está inativo mas vendeu ${formatBRL(v.total)} — sem comissão para ninguém`,
+        grave: true,
+      });
+    }
     const ajustes = apuracao.linhas.filter((l) => l.ajustesTotal !== 0).length;
     if (ajustes > 0) {
       itens.push({ texto: `${ajustes} funcionário(s) com ajuste lançado nesta competência`, grave: false });

@@ -126,6 +126,10 @@ export interface VendedorPdv {
   lojaId: number | null;
   lojas: number[];
   inativo: boolean | null;
+  /** Apareceu na equipe de alguma loja na última sincronização. */
+  naEquipe?: boolean;
+  /** Código institucional da loja, não uma pessoa. */
+  ignorado?: boolean;
   ultimaVenda: string | null;
   totalPeriodo: number;
 }
@@ -153,6 +157,7 @@ export interface ResultadoApuracao {
   competencia: Competencia;
   vendaConsiderada: number;
   metaConsiderada: number | null;
+  escopoMeta: EscopoVenda;
   atingimentoPct: number | null;
   percentualEfetivo: number | null;
   comissaoBase: number;
@@ -184,6 +189,7 @@ export interface LinhaApuracao {
   valorDevidoProjetado: number | null;
   vendaConsiderada: number;
   metaConsiderada: number | null;
+  escopoMeta: EscopoVenda;
   atingimentoPct: number | null;
   percentualEfetivo: number | null;
   comissaoBase: number;
@@ -236,6 +242,8 @@ export interface ResultadoCompetencia {
     funcionariosSemRegra: string[];
     funcionariosSemPiso: string[];
     funcionariosSemMeta: string[];
+    gruposSemMeta: string[];
+    inativosComVenda: { nome: string; total: number }[];
   };
   status: StatusFechamento;
   congelado: boolean;
@@ -249,6 +257,23 @@ export interface ConfigComissoes {
   diaPagamentoFolha: number;
   mesPagamento: "seguinte" | "mesmo";
   provisaoNoFluxo: boolean;
+  /** O cadastro de funcionários segue o PDV automaticamente. */
+  sincronizarFuncionarios: boolean;
+  /** Tipo do vendedor no PDV ("V", "G"…) → cargo daqui, na criação. */
+  cargosPorTipoPdv: Record<string, string>;
+}
+
+export interface ResultadoSyncQuadro {
+  ok: boolean;
+  lojas?: number;
+  gravados?: number;
+  semNome?: number;
+  ignorados?: number;
+  criados?: number;
+  atualizados?: number;
+  inativados?: number;
+  reconciliado?: boolean;
+  erro?: string;
 }
 
 export interface LogAuditoria {

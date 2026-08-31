@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatBRL } from "@/lib/utils";
 import { Copy, Save } from "lucide-react";
-import type { Funcionario, Meta } from "@/lib/comissoes/tipos";
+import type { Funcionario, Meta, ResultadoCompetencia } from "@/lib/comissoes/tipos";
 import type { StorePdv } from "@/lib/nfe/repo";
 import { listarMetas, salvarMetas } from "@/lib/comissoes/repo";
 import { Aviso, mesLabel } from "./comum";
@@ -25,6 +25,7 @@ export function Metas({
   competencia,
   metas,
   funcionarios,
+  apuracao,
   lojas,
   podeGerir,
   onRecarregar,
@@ -32,6 +33,7 @@ export function Metas({
   competencia: string;
   metas: Meta[];
   funcionarios: Funcionario[];
+  apuracao: ResultadoCompetencia | null;
   lojas: StorePdv[];
   podeGerir: boolean;
   onRecarregar: () => Promise<void>;
@@ -159,9 +161,61 @@ export function Metas({
 
       <Card>
         <CardContent className="space-y-2 py-4">
-          <h2 className="text-[0.95rem] font-semibold tracking-tight">Meta por funcionário</h2>
+          <h2 className="text-[0.95rem] font-semibold tracking-tight">Meta que vale para cada um</h2>
           <p className="text-[11px] text-muted-foreground">
-            Em branco = usa a meta da loja/cargo. Preenchida = exceção individual desta pessoa.
+            Não é campo — é o que o cálculo está usando hoje. Vendedor é medido pela venda própria,
+            gerente pela loja dele, supervisor pela soma das lojas que supervisiona.
+          </p>
+          {apuracao && apuracao.linhas.length > 0 ? (
+            <div className="divide-y divide-border">
+              {apuracao.linhas.map((l) => (
+                <div key={l.funcionarioId} className="flex items-center justify-between gap-3 py-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm">{l.funcionarioNome}</p>
+                    <p className="truncate text-[11px] text-muted-foreground">
+                      {l.cargoNome ?? "sem cargo"} ·{" "}
+                      {l.escopoMeta === "grupo"
+                        ? "meta = soma das lojas que supervisiona"
+                        : l.escopoMeta === "loja"
+                          ? `meta = a da loja ${l.lojaNome ?? ""}`.trim()
+                          : "meta individual"}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 text-sm font-semibold tnum ${
+                      l.metaConsiderada == null ? "text-destructive" : ""
+                    }`}
+                  >
+                    {l.metaConsiderada == null ? "sem meta" : formatBRL(l.metaConsiderada)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Cadastre funcionários e regras para ver a meta de cada um.
+            </p>
+          )}
+          {apuracao?.divergencias.gruposSemMeta.length ? (
+            <div className="rounded-md bg-warning/10 p-2.5 text-[11px] text-warning">
+              {apuracao.divergencias.gruposSemMeta.map((g, i) => (
+                <p key={i}>{g}</p>
+              ))}
+              <p className="mt-1 text-muted-foreground">
+                Enquanto faltar a meta de uma das lojas, o supervisor fica sem meta — somar só as
+                que existem daria um alvo menor que o real e um atingimento inflado.
+              </p>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-2 py-4">
+          <h2 className="text-[0.95rem] font-semibold tracking-tight">Meta individual (exceção)</h2>
+          <p className="text-[11px] text-muted-foreground">
+            Só para quem tem meta própria negociada. Em branco, vale a meta da loja (ou a soma das
+            lojas, no caso do supervisor).
           </p>
           <div className="space-y-1.5">
             {ativos.map((f) => (
