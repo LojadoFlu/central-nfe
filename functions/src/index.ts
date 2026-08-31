@@ -4191,11 +4191,33 @@ export const comissoesSalvarMetas = onCall(opcoes, async (req) => {
     if (!funcionarioId && !cargoId && lojaId == null) {
       throw new HttpsError("invalid-argument", "A meta precisa de um escopo (funcionário, cargo ou loja).");
     }
+    // Metas semanais (1 a 6). Havendo semanas, o valor do mês é a SOMA delas —
+    // não dá para as duas coisas discordarem.
+    const semanasIn = Array.isArray(m?.semanas) ? m.semanas.slice(0, 6) : null;
+    const semanas = semanasIn
+      ? semanasIn.map((x: unknown) => (x === null || x === undefined || x === "" ? null : num(x)))
+      : null;
+    const temSemana = semanas?.some((x: number | null) => x != null) ?? false;
+    const valor = temSemana
+      ? Math.round(
+          (semanas as (number | null)[]).reduce((a: number, x) => a + (x ?? 0), 0) * 100,
+        ) / 100
+      : num(m?.valor);
+
     // Id determinístico pelo escopo: salvar de novo ATUALIZA, não duplica (§41).
     const id = `${competencia}_${funcionarioId ?? "-"}_${cargoId ?? "-"}_${lojaId ?? "-"}`;
     batch.set(
       db.collection("com_metas").doc(id),
-      { id, competencia, funcionarioId, cargoId, lojaId, valor: num(m?.valor), atualizadoEm: agoraISO() },
+      {
+        id,
+        competencia,
+        funcionarioId,
+        cargoId,
+        lojaId,
+        valor,
+        semanas: semanas ?? null,
+        atualizadoEm: agoraISO(),
+      },
       { merge: true },
     );
     salvos.push(id);

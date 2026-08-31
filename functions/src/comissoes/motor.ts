@@ -143,6 +143,21 @@ export function escolherMeta(
   return melhor;
 }
 
+/**
+ * Meta de cada vendedor quando a loja tem meta e a pessoa não tem meta própria:
+ * a meta da loja dividida IGUALMENTE entre os vendedores dela.
+ *
+ * Quem divide são só os que vendem: gerente e supervisor são medidos pela loja
+ * ou pelo grupo, então entrariam na conta duas vezes se dividissem também.
+ */
+export function metaPorVendedor(
+  metaLoja: number | null,
+  vendedoresNaLoja: number,
+): number | null {
+  if (metaLoja == null || vendedoresNaLoja <= 0) return null;
+  return centavos(metaLoja / vendedoresNaLoja);
+}
+
 /** Meta da LOJA na competência (escopo só-loja, sem cargo/funcionário). */
 export function escolherMetaLoja(
   metas: Meta[],

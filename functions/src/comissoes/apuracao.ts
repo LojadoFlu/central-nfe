@@ -23,6 +23,7 @@ import {
   escolherMeta,
   escolherMetaLoja,
   escolherRegra,
+  metaPorVendedor,
   pisoEfetivo,
 } from "./motor";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./grupos";
@@ -246,6 +247,17 @@ interface ContextoCalculo {
   nomeCargo: Map<string, string>;
   pisoPorCargo: Map<string, number | null>;
   nomeVendedor: Map<string, string | null>;
+  /** Quantos vendedores cada loja tem — para dividir a meta da loja. */
+  vendedoresPorLoja: Map<number, number>;
+}
+
+/**
+ * Vendedor para efeito de meta: está ativo, vende no PDV e não acompanha
+ * lojas. Gerente e supervisor ficam de fora — eles são medidos pela loja ou
+ * pelo grupo, e dividir a meta com eles reduziria a de quem está no balcão.
+ */
+function ehVendedorDeBalcao(f: Funcionario): boolean {
+  return f.ativo && f.semPdv !== true && !(f.lojasGrupo ?? []).length;
 }
 
 async function montarContexto(competencia: string): Promise<ContextoCalculo> {
@@ -272,6 +284,14 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
   const nomeVendedor = new Map<string, string | null>();
   for (const d of sellersSnap.docs) nomeVendedor.set(d.id, (d.data().nome as string) ?? null);
 
+  const vendedoresPorLoja = new Map<number, number>();
+  for (const f of funcionarios) {
+    if (!ehVendedorDeBalcao(f)) continue;
+    const loja = canonizar(grupos, f.lojaId);
+    if (loja == null) continue;
+    vendedoresPorLoja.set(loja, (vendedoresPorLoja.get(loja) ?? 0) + 1);
+  }
+
   return {
     competencia,
     cfg,
@@ -290,6 +310,7 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     // Piso mora no CARGO; o campo do funcionário é exceção (§5, §10).
     pisoPorCargo: new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null])),
     nomeVendedor,
+    vendedoresPorLoja,
   };
 }
 
@@ -322,8 +343,15 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
   const lojasGrupo = f.lojasGrupo?.length ? f.lojasGrupo : f.lojaId != null ? [f.lojaId] : [];
   const grupo = somarLojas(consolidado.porLoja, lojasGrupo);
 
-  const metaIndividual = escolherMeta(metasDaComp, f, competencia);
   const metaLoja = escolherMetaLoja(metasDaComp, f.lojaId, competencia);
+  // Meta do vendedor: a própria, se houver acordo individual; senão, a meta da
+  // loja dividida igualmente entre os vendedores dela.
+  const metaPropria = escolherMeta(metasDaComp, f, competencia);
+  const metaIndividual =
+    metaPropria ??
+    (ehVendedorDeBalcao(f) && f.lojaId != null
+      ? metaPorVendedor(metaLoja, ctx.vendedoresPorLoja.get(f.lojaId) ?? 0)
+      : null);
   // Meta do supervisor = soma das metas das lojas que ele supervisiona.
   // Se faltar a meta de alguma, a soma seria menor que a real e inflaria o
   // atingimento — então fica sem meta e a loja que falta é apontada.

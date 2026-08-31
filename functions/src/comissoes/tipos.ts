@@ -165,8 +165,13 @@ export interface Meta {
   funcionarioId?: string | null;
   cargoId?: string | null;
   lojaId?: number | null;
-  /** Alvo em R$. */
+  /** Alvo do MÊS em R$. Com semanas preenchidas, é a soma delas. */
   valor: number;
+  /**
+   * Metas semanais (semana 1 a 6). A loja planeja por semana; a apuração é
+   * mensal e usa a soma. Posição vazia = semana não usada naquele mês.
+   */
+  semanas?: (number | null)[];
 }
 
 /** Como o piso conversa com a comissão (§5) — configurável. */

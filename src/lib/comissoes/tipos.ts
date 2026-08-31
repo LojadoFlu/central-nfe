@@ -116,7 +116,10 @@ export interface Meta {
   funcionarioId?: string | null;
   cargoId?: string | null;
   lojaId?: number | null;
+  /** Alvo do MÊS. Com semanas preenchidas, é a soma delas. */
   valor: number;
+  /** Metas da semana 1 a 6; posição vazia = semana não usada no mês. */
+  semanas?: (number | null)[] | null;
 }
 
 export interface VendedorPdv {

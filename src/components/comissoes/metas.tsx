@@ -13,6 +13,12 @@ import type { StorePdv } from "@/lib/nfe/repo";
 import { listarMetas, salvarMetas } from "@/lib/comissoes/repo";
 import { Aviso, InputNumero, mesLabel } from "./comum";
 
+const SEMANAS = [0, 1, 2, 3, 4, 5];
+
+function somaSemanas(sem: (number | null)[] | undefined): number {
+  return Math.round((sem ?? []).reduce<number>((s, v) => s + (v ?? 0), 0) * 100) / 100;
+}
+
 /** Competência anterior a "YYYY-MM". */
 function mesAnterior(competencia: string): string {
   const [ano, mes] = competencia.split("-").map(Number);
@@ -37,7 +43,7 @@ export function Metas({
   podeGerir: boolean;
   onRecarregar: () => Promise<void>;
 }) {
-  const [porLoja, setPorLoja] = useState<Record<number, number | null>>({});
+  const [porLoja, setPorLoja] = useState<Record<number, (number | null)[]>>({});
   const [porFuncionario, setPorFuncionario] = useState<Record<string, number | null>>({});
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -45,19 +51,35 @@ export function Metas({
 
   // Recarrega os campos sempre que a competência (ou as metas) mudam.
   useEffect(() => {
-    const l: Record<number, number | null> = {};
+    const l: Record<number, (number | null)[]> = {};
     const f: Record<string, number | null> = {};
     for (const m of metas) {
-      if (m.funcionarioId) f[m.funcionarioId] = m.valor;
-      else if (m.lojaId != null && !m.cargoId) l[m.lojaId] = m.valor;
+      if (m.funcionarioId) {
+        f[m.funcionarioId] = m.valor;
+      } else if (m.lojaId != null && !m.cargoId) {
+        // Meta antiga (sem semanas) entra na semana 1: o total do mês não muda
+        // e dá para redistribuir depois.
+        const base = m.semanas?.length ? m.semanas : [m.valor, null, null, null, null, null];
+        l[m.lojaId] = [0, 1, 2, 3, 4, 5].map((i) => base[i] ?? null);
+      }
     }
     setPorLoja(l);
     setPorFuncionario(f);
   }, [metas, competencia]);
 
   const ativos = useMemo(() => funcionarios.filter((f) => f.ativo), [funcionarios]);
+  /** Quem divide a meta da loja: vende no PDV e não acompanha lojas. */
+  const vendedoresPorLoja = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const f of funcionarios) {
+      if (!f.ativo || f.semPdv === true || (f.lojasGrupo ?? []).length) continue;
+      if (f.lojaId == null) continue;
+      m.set(f.lojaId, (m.get(f.lojaId) ?? 0) + 1);
+    }
+    return m;
+  }, [funcionarios]);
   const totalLojas = useMemo(
-    () => Object.values(porLoja).reduce<number>((s, v) => s + (v ?? 0), 0),
+    () => Object.values(porLoja).reduce<number>((s, sem) => s + somaSemanas(sem), 0),
     [porLoja],
   );
 
@@ -78,9 +100,10 @@ export function Metas({
 
   async function salvarTudo() {
     const lote: Partial<Meta>[] = [];
-    for (const [lojaId, valor] of Object.entries(porLoja)) {
-      if (valor == null || valor <= 0) continue;
-      lote.push({ competencia, lojaId: Number(lojaId), valor });
+    for (const [lojaId, semanas] of Object.entries(porLoja)) {
+      const valor = somaSemanas(semanas);
+      if (valor <= 0) continue;
+      lote.push({ competencia, lojaId: Number(lojaId), valor, semanas });
     }
     for (const [funcionarioId, valor] of Object.entries(porFuncionario)) {
       if (valor == null || valor <= 0) continue;
@@ -135,21 +158,56 @@ export function Metas({
             <span className="text-xs text-muted-foreground tnum">soma {formatBRL(totalLojas)}</span>
           </div>
           <p className="text-[11px] text-muted-foreground">
-            Vale para o bônus da loja e para a comissão de gerente/supervisor.
+            A meta do mês é a soma das semanas. Ela vale para o gerente e o supervisor, e é
+            dividida <strong>igualmente entre os vendedores da loja</strong> — quem tiver meta
+            própria cadastrada abaixo usa a dela.
           </p>
-          <div className="space-y-1.5">
-            {lojas.map((l) => (
-              <div key={l.id} className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-sm">{l.grupoNome || l.nome}</span>
-                <InputNumero
-                  className="h-9 w-40"
-                  placeholder="0,00"
-                  disabled={!podeGerir}
-                  value={porLoja[l.id] ?? null}
-                  onChange={(n) => setPorLoja({ ...porLoja, [l.id]: n })}
-                />
-              </div>
-            ))}
+          <div className="space-y-3">
+            {lojas.map((l) => {
+              const semanas = porLoja[l.id] ?? [null, null, null, null, null, null];
+              const total = somaSemanas(semanas);
+              const qtd = vendedoresPorLoja.get(l.id) ?? 0;
+              const porVendedor = qtd > 0 && total > 0 ? total / qtd : null;
+              return (
+                <div key={l.id} className="rounded-md border border-border/60 p-2.5">
+                  <div className="mb-1.5 flex flex-wrap items-baseline justify-between gap-2">
+                    <span className="text-sm font-medium">{l.grupoNome || l.nome}</span>
+                    <span className="text-xs text-muted-foreground tnum">
+                      mês {formatBRL(total)}
+                      {porVendedor != null
+                        ? ` · ${formatBRL(porVendedor)} para cada um dos ${qtd} vendedores`
+                        : qtd === 0
+                          ? " · sem vendedor cadastrado"
+                          : ""}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-6">
+                    {SEMANAS.map((i) => (
+                      <div key={i}>
+                        <label className="block text-[10px] text-muted-foreground">
+                          Semana {i + 1}
+                        </label>
+                        <InputNumero
+                          className="h-9"
+                          placeholder="—"
+                          disabled={!podeGerir}
+                          value={semanas[i] ?? null}
+                          onChange={(n) =>
+                            setPorLoja((atual) => {
+                              const base =
+                                atual[l.id] ?? [null, null, null, null, null, null];
+                              const novo = [...base];
+                              novo[i] = n;
+                              return { ...atual, [l.id]: novo };
+                            })
+                          }
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </CardContent>
       </Card>

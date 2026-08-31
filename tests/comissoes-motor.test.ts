@@ -6,6 +6,7 @@ import {
   apurar,
   escolherMeta,
   escolherRegra,
+  metaPorVendedor,
   pisoEfetivo,
   vigente,
 } from "../functions/src/comissoes/motor";
@@ -1069,5 +1070,47 @@ describe("sem regra cadastrada, o escopo segue o formato da pessoa", () => {
     );
     expect(r.escopoMeta).toBe("individual");
     expect(r.comissaoBase).toBe(10); // 500 × 2%
+  });
+});
+
+describe("meta da loja dividida entre os vendedores", () => {
+  it("divide igualmente", () => {
+    expect(metaPorVendedor(400_000, 5)).toBe(80_000);
+    expect(metaPorVendedor(100_000, 3)).toBe(33_333.33);
+  });
+
+  it("loja sem meta continua sem meta", () => {
+    expect(metaPorVendedor(null, 5)).toBeNull();
+  });
+
+  it("loja sem vendedor não divide por zero", () => {
+    expect(metaPorVendedor(400_000, 0)).toBeNull();
+    expect(metaPorVendedor(400_000, -1)).toBeNull();
+  });
+
+  it("a meta distribuída faz o vendedor atingir a faixa certa", () => {
+    const regra = regraSimples(0);
+    regra.componentes[0].baseFaixa = "percentualMeta";
+    regra.componentes[0].faixas = [
+      { de: 0, percentual: 1 },
+      { de: 100, percentual: 2, rotulo: "Meta" },
+    ];
+    // Loja com meta de 400.000 e 5 vendedores → 80.000 para cada.
+    const meta = metaPorVendedor(400_000, 5);
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra,
+        metas: { individual: meta, loja: 400_000, grupo: null },
+        vendas: {
+          individual: { liquida: 90_000, bruta: 90_000 },
+          loja: { liquida: 500_000, bruta: 500_000 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+      }),
+    );
+    expect(meta).toBe(80_000);
+    expect(r.atingimentoPct).toBe(112.5);
+    expect(r.comissaoBase).toBe(1800); // 90.000 × 2%
   });
 });
