@@ -88,13 +88,22 @@ export interface PreviaImportMetas {
   erros: string[];
   ambiguos: string[];
   lojasNaoMapeadas: string[];
-  semCasar: { linha: number; nome: string | null; codigo: string | null; meta: number }[];
+  semCasar: {
+    linha: number;
+    nome: string | null;
+    codigo: string | null;
+    loja: string | null;
+    /** Chave do de-para, para amarrar esta pessoa de uma vez por todas. */
+    chave: string;
+    meta: number;
+  }[];
   resumo: {
     competencia: string;
     /** Metas por pessoa que o arquivo substituiu. */
     substituidas?: number;
     pessoas: number;
     total: number;
+    lojas?: { lojaId: number; total: number }[];
     semanas: string[];
     semMeta: string[];
   }[];

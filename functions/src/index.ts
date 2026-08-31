@@ -4379,6 +4379,15 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
   const diaPagamentoFolha = diaBruto >= 1 && diaBruto <= 28 ? diaBruto : 5;
   const mesPagamento = String(req.data?.mesPagamento) === "mesmo" ? "mesmo" : "seguinte";
   const provisaoNoFluxo = req.data?.provisaoNoFluxo === true;
+  // De-para dos nomes de vendedor do arquivo ("FLU BARRA|GABRIEL" → id, ou
+  // "-" para quem não está no quadro: desligado no período, por exemplo).
+  const vendedoresImport: Record<string, string> = {};
+  const mapaVend = (req.data?.vendedoresImport ?? {}) as Record<string, unknown>;
+  for (const [chave, valor] of Object.entries(mapaVend)) {
+    const k = texto(chave, 160);
+    const v = texto(valor, 80);
+    if (k && v) vendedoresImport[k] = v;
+  }
   // De-para dos nomes de loja do arquivo de metas ("FLU LARANJEIRAS" → 335).
   const lojasImport: Record<string, number> = {};
   const mapaLojas = (req.data?.lojasImport ?? {}) as Record<string, unknown>;
@@ -4404,6 +4413,7 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
     sincronizarFuncionarios,
     cargosPorTipoPdv,
     lojasImport,
+    vendedoresImport,
   };
   await db
     .collection("com_config")
@@ -4746,6 +4756,11 @@ export const comissoesImportarMetas = onCall(
       (d) => ({ id: d.id, ...(d.data() as object) }) as Funcionario,
     );
     const ativos = funcionarios.filter((f) => f.ativo !== false);
+    const cargosComMeta = new Set(
+      (await db.collection("com_cargos").get()).docs
+        .filter((d) => d.data().recebeMetaIndividual === true)
+        .map((d) => d.id),
+    );
     const porCodigo = new Map<string, Funcionario>();
     for (const f of ativos) for (const c of codigosPdv(f)) porCodigo.set(c, f);
 
@@ -4753,9 +4768,13 @@ export const comissoesImportarMetas = onCall(
     // Primeiro tenta pelo próprio nome; o que não bater vem do de-para salvo
     // nas configurações, e o que sobrar é reportado para o admin amarrar.
     const cfgImport = (await db.collection("com_config").doc("geral").get()).data() as
-      | { lojasImport?: Record<string, number> }
+      | { lojasImport?: Record<string, number>; vendedoresImport?: Record<string, string> }
       | undefined;
     const deParaLojas = cfgImport?.lojasImport ?? {};
+    const deParaVendedores = cfgImport?.vendedoresImport ?? {};
+    /** Chave do de-para de pessoa: loja e nome, normalizados. */
+    const chaveVendedor = (loja: string | null, nome: string | null) =>
+      `${normalizarNome(loja)}|${normalizarNome(nome)}`;
     const lojaPorNome = new Map<string, number>();
     for (const d of (await db.collection("pdv_stores").get()).docs) {
       const v = d.data() as { nome?: string; grupoNome?: string };
@@ -4772,17 +4791,45 @@ export const comissoesImportarMetas = onCall(
 
     // competência → funcionárioId → { semanas por data, total }
     const porCompetencia = new Map<string, Map<string, Map<string, number>>>();
-    const semCasar: { linha: number; nome: string | null; codigo: string | null; meta: number }[] = [];
+    // competência → lojaId → { semanas por data } — a meta da LOJA soma TODAS
+    // as linhas dela, inclusive as de quem não está no quadro. Quem foi
+    // desligado no meio do período ainda tinha meta, e ela conta para a loja,
+    // para o subgerente, para o gerente e para o supervisor.
+    const lojaPorCompetencia = new Map<string, Map<number, Map<string, number>>>();
+    const semCasar: {
+      linha: number;
+      nome: string | null;
+      codigo: string | null;
+      loja: string | null;
+      chave: string;
+      meta: number;
+    }[] = [];
     const ambiguos: string[] = [];
 
     for (const l of linhas) {
+      const lojaId = resolverLoja(l.loja);
+      if (l.loja && lojaId == null) lojasNaoMapeadas.add(l.loja);
+
+      // Soma da loja: entra antes de saber de quem é a linha.
+      if (lojaId != null) {
+        const comp = competenciaDaSemana(l.semanaInicio);
+        const porLoja = lojaPorCompetencia.get(comp) ?? new Map<number, Map<string, number>>();
+        const semanas = porLoja.get(lojaId) ?? new Map<string, number>();
+        semanas.set(l.semanaInicio, (semanas.get(l.semanaInicio) ?? 0) + l.meta);
+        porLoja.set(lojaId, semanas);
+        lojaPorCompetencia.set(comp, porLoja);
+      }
+
+      const chave = chaveVendedor(l.loja, l.nome);
+      const amarrado = deParaVendedores[chave];
+      if (amarrado === "-") continue; // marcado como fora do quadro: só soma na loja
+
       let f: Funcionario | null = l.codigoPdv ? (porCodigo.get(l.codigoPdv) ?? null) : null;
+      if (!f && amarrado) f = ativos.find((x) => x.id === amarrado) ?? null;
 
       if (!f && l.nome) {
         // O export manda o nome curto ("Lazlo"); procura primeiro dentro da
         // loja, que é onde a chance de homônimo é menor.
-        const lojaId = resolverLoja(l.loja);
-        if (l.loja && lojaId == null) lojasNaoMapeadas.add(l.loja);
         const naLoja = lojaId != null ? ativos.filter((x) => x.lojaId === lojaId) : [];
         const tentativa = acharPorNome(l.nome, naLoja.length ? naLoja : ativos);
         if (tentativa.achado) {
@@ -4802,7 +4849,14 @@ export const comissoesImportarMetas = onCall(
       }
 
       if (!f) {
-        semCasar.push({ linha: l.linha, nome: l.nome, codigo: l.codigoPdv, meta: l.meta });
+        semCasar.push({
+          linha: l.linha,
+          nome: l.nome,
+          codigo: l.codigoPdv,
+          loja: l.loja,
+          chave,
+          meta: l.meta,
+        });
         continue;
       }
       const comp = competenciaDaSemana(l.semanaInicio);
@@ -4817,6 +4871,7 @@ export const comissoesImportarMetas = onCall(
     const resumo: {
       competencia: string;
       substituidas: number;
+      lojas: { lojaId: number; total: number }[];
       pessoas: number;
       total: number;
       semanas: string[];
@@ -4838,9 +4893,9 @@ export const comissoesImportarMetas = onCall(
       let batch = db.batch();
       let ops = 0;
 
-      // O arquivo SUBSTITUI as metas por pessoa da competência. Sem isso, quem
-      // saiu do arquivo (saiu da loja, virou gerente) ficaria com a meta antiga
-      // para sempre, e ninguém perceberia.
+      // O arquivo SUBSTITUI as metas da competência: as por pessoa e as de loja
+      // que vieram de import anterior. Sem isso, quem saiu do arquivo ficaria
+      // com a meta antiga para sempre, e ninguém perceberia.
       let apagadas = 0;
       if (confirmar) {
         const antigas = await db
@@ -4848,8 +4903,10 @@ export const comissoesImportarMetas = onCall(
           .where("competencia", "==", competencia)
           .get();
         for (const d of antigas.docs) {
-          const m = d.data() as { funcionarioId?: string | null };
-          if (!m.funcionarioId) continue; // meta de loja cadastrada à mão fica
+          const m = d.data() as { funcionarioId?: string | null; origem?: string };
+          const daPessoa = !!m.funcionarioId;
+          const lojaImportada = !m.funcionarioId && m.origem === "controle-de-vez";
+          if (!daPessoa && !lojaImportada) continue; // meta de loja feita à mão fica
           batch.delete(d.ref);
           apagadas++;
           if (++ops >= 400) {
@@ -4857,6 +4914,43 @@ export const comissoesImportarMetas = onCall(
             batch = db.batch();
             ops = 0;
           }
+        }
+      }
+
+      // Meta da LOJA: soma de todas as linhas dela, inclusive as de quem não
+      // está no quadro.
+      const porLoja = lojaPorCompetencia.get(competencia) ?? new Map<number, Map<string, number>>();
+      const totaisDeLoja: { lojaId: number; total: number }[] = [];
+      for (const [lojaId, semanas] of porLoja) {
+        const arr: (number | null)[] = [null, null, null, null, null, null];
+        for (const [data, valor] of semanas) {
+          const i = indices.get(data) ?? 0;
+          if (i < 6) arr[i] = (arr[i] ?? 0) + valor;
+        }
+        const valor = Math.round(arr.reduce<number>((a, x) => a + (x ?? 0), 0) * 100) / 100;
+        totaisDeLoja.push({ lojaId, total: valor });
+        if (!confirmar) continue;
+        const id = `${competencia}_-_-_${lojaId}`;
+        batch.set(
+          db.collection("com_metas").doc(id),
+          {
+            id,
+            competencia,
+            funcionarioId: null,
+            cargoId: null,
+            lojaId,
+            valor,
+            semanas: arr,
+            origem: "controle-de-vez",
+            importadoEm: agora,
+            importadoPor: uid,
+          },
+          { merge: true },
+        );
+        if (++ops >= 400) {
+          await batch.commit();
+          batch = db.batch();
+          ops = 0;
         }
       }
 
@@ -4898,11 +4992,20 @@ export const comissoesImportarMetas = onCall(
       resumo.push({
         competencia,
         substituidas: apagadas,
+        lojas: totaisDeLoja.sort((a, b) => b.total - a.total),
         pessoas: porFunc.size,
         total: Math.round(total * 100) / 100,
         semanas: datas,
+        // Só quem deveria ter meta própria: gerente e supervisor são medidos
+        // pela loja e pelo grupo.
         semMeta: funcionarios
-          .filter((f) => f.ativo !== false && f.semPdv !== true && !comMeta.has(f.id))
+          .filter(
+            (f) =>
+              f.ativo !== false &&
+              !!f.cargoId &&
+              cargosComMeta.has(f.cargoId) &&
+              !comMeta.has(f.id),
+          )
           .map((f) => f.nome),
       });
     }

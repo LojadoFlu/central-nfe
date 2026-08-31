@@ -125,6 +125,8 @@ export interface Meta {
   lojaId?: number | null;
   /** Alvo do MÊS. Com semanas preenchidas, é a soma delas. */
   valor: number;
+  /** "controle-de-vez" quando veio do arquivo importado. */
+  origem?: string | null;
   /** Metas da semana 1 a 6; posição vazia = semana não usada no mês. */
   semanas?: (number | null)[] | null;
 }
@@ -275,6 +277,11 @@ export interface ConfigComissoes {
   cargosPorTipoPdv: Record<string, string>;
   /** Nome de loja do arquivo de metas → id da loja daqui. */
   lojasImport?: Record<string, number>;
+  /**
+   * Nome de vendedor do arquivo → funcionário daqui. "-" marca quem não está
+   * no quadro (desligado no período): a meta dele conta só para a loja.
+   */
+  vendedoresImport?: Record<string, string>;
 }
 
 export interface ResultadoSyncQuadro {

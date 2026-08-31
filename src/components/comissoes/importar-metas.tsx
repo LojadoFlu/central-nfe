@@ -11,13 +11,16 @@ import { formatBRL, formatarData } from "@/lib/utils";
 import { Check, TriangleAlert, Upload } from "lucide-react";
 import { importarMetas, obterConfig, salvarConfig, type PreviaImportMetas } from "@/lib/comissoes/repo";
 import type { StorePdv } from "@/lib/nfe/repo";
+import type { Funcionario } from "@/lib/comissoes/tipos";
 import { Aviso, mesLabel } from "./comum";
 
 export function ImportarMetas({
   lojas,
+  funcionarios,
   onImportado,
 }: {
   lojas: StorePdv[];
+  funcionarios: Funcionario[];
   onImportado: () => Promise<void>;
 }) {
   const [texto, setTexto] = useState("");
@@ -26,6 +29,25 @@ export function ImportarMetas({
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
   const arquivoRef = useRef<HTMLInputElement>(null);
+
+  /** Amarra um nome do arquivo a um funcionário — ou marca como fora do quadro. */
+  async function amarrarVendedor(chave: string, valor: string) {
+    if (!valor) return;
+    setOcupado(true);
+    setErro(null);
+    try {
+      const cfg = await obterConfig();
+      await salvarConfig({
+        ...cfg,
+        vendedoresImport: { ...(cfg.vendedoresImport ?? {}), [chave]: valor },
+      });
+      await rodar(false);
+    } catch (e) {
+      setErro((e as Error).message);
+    } finally {
+      setOcupado(false);
+    }
+  }
 
   async function rodar(confirmar: boolean) {
     setOcupado(true);
@@ -121,6 +143,17 @@ export function ImportarMetas({
                   O arquivo <strong>substitui</strong> as metas por pessoa desta competência —
                   quem não estiver nele fica sem meta.
                 </p>
+                {r.lojas?.length ? (
+                  <p className="text-muted-foreground">
+                    Meta por loja:{" "}
+                    {r.lojas
+                      .map(
+                        (x) =>
+                          `${lojas.find((l) => l.id === x.lojaId)?.grupoNome ?? x.lojaId} ${formatBRL(x.total)}`,
+                      )
+                      .join(" · ")}
+                  </p>
+                ) : null}
                 {r.semMeta.length > 0 ? (
                   <p className="mt-1 text-warning">
                     Ficam sem meta: {r.semMeta.join(", ")}
@@ -183,17 +216,44 @@ export function ImportarMetas({
                 <p className="flex items-center gap-1.5 font-semibold">
                   <TriangleAlert className="size-3.5" /> Confira antes de importar
                 </p>
+                <p className="font-normal text-muted-foreground">
+                  A meta de quem não está no quadro continua contando para a loja — e portanto para
+                  o subgerente, o gerente e o supervisor. Amarrar só define de quem é a meta
+                  individual.
+                </p>
                 {erros.map((e, i) => (
                   <p key={i}>{e}</p>
                 ))}
                 {ambiguos.map((a, i) => (
                   <p key={`a${i}`}>Nome com mais de um cadastro: {a} — informe o código do PDV.</p>
                 ))}
-                {semCasar.map((s, i) => (
-                  <p key={`s${i}`}>
-                    Linha {s.linha}: {s.nome ?? s.codigo} ({formatBRL(s.meta)}) não casou com ninguém
-                    do quadro.
-                  </p>
+                {[...new Map(semCasar.map((s) => [s.chave, s])).values()].map((s) => (
+                  <div key={s.chave} className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">
+                      <strong>{s.nome ?? s.codigo}</strong>
+                      <span className="text-muted-foreground">
+                        {" "}
+                        · {s.loja ?? "sem loja"} ·{" "}
+                        {semCasar.filter((x) => x.chave === s.chave).length} linha(s)
+                      </span>
+                    </span>
+                    <select
+                      className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                      defaultValue=""
+                      disabled={ocupado}
+                      onChange={(e) => amarrarVendedor(s.chave, e.target.value)}
+                    >
+                      <option value="">— quem é? —</option>
+                      <option value="-">Não está no quadro (desligado)</option>
+                      {funcionarios
+                        .filter((f) => f.ativo)
+                        .map((f) => (
+                          <option key={f.id} value={f.id}>
+                            {f.nome}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
                 ))}
               </div>
             ) : previa.linhas > 0 ? (

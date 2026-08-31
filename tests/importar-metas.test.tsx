@@ -19,11 +19,15 @@ const { ImportarMetas } = await import("@/components/comissoes/importar-metas");
 afterEach(cleanup);
 
 const LOJAS = [{ id: 335, nome: "FLU CLUBE", grupoNome: "FLU CLUBE", ativoSync: true }];
+const FUNCIONARIOS = [
+  { id: "f1", nome: "LAZLO SENTO SE", cargoId: "c1", lojaId: 335, ativo: true },
+  { id: "f2", nome: "MARCOS COSTA DA SILVA", cargoId: "c1", lojaId: 335, ativo: true },
+];
 
 async function conferir(resposta: unknown, texto = "linha qualquer") {
   importarMetas.mockResolvedValueOnce(resposta);
   const user = userEvent.setup();
-  render(<ImportarMetas lojas={LOJAS} onImportado={async () => {}} />);
+  render(<ImportarMetas lojas={LOJAS} funcionarios={FUNCIONARIOS} onImportado={async () => {}} />);
   await user.type(screen.getByRole("textbox"), texto);
   await user.click(screen.getByRole("button", { name: "Conferir" }));
 }
@@ -79,5 +83,41 @@ describe("importação de metas", () => {
     });
     expect(screen.getByText("Flu Laranjeiras")).toBeDefined();
     expect(screen.getByRole("combobox")).toBeDefined();
+  });
+});
+
+describe("amarrar o vendedor do arquivo a alguém do quadro", () => {
+  const COM_SEM_CASAR = {
+    ok: true,
+    confirmado: false,
+    linhas: 4,
+    erros: [],
+    ambiguos: [],
+    lojasNaoMapeadas: [],
+    semCasar: [
+      { linha: 2, nome: "Heitor", codigo: null, loja: "Flu Barra", chave: "FLU BARRA|HEITOR", meta: 8284.4 },
+      { linha: 9, nome: "Heitor", codigo: null, loja: "Flu Barra", chave: "FLU BARRA|HEITOR", meta: 9000 },
+      { linha: 3, nome: "Theo", codigo: null, loja: "Flu Barra", chave: "FLU BARRA|THEO", meta: 7000 },
+    ],
+    resumo: [],
+  };
+
+  it("cada nome aparece uma vez só, com quantas linhas tem", async () => {
+    await conferir(COM_SEM_CASAR);
+    expect(screen.getByText("Heitor")).toBeDefined();
+    expect(screen.getByText(/2 linha\(s\)/)).toBeDefined();
+  });
+
+  it("oferece o quadro e a opção de quem foi desligado", async () => {
+    await conferir(COM_SEM_CASAR);
+    const selects = screen.getAllByRole("combobox");
+    const opcoes = [...selects[0].querySelectorAll("option")].map((o) => o.textContent);
+    expect(opcoes).toContain("Não está no quadro (desligado)");
+    expect(opcoes).toContain("LAZLO SENTO SE");
+  });
+
+  it("diz que a meta de quem saiu ainda conta para a loja", async () => {
+    await conferir(COM_SEM_CASAR);
+    expect(screen.getByText(/continua contando para a loja/)).toBeDefined();
   });
 });

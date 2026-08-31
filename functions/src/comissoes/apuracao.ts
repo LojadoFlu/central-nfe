@@ -249,8 +249,6 @@ interface ContextoCalculo {
   nomeVendedor: Map<string, string | null>;
   /** Melhor vendedor de cada loja, por PESSOA (somando os códigos dela). */
   melhorFuncionarioPorLoja: Map<number, string>;
-  /** Meta da loja = SOMA das metas dos vendedores dela (definição do Rodrigo). */
-  metaDaLojaSomada: Map<number, number>;
   cargosComMetaIndividual: Set<string>;
 }
 
@@ -314,24 +312,6 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     }
   }
 
-  // Meta da loja é o somatório das metas dos vendedores dela. Quando ninguém
-  // tem meta própria, cai na meta de loja cadastrada à mão (transição).
-  const metasComp = metas
-    .filter((m) => m.competencia === competencia)
-    .map((m) => ({ ...m, lojaId: canonizar(grupos, m.lojaId) }));
-  const metaDaLojaSomada = new Map<number, number>();
-  for (const f of funcionarios) {
-    if (f.ativo === false) continue;
-    const loja = canonizar(grupos, f.lojaId);
-    if (loja == null) continue;
-    const propria = metasComp.find((m) => m.funcionarioId === f.id);
-    if (!propria) continue;
-    metaDaLojaSomada.set(loja, (metaDaLojaSomada.get(loja) ?? 0) + propria.valor);
-  }
-  for (const [k, v] of metaDaLojaSomada) {
-    metaDaLojaSomada.set(k, Math.round(v * 100) / 100);
-  }
-
   return {
     competencia,
     cfg,
@@ -351,7 +331,6 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     pisoPorCargo: new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null])),
     nomeVendedor,
     melhorFuncionarioPorLoja,
-    metaDaLojaSomada,
     cargosComMetaIndividual,
   };
 }
@@ -368,11 +347,13 @@ interface EntradaMontada {
   lojasSemMeta: number[];
 }
 
-/** Meta da loja: soma das metas dos vendedores; sem elas, a cadastrada à mão. */
+/**
+ * Meta da loja. Vem do arquivo importado, somando TODAS as linhas da loja —
+ * inclusive as de gente desligada no período, cuja meta continua contando para
+ * a loja, o subgerente, o gerente e o supervisor. Sem import, é a cadastrada
+ * à mão.
+ */
 function metaDaLoja(ctx: ContextoCalculo, lojaId: number | null): number | null {
-  if (lojaId == null) return null;
-  const somada = ctx.metaDaLojaSomada.get(lojaId);
-  if (somada != null && somada > 0) return somada;
   return escolherMetaLoja(ctx.metasDaComp, lojaId, ctx.competencia);
 }
 
