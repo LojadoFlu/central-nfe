@@ -85,3 +85,45 @@ describe("campo de piso na tela de cargos", () => {
     expect(salvar.mock.calls[0][0]).toBeNull();
   });
 });
+
+describe("valor que já vem salvo aparece com as duas casas", () => {
+  /** Campo alimentado por um valor vindo do banco, sem ninguém digitar. */
+  function CampoSoLeitura({ valor }: { valor: number | null }) {
+    const [v, setV] = useState<number | null>(valor);
+    return <InputNumero aria-label="piso" value={v} onChange={setV} />;
+  }
+
+  it("valor inteiro mostra ,00", () => {
+    render(<CampoSoLeitura valor={1712} />);
+    expect((screen.getByLabelText("piso") as HTMLInputElement).value).toBe("1.712,00");
+  });
+
+  it("valor com um decimal mostra as duas casas", () => {
+    render(<CampoSoLeitura valor={1712.5} />);
+    expect((screen.getByLabelText("piso") as HTMLInputElement).value).toBe("1.712,50");
+  });
+
+  /** O caso real: o campo monta antes dos dados chegarem do Firestore. */
+  function CampoQueCarregaDepois() {
+    const [v, setV] = useState<number | null>(null);
+    return (
+      <>
+        <InputNumero aria-label="piso" value={v} onChange={setV} />
+        <button onClick={() => setV(1712)}>carregar</button>
+      </>
+    );
+  }
+
+  it("valor que chega depois do primeiro render também aparece com ,00", async () => {
+    const user = userEvent.setup();
+    render(<CampoQueCarregaDepois />);
+    expect((screen.getByLabelText("piso") as HTMLInputElement).value).toBe("");
+    await user.click(screen.getByText("carregar"));
+    expect((screen.getByLabelText("piso") as HTMLInputElement).value).toBe("1.712,00");
+  });
+
+  it("zero mostra 0,00 e não fica em branco", () => {
+    render(<CampoSoLeitura valor={0} />);
+    expect((screen.getByLabelText("piso") as HTMLInputElement).value).toBe("0,00");
+  });
+});
