@@ -276,6 +276,24 @@ function calcularComponente(
   return { valor: centavos(total), linhas };
 }
 
+/**
+ * Escopo do gatilho quando o bônus é de ATINGIMENTO (meta, supermeta…).
+ * `null` para bônus que não são degraus de meta — "melhor vendedor da loja",
+ * "sempre" — que continuam somando normalmente.
+ */
+function escopoDoDegrau(b: Bonus): EscopoVenda | null {
+  switch (b.gatilho.tipo) {
+    case "atingimentoIndividual":
+      return "individual";
+    case "atingimentoLoja":
+      return "loja";
+    case "atingimentoGrupo":
+      return "grupo";
+    default:
+      return null;
+  }
+}
+
 /** Prêmio de um bônus, já resolvido em R$. */
 function calcularBonus(b: Bonus, e: EntradaApuracao): number {
   if (b.premio.tipo === "fixo") return centavos(b.premio.valor);
@@ -374,6 +392,27 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
   comissaoBase = centavos(comissaoBase);
 
   // 2) Bônus.
+  //
+  // Meta e supermeta NÃO acumulam: é um ou outro. Entre os bônus de
+  // atingimento do MESMO escopo, paga só o degrau mais alto que a pessoa
+  // alcançou — quem faz 125% recebe o percentual da supermeta sobre a venda,
+  // e não a supermeta somada à meta.
+  // Bônus que não são degrau de meta ("melhor vendedor", "sempre") continuam
+  // somando: são prêmios à parte, não faixas concorrentes.
+  const vencedorDoDegrau = new Map<EscopoVenda, Bonus>();
+  for (const b of e.bonus ?? []) {
+    const escopo = escopoDoDegrau(b);
+    if (!escopo) continue;
+    if (!gatilhoAtendido(b, e, atingimentos).ok) continue;
+    const atual = vencedorDoDegrau.get(escopo);
+    const degrau = b.gatilho.minimoPct ?? 100;
+    const degrauAtual = atual ? (atual.gatilho.minimoPct ?? 100) : -Infinity;
+    // Empate no degrau: fica o de prêmio maior, para não depender da ordem.
+    if (degrau > degrauAtual || (degrau === degrauAtual && atual && calcularBonus(b, e) > calcularBonus(atual, e))) {
+      vencedorDoDegrau.set(escopo, b);
+    }
+  }
+
   let bonusTotal = 0;
   for (const b of e.bonus ?? []) {
     const g = gatilhoAtendido(b, e, atingimentos);
@@ -381,6 +420,17 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
       memoria.push({
         rotulo: `Bônus: ${b.nome}`,
         detalhe: `Não pago — ${g.motivo}`,
+        valor: 0,
+        informativa: true,
+      });
+      continue;
+    }
+    const escopo = escopoDoDegrau(b);
+    const vencedor = escopo ? vencedorDoDegrau.get(escopo) : undefined;
+    if (escopo && vencedor && vencedor.id !== b.id) {
+      memoria.push({
+        rotulo: `Bônus: ${b.nome}`,
+        detalhe: `Não pago — substituído por "${vencedor.nome}", degrau mais alto atingido (não acumulam)`,
         valor: 0,
         informativa: true,
       });

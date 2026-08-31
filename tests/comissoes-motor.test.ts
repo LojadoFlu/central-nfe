@@ -713,7 +713,7 @@ describe("percentual efetivo (base do estorno)", () => {
     expect(r.percentualEfetivo).toBe(2);
   });
 
-  it("dois bônus de atingimento SOMAM — é assim que bônus funciona", () => {
+  it("meta e supermeta NÃO acumulam: paga só o degrau mais alto atingido", () => {
     const superMeta: Bonus = {
       ...bonusMetaBase,
       id: "b2",
@@ -734,9 +734,96 @@ describe("percentual efetivo (base do estorno)", () => {
         bonus: [bonusMetaBase, superMeta],
       }),
     );
-    // 50.000 × 4% + 50.000 × 4,5% = 4.250 → 8,5% no total
-    expect(r.bonusTotal).toBe(4250);
-    expect(r.percentualEfetivo).toBe(8.5);
+    // 125% da meta → 4,5% sobre os 50.000. E não 4% + 4,5%.
+    expect(r.bonusTotal).toBe(2250);
+    expect(r.percentualEfetivo).toBe(4.5);
+    expect(
+      r.memoria.some((m) => m.informativa && m.detalhe.includes("substituído por \"Supermeta\"")),
+    ).toBe(true);
+  });
+
+  it("abaixo da supermeta, quem paga é a meta", () => {
+    const superMeta: Bonus = {
+      ...bonusMetaBase,
+      id: "b2",
+      nome: "Supermeta",
+      gatilho: { tipo: "atingimentoIndividual", minimoPct: 125 },
+      premio: { tipo: "percentual", valor: 4.5, escopoVenda: "individual", baseCalculo: "liquida" },
+    };
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra: null,
+        metas: { individual: 40_000, loja: null, grupo: null },
+        vendas: {
+          individual: { liquida: 40_000, bruta: 40_000 },
+          loja: { liquida: 0, bruta: 0 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+        bonus: [bonusMetaBase, superMeta],
+      }),
+    );
+    expect(r.bonusTotal).toBe(1600); // 40.000 × 4%
+    expect(r.percentualEfetivo).toBe(4);
+  });
+
+  it("bônus que não é degrau de meta continua somando", () => {
+    const superMeta: Bonus = {
+      ...bonusMetaBase,
+      id: "b2",
+      nome: "Supermeta",
+      gatilho: { tipo: "atingimentoIndividual", minimoPct: 125 },
+      premio: { tipo: "percentual", valor: 4.5, escopoVenda: "individual", baseCalculo: "liquida" },
+    };
+    const melhorVendedor: Bonus = {
+      ...bonusMetaBase,
+      id: "b3",
+      nome: "Melhor vendedor",
+      gatilho: { tipo: "melhorVendedorLoja" },
+      premio: { tipo: "fixo", valor: 300 },
+    };
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra: null,
+        metas: { individual: 40_000, loja: null, grupo: null },
+        vendas: {
+          individual: { liquida: 50_000, bruta: 50_000 },
+          loja: { liquida: 0, bruta: 0 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+        bonus: [bonusMetaBase, superMeta, melhorVendedor],
+        extras: { melhorVendedorLoja: true },
+      }),
+    );
+    // supermeta 2.250 (substitui a meta) + prêmio de melhor vendedor 300
+    expect(r.bonusTotal).toBe(2550);
+  });
+
+  it("degrau da loja e degrau individual não competem entre si", () => {
+    const metaIndividual: Bonus = { ...bonusMetaBase, id: "bi", nome: "Meta individual" };
+    const metaLoja: Bonus = {
+      ...bonusMetaBase,
+      id: "bl",
+      nome: "Meta da loja",
+      gatilho: { tipo: "atingimentoLoja", minimoPct: 100 },
+      premio: { tipo: "percentual", valor: 0.5, escopoVenda: "loja", baseCalculo: "liquida" },
+    };
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra: null,
+        metas: { individual: 40_000, loja: 400_000, grupo: null },
+        vendas: {
+          individual: { liquida: 50_000, bruta: 50_000 },
+          loja: { liquida: 500_000, bruta: 500_000 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+        bonus: [metaIndividual, metaLoja],
+      }),
+    );
+    // 50.000 × 4% + 500.000 × 0,5%
+    expect(r.bonusTotal).toBe(4500);
   });
 
   it("a mesma coisa como FAIXA de regra: só a faixa atingida vale", () => {

@@ -488,10 +488,10 @@ export function Regras({
                 <strong>meta e supermeta</strong>: como faixas de um mesmo componente.
               </p>
               <p className="text-muted-foreground">
-                Numa faixa, só a atingida vale — quem faz 125% da meta recebe o percentual da
-                supermeta sobre a venda, e nada mais. Bônus é outra coisa: ele{" "}
-                <strong>soma</strong> ao que já existe. Dois bônus (um de meta e um de supermeta)
-                pagam os dois juntos quando a pessoa passa dos 125%.
+                Meta e supermeta não acumulam em lugar nenhum: quem faz 125% recebe o percentual
+                da supermeta sobre o total vendido, e nada mais. Dá para montar isso aqui como
+                faixas de um componente, ou na aba Bônus como degraus de atingimento — nos dois
+                caminhos só o degrau mais alto paga.
               </p>
             </CardContent>
           </Card>

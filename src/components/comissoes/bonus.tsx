@@ -65,11 +65,12 @@ export function Bonus({
   const gatilhoAtual = GATILHOS.find((g) => g.valor === edicao?.gatilho.tipo);
 
   /**
-   * Bônus que pagam JUNTOS. Dois bônus de atingimento no mesmo escopo somam a
-   * partir do gatilho mais alto — quem quis "meta OU supermeta" acaba pagando
-   * as duas. Faixa de regra é que substitui; bônus acumula.
+   * Escada de meta/supermeta: bônus de atingimento no mesmo escopo não
+   * acumulam — paga só o degrau mais alto atingido. A tela mostra a escada
+   * para conferência, porque o número que a pessoa recebe muda de faixa em
+   * faixa e é fácil errar no cadastro.
    */
-  const empilhados = useMemo(() => {
+  const degraus = useMemo(() => {
     const grupos = new Map<string, BonusTipo[]>();
     for (const b of bonus) {
       if (!b.ativo) continue;
@@ -85,10 +86,12 @@ export function Bonus({
           (a, b) => (a.gatilho.minimoPct ?? 100) - (b.gatilho.minimoPct ?? 100),
         );
         return {
-          apartirDe: ordenados[ordenados.length - 1].gatilho.minimoPct ?? 100,
-          nomes: ordenados.map((b) => `${b.nome} (${pctFmt(b.premio.valor)})`),
-          soma: ordenados.reduce((s, b) => s + b.premio.valor, 0),
           cargo: ordenados[0].cargoId ? (nomeCargo.get(ordenados[0].cargoId) ?? "") : "todos os cargos",
+          faixas: ordenados.map((b) => ({
+            de: b.gatilho.minimoPct ?? 100,
+            nome: b.nome,
+            percentual: b.premio.valor,
+          })),
         };
       });
   }, [bonus, nomeCargo]);
@@ -301,21 +304,29 @@ export function Bonus({
         </Card>
       ) : null}
 
-      {empilhados.length > 0 ? (
-        <Card className="border-warning/40 bg-warning/5">
+      {degraus.length > 0 ? (
+        <Card>
           <CardContent className="space-y-2 py-4 text-xs">
-            <p className="text-sm font-semibold text-warning">Estes bônus pagam juntos</p>
-            {empilhados.map((e, i) => (
-              <p key={i}>
-                Em {e.cargo}: a partir de {pctFmt(e.apartirDe)} da meta, {e.nomes.join(" + ")} somam{" "}
-                <strong>{pctFmt(e.soma)}</strong> sobre a venda.
-              </p>
-            ))}
+            <p className="text-sm font-semibold">Escada de meta e supermeta</p>
             <p className="text-muted-foreground">
-              Se a intenção era que a supermeta <em>substituísse</em> a meta, isso não se faz com
-              dois bônus — se faz com duas faixas do mesmo componente, na aba Regras. Lá, só a
-              faixa atingida vale.
+              Não acumulam: paga o degrau mais alto que a pessoa alcançar, sobre o total vendido.
             </p>
+            {degraus.map((d, i) => (
+              <div key={i} className="space-y-0.5">
+                <p className="font-medium">{d.cargo}</p>
+                {d.faixas.map((f, j) => {
+                  const proxima = d.faixas[j + 1];
+                  return (
+                    <p key={j} className="text-muted-foreground">
+                      De {pctFmt(f.de)}
+                      {proxima ? ` a ${pctFmt(proxima.de)}` : " em diante"} da meta →{" "}
+                      <strong className="text-foreground">{pctFmt(f.percentual)}</strong> do total
+                      vendido <span className="text-[10px]">({f.nome})</span>
+                    </p>
+                  );
+                })}
+              </div>
+            ))}
           </CardContent>
         </Card>
       ) : null}
