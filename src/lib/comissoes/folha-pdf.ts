@@ -9,16 +9,7 @@ function mesExtenso(competencia: string): string {
   const [ano, mes] = competencia.split("-").map(Number);
   return `${MESES[mes - 1]}/${ano}`;
 }
-function brl(n: number | null | undefined): string {
-  return n == null ? "—" : formatBRL(n);
-}
-function pct(n: number | null | undefined): string {
-  return n == null
-    ? "—"
-    : `${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
-}
-
-// Tricolor, amostrado do próprio escudo em /public/escudo-flu.png.
+// Tricolor, amostrado do próprio arquivo do escudo.
 const GRENA: [number, number, number] = [159, 2, 47];
 const VERDE: [number, number, number] = [0, 105, 64];
 const CINZA_CLARO: [number, number, number] = [245, 247, 246];
