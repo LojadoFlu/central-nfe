@@ -90,6 +90,26 @@ export async function listarParticipacoes(competencia: string): Promise<Particip
   return snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Participacao[];
 }
 
+export interface PreviaImportMetas {
+  ok: boolean;
+  confirmado: boolean;
+  linhas: number;
+  erros: string[];
+  ambiguos: string[];
+  semCasar: { linha: number; nome: string | null; codigo: string | null; meta: number }[];
+  resumo: {
+    competencia: string;
+    pessoas: number;
+    total: number;
+    semanas: string[];
+    semMeta: string[];
+  }[];
+}
+
+/** Sem `confirmar`, é só prévia — nada é gravado. */
+export const importarMetas = (texto: string, confirmar = false) =>
+  chamar<PreviaImportMetas>("comissoesImportarMetas", { texto, confirmar });
+
 export const salvarParticipacoes = (
   competencia: string,
   itens: { funcionarioId: string; semanas: boolean[] }[],

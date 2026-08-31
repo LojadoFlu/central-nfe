@@ -26,6 +26,14 @@ import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-venda
 import { sincronizarVendedores } from "./comissoes/vendedores";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./comissoes/grupos";
 import {
+  competenciaDaSemana,
+  indicesDasSemanas,
+  normalizarNome,
+  parseCsvMetas,
+} from "./comissoes/importacao";
+import { codigosPdv } from "./comissoes/motor";
+import type { Funcionario } from "./comissoes/tipos";
+import {
   alterarStatusFechamento,
   apurarCompetencia,
   calcularCompetencia,
@@ -4719,3 +4727,152 @@ export const comissoesSalvarParticipacoes = onCall(opcoes, async (req) => {
   await auditar(uid, "comissoes.salvarParticipacoes", { competencia, qtd: salvos });
   return { ok: true, salvos };
 });
+
+/**
+ * Importa as metas por vendedor vindas do Controle de Vez.
+ *
+ * Sem `confirmar`, é só prévia: diz o que casou, o que não casou e quem do
+ * quadro ficaria sem meta. Importar meta sem olhar antes é fechar folha no
+ * escuro.
+ *
+ * O casamento é pelo CÓDIGO do PDV; sem código, pelo nome normalizado. Nome é
+ * chave frágil (foi assim que "HENZO" e "HENZO BARRA" viraram duas pessoas),
+ * então o que não casar volta na lista em vez de sumir.
+ */
+export const comissoesImportarMetas = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 300 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+    const texto = String(req.data?.texto ?? "");
+    if (!texto.trim()) throw new HttpsError("invalid-argument", "Arquivo vazio.");
+    const confirmar = req.data?.confirmar === true;
+
+    const { linhas, erros } = parseCsvMetas(texto);
+    if (linhas.length === 0) {
+      return { ok: false, erros: erros.length ? erros : ["Nenhuma linha aproveitável."], linhas: 0 };
+    }
+
+    const funcionarios = (await db.collection("com_funcionarios").get()).docs.map(
+      (d) => ({ id: d.id, ...(d.data() as object) }) as Funcionario,
+    );
+    const porCodigo = new Map<string, Funcionario>();
+    const porNome = new Map<string, Funcionario[]>();
+    for (const f of funcionarios) {
+      if (f.ativo === false) continue;
+      for (const c of codigosPdv(f)) porCodigo.set(c, f);
+      const chave = normalizarNome(f.nome);
+      porNome.set(chave, [...(porNome.get(chave) ?? []), f]);
+    }
+
+    // competência → funcionárioId → { semanas por data, total }
+    const porCompetencia = new Map<string, Map<string, Map<string, number>>>();
+    const semCasar: { linha: number; nome: string | null; codigo: string | null; meta: number }[] = [];
+    const ambiguos: string[] = [];
+
+    for (const l of linhas) {
+      let f = l.codigoPdv ? porCodigo.get(l.codigoPdv) : undefined;
+      if (!f && l.nome) {
+        const candidatos = porNome.get(normalizarNome(l.nome)) ?? [];
+        if (candidatos.length === 1) f = candidatos[0];
+        else if (candidatos.length > 1) ambiguos.push(`${l.nome} (${candidatos.length} cadastros)`);
+      }
+      if (!f) {
+        semCasar.push({ linha: l.linha, nome: l.nome, codigo: l.codigoPdv, meta: l.meta });
+        continue;
+      }
+      const comp = competenciaDaSemana(l.semanaInicio);
+      const porFunc = porCompetencia.get(comp) ?? new Map<string, Map<string, number>>();
+      const semanas = porFunc.get(f.id) ?? new Map<string, number>();
+      semanas.set(l.semanaInicio, (semanas.get(l.semanaInicio) ?? 0) + l.meta);
+      porFunc.set(f.id, semanas);
+      porCompetencia.set(comp, porFunc);
+    }
+
+    // Monta o resumo (e grava, se confirmado).
+    const resumo: {
+      competencia: string;
+      pessoas: number;
+      total: number;
+      semanas: string[];
+      semMeta: string[];
+    }[] = [];
+    const agora = agoraISO();
+
+    for (const [competencia, porFunc] of porCompetencia) {
+      const fech = (await db.collection("com_fechamentos").doc(competencia).get()).data();
+      if (confirmar && fech?.status === "fechado") {
+        throw new HttpsError(
+          "failed-precondition",
+          `${competencia} está fechada — reabra antes de importar metas dela.`,
+        );
+      }
+      const datas = [...new Set([...porFunc.values()].flatMap((m) => [...m.keys()]))].sort();
+      const indices = indicesDasSemanas(datas);
+      let total = 0;
+      let batch = db.batch();
+      let ops = 0;
+
+      for (const [funcionarioId, semanas] of porFunc) {
+        const arr: (number | null)[] = [null, null, null, null, null, null];
+        for (const [data, valor] of semanas) {
+          const i = indices.get(data) ?? 0;
+          if (i < 6) arr[i] = (arr[i] ?? 0) + valor;
+        }
+        const valor = Math.round(arr.reduce<number>((a, x) => a + (x ?? 0), 0) * 100) / 100;
+        total += valor;
+        if (!confirmar) continue;
+        const id = `${competencia}_${funcionarioId}_-_-`;
+        batch.set(
+          db.collection("com_metas").doc(id),
+          {
+            id,
+            competencia,
+            funcionarioId,
+            cargoId: null,
+            lojaId: null,
+            valor,
+            semanas: arr,
+            origem: "controle-de-vez",
+            importadoEm: agora,
+            importadoPor: uid,
+          },
+          { merge: true },
+        );
+        if (++ops >= 400) {
+          await batch.commit();
+          batch = db.batch();
+          ops = 0;
+        }
+      }
+      if (confirmar && ops > 0) await batch.commit();
+
+      const comMeta = new Set(porFunc.keys());
+      resumo.push({
+        competencia,
+        pessoas: porFunc.size,
+        total: Math.round(total * 100) / 100,
+        semanas: datas,
+        semMeta: funcionarios
+          .filter((f) => f.ativo !== false && f.semPdv !== true && !comMeta.has(f.id))
+          .map((f) => f.nome),
+      });
+    }
+
+    if (confirmar) {
+      await auditar(uid, "comissoes.importarMetas", {
+        competencias: resumo.map((r) => r.competencia).join(", "),
+        linhas: linhas.length,
+        semCasar: semCasar.length,
+      });
+    }
+    return {
+      ok: true,
+      confirmado: confirmar,
+      linhas: linhas.length,
+      erros,
+      ambiguos: [...new Set(ambiguos)],
+      semCasar,
+      resumo: resumo.sort((a, b) => a.competencia.localeCompare(b.competencia)),
+    };
+  },
+);

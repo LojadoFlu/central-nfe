@@ -256,6 +256,8 @@ interface ContextoCalculo {
   participacaoPorFuncionario: Map<string, boolean[]>;
   /** Melhor vendedor de cada loja, por PESSOA (somando os códigos dela). */
   melhorFuncionarioPorLoja: Map<number, string>;
+  /** Meta da loja = SOMA das metas dos vendedores dela (definição do Rodrigo). */
+  metaDaLojaSomada: Map<number, number>;
   cargosComMetaIndividual: Set<string>;
 }
 
@@ -339,6 +341,24 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     }
   }
 
+  // Meta da loja é o somatório das metas dos vendedores dela. Quando ninguém
+  // tem meta própria, cai na meta de loja cadastrada à mão (transição).
+  const metasComp = metas
+    .filter((m) => m.competencia === competencia)
+    .map((m) => ({ ...m, lojaId: canonizar(grupos, m.lojaId) }));
+  const metaDaLojaSomada = new Map<number, number>();
+  for (const f of funcionarios) {
+    if (f.ativo === false) continue;
+    const loja = canonizar(grupos, f.lojaId);
+    if (loja == null) continue;
+    const propria = metasComp.find((m) => m.funcionarioId === f.id);
+    if (!propria) continue;
+    metaDaLojaSomada.set(loja, (metaDaLojaSomada.get(loja) ?? 0) + propria.valor);
+  }
+  for (const [k, v] of metaDaLojaSomada) {
+    metaDaLojaSomada.set(k, Math.round(v * 100) / 100);
+  }
+
   return {
     competencia,
     cfg,
@@ -360,6 +380,7 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     participantesPorLojaSemana,
     participacaoPorFuncionario,
     melhorFuncionarioPorLoja,
+    metaDaLojaSomada,
     cargosComMetaIndividual,
   };
 }
@@ -374,6 +395,14 @@ interface EntradaMontada {
   metaGrupo: number | null;
   lojasGrupo: number[];
   lojasSemMeta: number[];
+}
+
+/** Meta da loja: soma das metas dos vendedores; sem elas, a cadastrada à mão. */
+function metaDaLoja(ctx: ContextoCalculo, lojaId: number | null): number | null {
+  if (lojaId == null) return null;
+  const somada = ctx.metaDaLojaSomada.get(lojaId);
+  if (somada != null && somada > 0) return somada;
+  return escolherMetaLoja(ctx.metasDaComp, lojaId, ctx.competencia);
 }
 
 /** Monta a entrada do motor para UMA pessoa. Único lugar que faz isso. */
@@ -400,7 +429,7 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
   const lojasGrupo = f.lojasGrupo?.length ? f.lojasGrupo : f.lojaId != null ? [f.lojaId] : [];
   const grupo = somarLojas(consolidado.porLoja, lojasGrupo);
 
-  const metaLoja = escolherMetaLoja(metasDaComp, f.lojaId, competencia);
+  const metaLoja = metaDaLoja(ctx, f.lojaId);
   // Meta do vendedor: a própria, se houver acordo individual; senão, a meta da
   // loja dividida igualmente entre os vendedores dela.
   const metaPropria = escolherMeta(metasDaComp, f, competencia);
@@ -416,12 +445,10 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
   // Meta do supervisor = soma das metas das lojas que ele supervisiona.
   // Se faltar a meta de alguma, a soma seria menor que a real e inflaria o
   // atingimento — então fica sem meta e a loja que falta é apontada.
-  const lojasSemMeta = lojasGrupo.filter(
-    (l) => escolherMetaLoja(metasDaComp, l, competencia) == null,
-  );
+  const lojasSemMeta = lojasGrupo.filter((l) => metaDaLoja(ctx, l) == null);
   const metaGrupo =
     lojasGrupo.length > 0 && lojasSemMeta.length === 0
-      ? lojasGrupo.reduce((a, l) => a + (escolherMetaLoja(metasDaComp, l, competencia) ?? 0), 0)
+      ? lojasGrupo.reduce((a, l) => a + (metaDaLoja(ctx, l) ?? 0), 0)
       : null;
 
   const regra = escolherRegra(ctx.regras, f, competencia);
@@ -572,7 +599,7 @@ export async function calcularCompetencia(
         lojaId,
         lojaNome: nomeLoja.get(lojaId) ?? null,
         faturamento: t.liquida,
-        meta: escolherMetaLoja(metasDaComp, lojaId, competencia),
+        meta: metaDaLoja(ctx, lojaId),
         comissao: cent(comissaoPorLoja.get(lojaId) ?? 0),
       }))
       .sort((a, b) => b.faturamento - a.faturamento),

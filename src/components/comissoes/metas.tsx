@@ -17,6 +17,7 @@ import {
   salvarParticipacoes,
 } from "@/lib/comissoes/repo";
 import { Aviso, InputNumero, mesLabel } from "./comum";
+import { ImportarMetas } from "./importar-metas";
 
 const SEMANAS = [0, 1, 2, 3, 4, 5];
 
@@ -186,6 +187,8 @@ export function Metas({
           </Button>
         </div>
       ) : null}
+
+      {podeGerir ? <ImportarMetas onImportado={onRecarregar} /> : null}
 
       <Card>
         <CardContent className="space-y-2 py-4">
