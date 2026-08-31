@@ -13,7 +13,9 @@ function brl(n: number | null | undefined): string {
   return n == null ? "—" : formatBRL(n);
 }
 function pct(n: number | null | undefined): string {
-  return n == null ? "—" : `${n.toLocaleString("pt-BR", { maximumFractionDigits: 0 })}%`;
+  return n == null
+    ? "—"
+    : `${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 
 /**

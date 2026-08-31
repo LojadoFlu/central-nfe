@@ -293,7 +293,10 @@ export function Bonus({
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {GATILHOS.find((g) => g.valor === b.gatilho.tipo)?.label ?? b.gatilho.tipo}
-                  {b.gatilho.tipo.startsWith("atingimento") ? ` (${b.gatilho.minimoPct ?? 100}%)` : ""} ·{" "}
+                  {b.gatilho.tipo.startsWith("atingimento")
+                    ? ` (${pctFmt(b.gatilho.minimoPct ?? 100)})`
+                    : ""}{" "}
+                  ·{" "}
                   {b.cargoId ? (nomeCargo.get(b.cargoId) ?? "cargo") : "todos os cargos"}
                   {b.lojaId != null ? ` · ${nomeLoja.get(b.lojaId) ?? b.lojaId}` : ""}
                 </p>

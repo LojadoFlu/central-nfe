@@ -22,7 +22,7 @@ function Coluna({ titulo, r, destaque }: { titulo: string; r: ResultadoApuracao;
       <div className="mt-2 space-y-0.5 text-[11px] text-muted-foreground">
         <p>Venda: {formatBRL(r.vendaConsiderada)}</p>
         <p>Meta: {r.metaConsiderada == null ? "—" : formatBRL(r.metaConsiderada)}</p>
-        <p>Atingimento: {pctFmt(r.atingimentoPct, 0)}</p>
+        <p>Atingimento: {pctFmt(r.atingimentoPct)}</p>
         <p>Comissão: {formatBRL(r.comissaoTotal)}</p>
         <p>Piso: {formatBRL(r.piso)}</p>
         {r.pisoAplicado ? <p className="text-warning">no piso</p> : null}

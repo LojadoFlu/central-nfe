@@ -59,12 +59,12 @@ export function Configuracoes({
           <div className="rounded-md bg-muted/50 p-3 text-xs text-muted-foreground">
             {regraPiso === "maior" ? (
               <>
-                Piso R$ 1.800 e comissão R$ 1.450 → <strong>paga R$ 1.800</strong>.<br />
-                Piso R$ 1.800 e comissão R$ 2.650 → <strong>paga R$ 2.650</strong>.
+                Piso R$ 1.800,00 e comissão R$ 1.450,00 → <strong>paga R$ 1.800,00</strong>.<br />
+                Piso R$ 1.800,00 e comissão R$ 2.650,00 → <strong>paga R$ 2.650,00</strong>.
               </>
             ) : (
               <>
-                Piso R$ 1.800 e comissão R$ 1.450 → <strong>paga R$ 3.250</strong>. Confirme com o RH
+                Piso R$ 1.800,00 e comissão R$ 1.450,00 → <strong>paga R$ 3.250,00</strong>. Confirme com o RH
                 antes de deixar assim: muda o custo da folha inteira.
               </>
             )}

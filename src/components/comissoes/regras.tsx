@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2 } from "lucide-react";
+import { formatBRL } from "@/lib/utils";
 import type { Cargo, Componente, Funcionario, Regra } from "@/lib/comissoes/tipos";
 import type { StorePdv } from "@/lib/nfe/repo";
 import { excluirRegra, salvarRegra } from "@/lib/comissoes/repo";
@@ -463,10 +464,10 @@ export function Regras({
                       {c.faixas
                         .map(
                           (f) =>
-                            `${c.baseFaixa === "percentualMeta" ? `${f.de}%` : `R$${f.de.toLocaleString("pt-BR")}`}→${pctFmt(f.percentual)}`,
+                            `${c.baseFaixa === "percentualMeta" ? pctFmt(f.de) : formatBRL(f.de)} → ${pctFmt(f.percentual)}`,
                         )
                         .join("  ")}
-                      {c.condicao ? ` · só com ${c.condicao.minimoPct}% da meta` : ""}
+                      {c.condicao ? ` · só com ${pctFmt(c.condicao.minimoPct)} da meta` : ""}
                     </p>
                   ))}
                 </div>

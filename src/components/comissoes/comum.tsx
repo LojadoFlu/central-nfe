@@ -57,9 +57,10 @@ export function competenciasDisponiveis(): string[] {
   return out;
 }
 
-export function pctFmt(n: number | null | undefined, casas = 2): string {
+/** Percentual sempre com 2 casas, como todo valor monetário do sistema. */
+export function pctFmt(n: number | null | undefined): string {
   if (n == null || !Number.isFinite(n)) return "—";
-  return `${n.toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas })}%`;
+  return `${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 
 /** Barra de atingimento da meta (§19). */
@@ -72,7 +73,7 @@ export function BarraMeta({ pct }: { pct: number | null }) {
       <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
         <div className={cn("h-full rounded-full", tom)} style={{ width: `${largura}%` }} />
       </div>
-      <span className="text-xs tnum text-muted-foreground">{pctFmt(pct, 0)}</span>
+      <span className="text-xs tnum text-muted-foreground">{pctFmt(pct)}</span>
     </div>
   );
 }
