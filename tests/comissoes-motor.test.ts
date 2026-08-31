@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   apurar,
   escolherMeta,
+  escolherMetaLoja,
   escolherRegra,
   metaPorVendedor,
   pisoEfetivo,
@@ -1112,5 +1113,57 @@ describe("meta da loja dividida entre os vendedores", () => {
     expect(meta).toBe(80_000);
     expect(r.atingimentoPct).toBe(112.5);
     expect(r.comissaoBase).toBe(1800); // 90.000 × 2%
+  });
+});
+
+describe("meta da loja não vira meta individual de cada um", () => {
+  const META_LOJA: Meta = { id: "m-loja", competencia: "2026-08", lojaId: 582, valor: 10_000 };
+
+  it("a meta da loja NÃO é a meta própria do vendedor", () => {
+    // Antes, o escopo de loja casava com qualquer funcionário dela e cada
+    // vendedor levava os 10.000 inteiros.
+    expect(escolherMeta([META_LOJA], JOAO, "2026-08")).toBeNull();
+    expect(escolherMetaLoja([META_LOJA], 582, "2026-08")).toBe(10_000);
+  });
+
+  it("10.000 entre 5 pessoas dá 2.000 para cada", () => {
+    expect(metaPorVendedor(escolherMetaLoja([META_LOJA], 582, "2026-08"), 5)).toBe(2000);
+  });
+
+  it("meta cadastrada para a pessoa continua vencendo", () => {
+    const propria: Meta = { id: "m-j", competencia: "2026-08", funcionarioId: "joao", valor: 3_000 };
+    expect(escolherMeta([META_LOJA, propria], JOAO, "2026-08")).toBe(3_000);
+  });
+
+  it("meta do cargo na loja também é meta própria", () => {
+    const doCargo: Meta = {
+      id: "m-c",
+      competencia: "2026-08",
+      cargoId: "vendedor",
+      lojaId: 582,
+      valor: 2_500,
+    };
+    expect(escolherMeta([META_LOJA, doCargo], JOAO, "2026-08")).toBe(2_500);
+  });
+
+  it("o gerente é medido pela meta da loja inteira, não pela fatia", () => {
+    const regra = regraSimples(0);
+    regra.componentes[0].escopoVenda = "loja";
+    regra.componentes[0].faixas = [{ de: 0, percentual: 0.5 }];
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, cargoId: "gerente", pisoGarantido: 0 },
+        regra,
+        metas: { individual: null, loja: 10_000, grupo: null },
+        vendas: {
+          individual: { liquida: 0, bruta: 0 },
+          loja: { liquida: 12_000, bruta: 12_000 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+      }),
+    );
+    expect(r.escopoMeta).toBe("loja");
+    expect(r.metaConsiderada).toBe(10_000);
+    expect(r.atingimentoPct).toBe(120);
   });
 });

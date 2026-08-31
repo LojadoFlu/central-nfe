@@ -123,7 +123,15 @@ export function bonusAplicaveis(
   );
 }
 
-/** Meta mais específica do funcionário na competência (§9). */
+/**
+ * Meta PRÓPRIA do funcionário na competência (§9): a que foi cadastrada para
+ * ele ou para o cargo dele.
+ *
+ * Meta de escopo só-loja NÃO conta aqui. Ela é o alvo da LOJA — e como o
+ * escopo de loja casa com qualquer funcionário dela, ela entrava como meta
+ * individual de todo mundo: cada vendedor recebia a meta inteira da loja em
+ * vez da parte dele.
+ */
 export function escolherMeta(
   metas: Meta[],
   f: Funcionario,
@@ -133,6 +141,7 @@ export function escolherMeta(
   let melhorP = -1;
   for (const m of metas) {
     if (m.competencia !== competencia) continue;
+    if (!m.funcionarioId && !m.cargoId) continue; // meta da loja, não da pessoa
     const p = especificidade(m, f);
     if (p < 0) continue;
     if (p > melhorP) {
