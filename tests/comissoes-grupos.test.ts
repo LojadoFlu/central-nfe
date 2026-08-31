@@ -10,6 +10,7 @@ import {
 } from "../functions/src/comissoes/grupos";
 import { consolidar, type VendaBruta } from "../functions/src/comissoes/consolidacao";
 import { pareceCodigoDeLoja } from "../functions/src/comissoes/vendedores";
+import { parseNumeroBR } from "../src/lib/comissoes/numero";
 
 const LOJAS: LojaBruta[] = [
   { id: 335, nome: "FLU CLUBE", grupoNome: "FLU CLUBE", empresaId: "30623074000145", ativoSync: true },
@@ -105,5 +106,38 @@ describe("código do PDV que é a loja, não uma pessoa", () => {
   it("nome vazio não é marcado", () => {
     expect(pareceCodigoDeLoja(null, nomesDeLoja)).toBe(false);
     expect(pareceCodigoDeLoja("  ", nomesDeLoja)).toBe(false);
+  });
+});
+
+describe("números digitados em pt-BR", () => {
+  it("aceita vírgula como decimal", () => {
+    expect(parseNumeroBR("1712,50")).toBe(1712.5);
+    expect(parseNumeroBR("2,5")).toBe(2.5);
+    expect(parseNumeroBR("0,15")).toBe(0.15);
+  });
+
+  it("com vírgula presente, o ponto é separador de milhar", () => {
+    expect(parseNumeroBR("1.712,50")).toBe(1712.5);
+    expect(parseNumeroBR("2.000.000,00")).toBe(2000000);
+  });
+
+  it("ponto com 3 casas depois é milhar; com 1 ou 2, é decimal", () => {
+    expect(parseNumeroBR("1.712")).toBe(1712);
+    expect(parseNumeroBR("2.5")).toBe(2.5);
+    expect(parseNumeroBR("2.25")).toBe(2.25);
+  });
+
+  it("tolera R$, % e espaços colados pelo usuário", () => {
+    expect(parseNumeroBR("R$ 1.800,00")).toBe(1800);
+    expect(parseNumeroBR("2,30%")).toBe(2.3);
+  });
+
+  it("vazio vira null, e não zero — campo em branco não é meta zero", () => {
+    expect(parseNumeroBR("")).toBeNull();
+    expect(parseNumeroBR("   ")).toBeNull();
+  });
+
+  it("negativo funciona (ajuste de desconto)", () => {
+    expect(parseNumeroBR("-20,50")).toBe(-20.5);
   });
 });

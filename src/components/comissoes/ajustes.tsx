@@ -11,7 +11,7 @@ import { formatBRL, formatarDataHora } from "@/lib/utils";
 import { Plus, Trash2 } from "lucide-react";
 import type { Ajuste, Funcionario } from "@/lib/comissoes/tipos";
 import { excluirAjuste, salvarAjuste } from "@/lib/comissoes/repo";
-import { Aviso, Campo, Select, mesLabel } from "./comum";
+import { Aviso, Campo, InputNumero, Select, mesLabel } from "./comum";
 
 export function Ajustes({
   competencia,
@@ -27,7 +27,7 @@ export function Ajustes({
   onRecarregar: () => Promise<void>;
 }) {
   const [funcionarioId, setFuncionarioId] = useState("");
-  const [valor, setValor] = useState("");
+  const [valor, setValor] = useState<number | null>(null);
   const [motivo, setMotivo] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -76,7 +76,7 @@ export function Ajustes({
                 </Select>
               </Campo>
               <Campo label="Valor (R$)" hint="Negativo para desconto/estorno.">
-                <Input type="number" step="0.01" value={valor} onChange={(e) => setValor(e.target.value)} />
+                <InputNumero value={valor} onChange={setValor} />
               </Campo>
               <Campo label="Motivo" hint="Fica no histórico e na memória de cálculo.">
                 <Input
@@ -88,16 +88,16 @@ export function Ajustes({
             </div>
             <Button
               size="sm"
-              disabled={ocupado || !funcionarioId || !motivo.trim() || !Number(valor)}
+              disabled={ocupado || !funcionarioId || !motivo.trim() || !valor}
               onClick={() =>
                 executar(async () => {
                   await salvarAjuste({
                     funcionarioId,
                     competencia,
-                    valor: Number(valor),
+                    valor: valor ?? 0,
                     motivo: motivo.trim(),
                   });
-                  setValor("");
+                  setValor(null);
                   setMotivo("");
                 }, "Ajuste lançado.")
               }

@@ -10,7 +10,7 @@ import { formatBRL } from "@/lib/utils";
 import { Play } from "lucide-react";
 import type { Funcionario, ResultadoApuracao } from "@/lib/comissoes/tipos";
 import { simularComissao } from "@/lib/comissoes/repo";
-import { Aviso, Campo, Select, mesLabel, pctFmt } from "./comum";
+import { Aviso, Campo, InputNumero, Select, mesLabel, pctFmt } from "./comum";
 
 function Coluna({ titulo, r, destaque }: { titulo: string; r: ResultadoApuracao; destaque?: boolean }) {
   return (
@@ -39,9 +39,9 @@ export function Simulador({
   funcionarios: Funcionario[];
 }) {
   const [funcionarioId, setFuncionarioId] = useState("");
-  const [venda, setVenda] = useState("");
-  const [meta, setMeta] = useState("");
-  const [piso, setPiso] = useState("");
+  const [venda, setVenda] = useState<number | null>(null);
+  const [meta, setMeta] = useState<number | null>(null);
+  const [piso, setPiso] = useState<number | null>(null);
   const [res, setRes] = useState<{ atual: ResultadoApuracao; simulado: ResultadoApuracao } | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -53,9 +53,9 @@ export function Simulador({
       const r = await simularComissao({
         competencia,
         funcionarioId,
-        vendaIndividual: venda === "" ? undefined : Number(venda),
-        metaIndividual: meta === "" ? undefined : Number(meta),
-        piso: piso === "" ? undefined : Number(piso),
+        vendaIndividual: venda ?? undefined,
+        metaIndividual: meta ?? undefined,
+        piso: piso ?? undefined,
       });
       setRes({ atual: r.atual, simulado: r.simulado });
     } catch (e) {
@@ -92,13 +92,13 @@ export function Simulador({
               </Select>
             </Campo>
             <Campo label="Venda (R$)" hint="Vazio = venda real do mês">
-              <Input type="number" step="0.01" value={venda} onChange={(e) => setVenda(e.target.value)} />
+              <InputNumero value={venda} onChange={setVenda} />
             </Campo>
             <Campo label="Meta (R$)" hint="Vazio = meta cadastrada">
-              <Input type="number" step="0.01" value={meta} onChange={(e) => setMeta(e.target.value)} />
+              <InputNumero value={meta} onChange={setMeta} />
             </Campo>
             <Campo label="Piso (R$)" hint="Vazio = piso cadastrado">
-              <Input type="number" step="0.01" value={piso} onChange={(e) => setPiso(e.target.value)} />
+              <InputNumero value={piso} onChange={setPiso} />
             </Campo>
           </div>
           <Button size="sm" disabled={ocupado || !funcionarioId} onClick={rodar}>

@@ -27,7 +27,7 @@ import {
   sincronizarVendedoresPdv,
 } from "@/lib/comissoes/repo";
 import { pisoEfetivo } from "@/lib/comissoes/piso";
-import { Aviso, Campo, Select } from "./comum";
+import { Aviso, Campo, InputNumero, Select } from "./comum";
 
 const VAZIO: Funcionario = {
   id: "",
@@ -221,14 +221,14 @@ export function Funcionarios({
                       disabled={!podeGerir}
                       onChange={(e) => setNomesCargo({ ...nomesCargo, [c.id]: e.target.value })}
                     />
-                    <Input
+                    <InputNumero
                       className="h-9 w-32"
-                      type="number"
-                      step="0.01"
                       placeholder="piso R$"
-                      value={piso}
+                      value={piso === "" ? null : Number(piso)}
                       disabled={!podeGerir}
-                      onChange={(e) => setPisosCargo({ ...pisosCargo, [c.id]: e.target.value })}
+                      onChange={(n) =>
+                        setPisosCargo({ ...pisosCargo, [c.id]: n == null ? "" : String(n) })
+                      }
                     />
                     {podeGerir ? (
                       <>
@@ -276,13 +276,11 @@ export function Funcionarios({
                   value={novoCargo}
                   onChange={(e) => setNovoCargo(e.target.value)}
                 />
-                <Input
+                <InputNumero
                   className="w-32"
-                  type="number"
-                  step="0.01"
                   placeholder="piso R$"
-                  value={novoPiso}
-                  onChange={(e) => setNovoPiso(e.target.value)}
+                  value={novoPiso === "" ? null : Number(novoPiso)}
+                  onChange={(n) => setNovoPiso(n == null ? "" : String(n))}
                 />
                 <Button
                   size="sm"
@@ -378,19 +376,12 @@ export function Funcionarios({
                     : `Vazio = usa o piso do cargo (${formatBRL(pisoDoCargoSelecionado)}). Preencha só para acordo individual.`
                 }
               >
-                <Input
-                  type="number"
-                  step="0.01"
+                <InputNumero
                   placeholder={
                     pisoDoCargoSelecionado == null ? "—" : String(pisoDoCargoSelecionado)
                   }
-                  value={edicao.pisoGarantido ?? ""}
-                  onChange={(e) =>
-                    setEdicao({
-                      ...edicao,
-                      pisoGarantido: e.target.value === "" ? null : Number(e.target.value),
-                    })
-                  }
+                  value={edicao.pisoGarantido ?? null}
+                  onChange={(n) => setEdicao({ ...edicao, pisoGarantido: n })}
                 />
               </Campo>
               <Campo label="Admissão">

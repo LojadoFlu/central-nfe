@@ -6,13 +6,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { formatBRL } from "@/lib/utils";
 import { Copy, Save } from "lucide-react";
 import type { Funcionario, Meta, ResultadoCompetencia } from "@/lib/comissoes/tipos";
 import type { StorePdv } from "@/lib/nfe/repo";
 import { listarMetas, salvarMetas } from "@/lib/comissoes/repo";
-import { Aviso, mesLabel } from "./comum";
+import { Aviso, InputNumero, mesLabel } from "./comum";
 
 /** Competência anterior a "YYYY-MM". */
 function mesAnterior(competencia: string): string {
@@ -38,19 +37,19 @@ export function Metas({
   podeGerir: boolean;
   onRecarregar: () => Promise<void>;
 }) {
-  const [porLoja, setPorLoja] = useState<Record<number, string>>({});
-  const [porFuncionario, setPorFuncionario] = useState<Record<string, string>>({});
+  const [porLoja, setPorLoja] = useState<Record<number, number | null>>({});
+  const [porFuncionario, setPorFuncionario] = useState<Record<string, number | null>>({});
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
   // Recarrega os campos sempre que a competência (ou as metas) mudam.
   useEffect(() => {
-    const l: Record<number, string> = {};
-    const f: Record<string, string> = {};
+    const l: Record<number, number | null> = {};
+    const f: Record<string, number | null> = {};
     for (const m of metas) {
-      if (m.funcionarioId) f[m.funcionarioId] = String(m.valor);
-      else if (m.lojaId != null && !m.cargoId) l[m.lojaId] = String(m.valor);
+      if (m.funcionarioId) f[m.funcionarioId] = m.valor;
+      else if (m.lojaId != null && !m.cargoId) l[m.lojaId] = m.valor;
     }
     setPorLoja(l);
     setPorFuncionario(f);
@@ -58,7 +57,7 @@ export function Metas({
 
   const ativos = useMemo(() => funcionarios.filter((f) => f.ativo), [funcionarios]);
   const totalLojas = useMemo(
-    () => Object.values(porLoja).reduce((s, v) => s + (Number(v) || 0), 0),
+    () => Object.values(porLoja).reduce<number>((s, v) => s + (v ?? 0), 0),
     [porLoja],
   );
 
@@ -79,14 +78,12 @@ export function Metas({
 
   async function salvarTudo() {
     const lote: Partial<Meta>[] = [];
-    for (const [lojaId, v] of Object.entries(porLoja)) {
-      const valor = Number(v);
-      if (!Number.isFinite(valor) || valor <= 0) continue;
+    for (const [lojaId, valor] of Object.entries(porLoja)) {
+      if (valor == null || valor <= 0) continue;
       lote.push({ competencia, lojaId: Number(lojaId), valor });
     }
-    for (const [funcionarioId, v] of Object.entries(porFuncionario)) {
-      const valor = Number(v);
-      if (!Number.isFinite(valor) || valor <= 0) continue;
+    for (const [funcionarioId, valor] of Object.entries(porFuncionario)) {
+      if (valor == null || valor <= 0) continue;
       lote.push({ competencia, funcionarioId, valor });
     }
     if (lote.length === 0) throw new Error("Nada para salvar — preencha ao menos uma meta.");
@@ -144,14 +141,12 @@ export function Metas({
             {lojas.map((l) => (
               <div key={l.id} className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate text-sm">{l.grupoNome || l.nome}</span>
-                <Input
+                <InputNumero
                   className="h-9 w-40"
-                  type="number"
-                  step="0.01"
                   placeholder="0,00"
                   disabled={!podeGerir}
-                  value={porLoja[l.id] ?? ""}
-                  onChange={(e) => setPorLoja({ ...porLoja, [l.id]: e.target.value })}
+                  value={porLoja[l.id] ?? null}
+                  onChange={(n) => setPorLoja({ ...porLoja, [l.id]: n })}
                 />
               </div>
             ))}
@@ -221,14 +216,12 @@ export function Metas({
             {ativos.map((f) => (
               <div key={f.id} className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 truncate text-sm">{f.nome}</span>
-                <Input
+                <InputNumero
                   className="h-9 w-40"
-                  type="number"
-                  step="0.01"
                   placeholder="—"
                   disabled={!podeGerir}
-                  value={porFuncionario[f.id] ?? ""}
-                  onChange={(e) => setPorFuncionario({ ...porFuncionario, [f.id]: e.target.value })}
+                  value={porFuncionario[f.id] ?? null}
+                  onChange={(n) => setPorFuncionario({ ...porFuncionario, [f.id]: n })}
                 />
               </div>
             ))}

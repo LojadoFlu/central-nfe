@@ -13,7 +13,7 @@ import { formatBRL } from "@/lib/utils";
 import type { Cargo, Componente, Funcionario, Regra } from "@/lib/comissoes/tipos";
 import type { StorePdv } from "@/lib/nfe/repo";
 import { excluirRegra, salvarRegra } from "@/lib/comissoes/repo";
-import { Aviso, Campo, Select, competenciaAtual, mesLabel, pctFmt } from "./comum";
+import { Aviso, Campo, InputNumero, Select, competenciaAtual, mesLabel, pctFmt } from "./comum";
 
 function componenteNovo(i: number): Componente {
   return {
@@ -308,30 +308,24 @@ export function Regras({
                       </p>
                       {c.faixas.map((f, fi) => (
                         <div key={fi} className="flex items-center gap-2">
-                          <Input
+                          <InputNumero
                             className="h-9"
                             placeholder="a partir de"
-                            type="number"
-                            step="0.01"
                             value={f.de}
-                            onChange={(e) =>
+                            onChange={(n) =>
                               alterarComponente(idx, {
-                                faixas: c.faixas.map((x, i) =>
-                                  i === fi ? { ...x, de: Number(e.target.value) } : x,
-                                ),
+                                faixas: c.faixas.map((x, i) => (i === fi ? { ...x, de: n ?? 0 } : x)),
                               })
                             }
                           />
-                          <Input
+                          <InputNumero
                             className="h-9"
                             placeholder="%"
-                            type="number"
-                            step="0.01"
                             value={f.percentual}
-                            onChange={(e) =>
+                            onChange={(n) =>
                               alterarComponente(idx, {
                                 faixas: c.faixas.map((x, i) =>
-                                  i === fi ? { ...x, percentual: Number(e.target.value) } : x,
+                                  i === fi ? { ...x, percentual: n ?? 0 } : x,
                                 ),
                               })
                             }
@@ -396,13 +390,11 @@ export function Regras({
                       </Campo>
                       {c.condicao ? (
                         <Campo label="Atingimento mínimo (%)">
-                          <Input
-                            type="number"
-                            step="1"
+                          <InputNumero
                             value={c.condicao.minimoPct}
-                            onChange={(e) =>
+                            onChange={(n) =>
                               alterarComponente(idx, {
-                                condicao: { ...c.condicao!, minimoPct: Number(e.target.value) },
+                                condicao: { ...c.condicao!, minimoPct: n ?? 0 },
                               })
                             }
                           />

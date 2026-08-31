@@ -4,6 +4,10 @@
 
 import * as React from "react";
 import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { numeroParaTexto, parseNumeroBR } from "@/lib/comissoes/numero";
+
+export { parseNumeroBR };
 
 export const CLASSE_CAMPO =
   "h-11 w-full rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
@@ -89,5 +93,49 @@ export function Aviso({ tipo, children }: { tipo: "erro" | "ok"; children: React
     >
       {children}
     </p>
+  );
+}
+
+/**
+ * Campo numérico que aceita vírgula. O `type="number"` do HTML recusa a vírgula
+ * em pt-BR e devolve o campo vazio — o valor some enquanto a pessoa digita.
+ * Aqui o texto é livre enquanto edita e vira número na saída.
+ */
+export function InputNumero({
+  value,
+  onChange,
+  className,
+  ...props
+}: {
+  value: number | null | undefined;
+  onChange: (n: number | null) => void;
+  className?: string;
+} & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type">) {
+  const [texto, setTexto] = React.useState(() => numeroParaTexto(value));
+
+  // Valor mudou por fora (recarregou, trocou de registro): re-sincroniza — mas
+  // sem atropelar quem está no meio da digitação ("1712," ainda vale 1712).
+  React.useEffect(() => {
+    if (parseNumeroBR(texto) !== (value ?? null)) setTexto(numeroParaTexto(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  return (
+    <Input
+      {...props}
+      type="text"
+      inputMode="decimal"
+      className={cn("tnum", className)}
+      value={texto}
+      onChange={(e) => {
+        const bruto = e.target.value.replace(/[^\d.,-]/g, "");
+        setTexto(bruto);
+        onChange(parseNumeroBR(bruto));
+      }}
+      onBlur={(e) => {
+        setTexto(numeroParaTexto(parseNumeroBR(e.target.value)));
+        props.onBlur?.(e);
+      }}
+    />
   );
 }

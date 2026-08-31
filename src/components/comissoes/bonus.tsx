@@ -12,7 +12,7 @@ import { Plus, Trash2 } from "lucide-react";
 import type { Bonus as BonusTipo, Cargo, Funcionario } from "@/lib/comissoes/tipos";
 import type { StorePdv } from "@/lib/nfe/repo";
 import { excluirBonus, salvarBonus } from "@/lib/comissoes/repo";
-import { Aviso, Campo, Select, competenciaAtual, mesLabel, pctFmt } from "./comum";
+import { Aviso, Campo, InputNumero, Select, competenciaAtual, mesLabel, pctFmt } from "./comum";
 
 const GATILHOS: { valor: BonusTipo["gatilho"]["tipo"]; label: string; usaMinimo: boolean }[] = [
   { valor: "atingimentoIndividual", label: "Bateu a meta individual", usaMinimo: true },
@@ -179,15 +179,10 @@ export function Bonus({
               </Campo>
               {gatilhoAtual?.usaMinimo ? (
                 <Campo label="Atingimento mínimo (%)">
-                  <Input
-                    type="number"
-                    step="1"
+                  <InputNumero
                     value={edicao.gatilho.minimoPct ?? 100}
-                    onChange={(e) =>
-                      setEdicao({
-                        ...edicao,
-                        gatilho: { ...edicao.gatilho, minimoPct: Number(e.target.value) },
-                      })
+                    onChange={(n) =>
+                      setEdicao({ ...edicao, gatilho: { ...edicao.gatilho, minimoPct: n ?? 0 } })
                     }
                   />
                 </Campo>
@@ -210,12 +205,10 @@ export function Bonus({
                 </Select>
               </Campo>
               <Campo label={edicao.premio.tipo === "fixo" ? "Valor (R$)" : "Percentual (%)"}>
-                <Input
-                  type="number"
-                  step="0.01"
+                <InputNumero
                   value={edicao.premio.valor}
-                  onChange={(e) =>
-                    setEdicao({ ...edicao, premio: { ...edicao.premio, valor: Number(e.target.value) } })
+                  onChange={(n) =>
+                    setEdicao({ ...edicao, premio: { ...edicao.premio, valor: n ?? 0 } })
                   }
                 />
               </Campo>
