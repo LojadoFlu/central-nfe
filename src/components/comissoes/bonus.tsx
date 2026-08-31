@@ -65,6 +65,38 @@ export function Bonus({
   const gatilhoAtual = GATILHOS.find((g) => g.valor === edicao?.gatilho.tipo);
 
   /**
+   * Cadastros que quase certamente são engano. O mais traiçoeiro: meta e
+   * supermeta do mesmo cargo apontando para escopos diferentes (uma no grupo,
+   * outra na venda própria). Aí elas não formam escada nem se substituem — cada
+   * uma vive por conta, e a conta sai errada sem nenhum erro na tela.
+   */
+  const problemas = useMemo(() => {
+    const avisos: string[] = [];
+    const porCargo = new Map<string, Set<string>>();
+    for (const b of bonus) {
+      if (!b.ativo) continue;
+      if (b.premio.tipo === "percentual" && !b.premio.valor) {
+        avisos.push(`"${b.nome}" está com percentual zerado — não paga nada.`);
+      }
+      if (!b.gatilho.tipo.startsWith("atingimento")) continue;
+      const chave = b.cargoId ? (nomeCargo.get(b.cargoId) ?? b.cargoId) : "todos os cargos";
+      const atual = porCargo.get(chave) ?? new Set<string>();
+      atual.add(b.gatilho.tipo);
+      porCargo.set(chave, atual);
+    }
+    for (const [cargo, tipos] of porCargo) {
+      if (tipos.size < 2) continue;
+      const nomes = [...tipos].map((t) =>
+        t === "atingimentoIndividual" ? "meta individual" : t === "atingimentoLoja" ? "meta da loja" : "meta do grupo",
+      );
+      avisos.push(
+        `Em ${cargo} há bônus medindo coisas diferentes (${nomes.join(" e ")}). Degraus da mesma escada precisam do MESMO gatilho — senão não se substituem e podem pagar juntos.`,
+      );
+    }
+    return avisos;
+  }, [bonus, nomeCargo]);
+
+  /**
    * Escada de meta/supermeta: bônus de atingimento no mesmo escopo não
    * acumulam — paga só o degrau mais alto atingido. A tela mostra a escada
    * para conferência, porque o número que a pessoa recebe muda de faixa em
@@ -300,6 +332,17 @@ export function Bonus({
                 Cancelar
               </Button>
             </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {problemas.length > 0 ? (
+        <Card className="border-warning/40 bg-warning/5">
+          <CardContent className="space-y-1 py-4 text-xs">
+            <p className="text-sm font-semibold text-warning">Confira estes bônus</p>
+            {problemas.map((a, i) => (
+              <p key={i}>{a}</p>
+            ))}
           </CardContent>
         </Card>
       ) : null}

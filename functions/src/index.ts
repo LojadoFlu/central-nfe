@@ -4449,13 +4449,12 @@ export const comissoesSimular = onCall(
     if (!funcionarioId) throw new HttpsError("invalid-argument", "Informe o funcionário.");
     const d = req.data ?? {};
     try {
+      // null = campo em branco na tela ("não mexi"). O SDK do Firebase manda
+      // undefined como null, então os dois têm de significar a mesma coisa.
       const r = await simularComissao(competencia, funcionarioId, {
-        vendaIndividual: d.vendaIndividual == null ? undefined : num(d.vendaIndividual),
-        vendaLoja: d.vendaLoja == null ? undefined : num(d.vendaLoja),
-        metaIndividual: d.metaIndividual === undefined ? undefined : numOuNulo(d.metaIndividual),
-        metaLoja: d.metaLoja === undefined ? undefined : numOuNulo(d.metaLoja),
-        piso: d.piso === undefined ? undefined : numOuNulo(d.piso),
-        regraId: texto(d.regraId, 80) || null,
+        venda: d.venda == null ? undefined : num(d.venda),
+        meta: d.meta == null ? undefined : num(d.meta),
+        piso: d.piso == null ? undefined : num(d.piso),
       });
       return { ok: true, ...r };
     } catch (e) {

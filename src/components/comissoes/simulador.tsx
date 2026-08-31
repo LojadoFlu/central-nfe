@@ -8,9 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatBRL } from "@/lib/utils";
 import { Play } from "lucide-react";
-import type { Funcionario, ResultadoApuracao } from "@/lib/comissoes/tipos";
+import type { EscopoVenda, Funcionario, ResultadoApuracao } from "@/lib/comissoes/tipos";
 import { simularComissao } from "@/lib/comissoes/repo";
 import { Aviso, Campo, InputNumero, Select, mesLabel, pctFmt } from "./comum";
+
+const ESCOPO_COLUNA: Record<EscopoVenda, string> = {
+  individual: "própria",
+  loja: "da loja",
+  grupo: "do grupo",
+};
 
 function Coluna({ titulo, r, destaque }: { titulo: string; r: ResultadoApuracao; destaque?: boolean }) {
   return (
@@ -23,7 +29,9 @@ function Coluna({ titulo, r, destaque }: { titulo: string; r: ResultadoApuracao;
         {formatBRL(r.valorDevido)}
       </p>
       <div className="mt-2 space-y-0.5 text-[11px] text-muted-foreground">
-        <p>Venda: {formatBRL(r.vendaConsiderada)}</p>
+        <p>
+          Venda ({ESCOPO_COLUNA[r.escopoMeta]}): {formatBRL(r.vendaConsiderada)}
+        </p>
         <p>Meta: {r.metaConsiderada == null ? "—" : formatBRL(r.metaConsiderada)}</p>
         <p>Atingimento: {pctFmt(r.atingimentoPct)}</p>
         <p>Comissão calculada: {formatBRL(r.comissaoTotal)}</p>
@@ -50,7 +58,11 @@ export function Simulador({
   const [venda, setVenda] = useState<number | null>(null);
   const [meta, setMeta] = useState<number | null>(null);
   const [piso, setPiso] = useState<number | null>(null);
-  const [res, setRes] = useState<{ atual: ResultadoApuracao; simulado: ResultadoApuracao } | null>(null);
+  const [res, setRes] = useState<{
+    atual: ResultadoApuracao;
+    simulado: ResultadoApuracao;
+    escopo: EscopoVenda;
+  } | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -58,14 +70,8 @@ export function Simulador({
     setOcupado(true);
     setErro(null);
     try {
-      const r = await simularComissao({
-        competencia,
-        funcionarioId,
-        vendaIndividual: venda ?? undefined,
-        metaIndividual: meta ?? undefined,
-        piso: piso ?? undefined,
-      });
-      setRes({ atual: r.atual, simulado: r.simulado });
+      const r = await simularComissao({ competencia, funcionarioId, venda, meta, piso });
+      setRes({ atual: r.atual, simulado: r.simulado, escopo: r.escopo });
     } catch (e) {
       setErro((e as Error).message);
       setRes(null);
@@ -75,6 +81,14 @@ export function Simulador({
   }
 
   const diferenca = res ? res.simulado.valorDevido - res.atual.valorDevido : 0;
+  const ESCOPO_LABEL: Record<EscopoVenda, string> = {
+    individual: "venda própria da pessoa",
+    loja: "venda da loja dela",
+    grupo: "venda somada das lojas que ela acompanha",
+  };
+  const dica = res
+    ? `Vale para a ${ESCOPO_LABEL[res.escopo]} — é por ela que esta pessoa é medida.`
+    : "Vazio = venda real do mês";
 
   return (
     <div className="space-y-4">
@@ -99,7 +113,7 @@ export function Simulador({
                   ))}
               </Select>
             </Campo>
-            <Campo label="Venda (R$)" hint="Vazio = venda real do mês">
+            <Campo label="Venda (R$)" hint={dica}>
               <InputNumero value={venda} onChange={setVenda} />
             </Campo>
             <Campo label="Meta (R$)" hint="Vazio = meta cadastrada">

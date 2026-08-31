@@ -12,6 +12,7 @@ import type {
   Cargo,
   ConfigComissoes,
   CustoMes,
+  EscopoVenda,
   Funcionario,
   LogAuditoria,
   Meta,
@@ -173,15 +174,17 @@ export const alterarStatusFechamento = (competencia: string, status: StatusFecha
 export const simularComissao = (i: {
   competencia: string;
   funcionarioId: string;
-  vendaIndividual?: number;
-  vendaLoja?: number;
-  metaIndividual?: number | null;
+  /** Valem para o escopo pelo qual a pessoa é medida (própria, loja ou grupo). */
+  venda?: number | null;
+  meta?: number | null;
   piso?: number | null;
 }) =>
-  chamar<{ ok: boolean; atual: ResultadoApuracao; simulado: ResultadoApuracao }>(
-    "comissoesSimular",
-    i,
-  );
+  chamar<{
+    ok: boolean;
+    atual: ResultadoApuracao;
+    simulado: ResultadoApuracao;
+    escopo: EscopoVenda;
+  }>("comissoesSimular", i);
 
 export const listarAuditoria = (limite = 200) =>
   chamar<{ ok: boolean; logs: LogAuditoria[] }>("comissoesAuditoria", { limite });

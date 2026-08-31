@@ -28,6 +28,7 @@ import {
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./grupos";
 import type {
   Ajuste,
+  EscopoVenda,
   Bonus,
   Cargo,
   EntradaApuracao,
@@ -688,56 +689,57 @@ export async function alterarStatusFechamento(
   );
 }
 
-/** Simulação "e se…" — não toca em nada gravado (§20). */
+/**
+ * Simulação "e se…" — não toca em nada gravado (§20).
+ *
+ * `venda` e `meta` valem para o escopo pelo qual a pessoa é medida: venda
+ * própria para o vendedor, venda da loja para o gerente, venda do grupo para o
+ * supervisor. Mexer sempre no individual não servia para ninguém que comissiona
+ * por loja — o número simulado saía igual ao de hoje.
+ *
+ * `undefined` aqui significa "não mexi neste campo". Atenção: o SDK do
+ * Firebase converte `undefined` em `null` no caminho até aqui, então null
+ * também conta como "não mexi" — senão simular sem tocar no piso zerava o piso
+ * da pessoa.
+ */
 export async function simular(
   competencia: string,
   funcionarioId: string,
   overrides: {
-    vendaIndividual?: number;
-    vendaLoja?: number;
-    metaIndividual?: number | null;
-    metaLoja?: number | null;
+    venda?: number | null;
+    meta?: number | null;
     piso?: number | null;
-    regraId?: string | null;
   },
-): Promise<{ atual: ResultadoApuracao; simulado: ResultadoApuracao }> {
+): Promise<{
+  atual: ResultadoApuracao;
+  simulado: ResultadoApuracao;
+  escopo: EscopoVenda;
+}> {
   const ctx = await montarContexto(competencia);
   const bruto = ctx.funcionarios.find((x) => x.id === funcionarioId);
   if (!bruto) throw new Error("Funcionário não encontrado.");
 
   // Mesma montagem da apuração: o cenário "hoje" é, por construção, idêntico
-  // ao que a tela de acompanhamento mostra — regra, meta de grupo, piso do
-  // cargo e agrupamento de filiais inclusos.
+  // ao que a tela de acompanhamento mostra.
   const { f, entrada: entradaBase } = montarEntrada(bruto, ctx);
+  const atual = apurar(entradaBase);
+  const escopo = atual.escopoMeta;
+
+  const vendas = { ...entradaBase.vendas };
+  if (overrides.venda != null) {
+    vendas[escopo] = { liquida: overrides.venda, bruta: overrides.venda };
+  }
+  const metas = { ...entradaBase.metas };
+  if (overrides.meta != null) metas[escopo] = overrides.meta;
 
   const simulada: EntradaApuracao = {
     ...entradaBase,
-    funcionario: overrides.piso !== undefined ? { ...f, pisoGarantido: overrides.piso } : f,
-    vendas: {
-      individual:
-        overrides.vendaIndividual != null
-          ? { liquida: overrides.vendaIndividual, bruta: overrides.vendaIndividual }
-          : entradaBase.vendas.individual,
-      loja:
-        overrides.vendaLoja != null
-          ? { liquida: overrides.vendaLoja, bruta: overrides.vendaLoja }
-          : entradaBase.vendas.loja,
-      grupo: entradaBase.vendas.grupo,
-    },
-    metas: {
-      individual:
-        overrides.metaIndividual !== undefined
-          ? overrides.metaIndividual
-          : entradaBase.metas.individual,
-      loja: overrides.metaLoja !== undefined ? overrides.metaLoja : entradaBase.metas.loja,
-      grupo: entradaBase.metas.grupo,
-    },
-    regra: overrides.regraId
-      ? (ctx.regras.find((r) => r.id === overrides.regraId) ?? entradaBase.regra)
-      : entradaBase.regra,
+    funcionario: overrides.piso != null ? { ...f, pisoGarantido: overrides.piso } : f,
+    vendas,
+    metas,
   };
 
-  return { atual: apurar(entradaBase), simulado: apurar(simulada) };
+  return { atual, simulado: apurar(simulada), escopo };
 }
 
 /**
