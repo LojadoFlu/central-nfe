@@ -165,7 +165,11 @@ export function Acompanhamento({
         <StatCard
           label="Piso garantido usado"
           value={formatBRL(t.pisoUtilizado)}
-          hint="Quanto a empresa paga além do que a comissão gerou"
+          hint={
+            t.pisoSemComissao > 0
+              ? `Além do que a comissão gerou · fora ${formatBRL(t.pisoSemComissao)} de quem não comissiona`
+              : "Quanto a empresa paga além do que a comissão gerou"
+          }
         />
         <StatCard
           label="Folha projetada"

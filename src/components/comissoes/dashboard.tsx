@@ -202,7 +202,11 @@ export function Dashboard({
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Piso garantido dentro deste total: {formatBRL(t.pisoUtilizado)} · bônus {formatBRL(t.bonus)}
+              Piso garantido dentro deste total: {formatBRL(t.pisoUtilizado)} · bônus{" "}
+              {formatBRL(t.bonus)}
+              {t.pisoSemComissao > 0
+                ? ` · piso de quem não comissiona ${formatBRL(t.pisoSemComissao)}`
+                : ""}
             </p>
           </CardContent>
         </Card>

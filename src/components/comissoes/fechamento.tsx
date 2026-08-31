@@ -206,6 +206,11 @@ export function Fechamento({
             <div>
               <p className="text-muted-foreground">Piso garantido</p>
               <p className="font-semibold tnum">{formatBRL(t.pisoUtilizado)}</p>
+              {t.pisoSemComissao > 0 ? (
+                <p className="text-[10px] text-muted-foreground tnum">
+                  + {formatBRL(t.pisoSemComissao)} sem comissão
+                </p>
+              ) : null}
             </div>
             <div>
               <p className="text-muted-foreground">Folha variável</p>

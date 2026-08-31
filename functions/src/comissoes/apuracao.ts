@@ -117,6 +117,8 @@ export interface LinhaApuracao extends ResultadoApuracao {
   funcionarioNome: string;
   cargoId: string | null;
   cargoNome: string | null;
+  /** Cargo que não comissiona: recebe só o piso. */
+  semComissao?: boolean;
   lojaId: number | null;
   lojaNome: string | null;
   empresaId: string | null;
@@ -146,6 +148,8 @@ export interface ResultadoCompetencia {
     comissaoTotal: number;
     valorDevido: number;
     pisoUtilizado: number;
+    /** Piso de quem não comissiona (caixa): salário, não complemento. */
+    pisoSemComissao: number;
     acimaDaMeta: number;
     funcionarios: number;
   };
@@ -252,6 +256,8 @@ interface ContextoCalculo {
   /** Melhor vendedor de cada loja, por PESSOA (somando os códigos dela). */
   melhorFuncionarioPorLoja: Map<number, string>;
   cargosComMetaIndividual: Set<string>;
+  /** Cargos que não comissionam: o piso deles é salário, não piso garantido. */
+  cargosSemComissao: Set<string>;
 }
 
 /**
@@ -288,6 +294,10 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
   const nomeVendedor = new Map<string, string | null>();
   for (const d of sellersSnap.docs) nomeVendedor.set(d.id, (d.data().nome as string) ?? null);
 
+  // Nasce comissionando: só sai da comissão o cargo marcado na tela.
+  const cargosSemComissao = new Set(
+    cargos.filter((c) => c.recebeComissao === false).map((c) => c.id),
+  );
   const cargosComMetaIndividual = new Set(
     cargos.filter((c) => c.recebeMetaIndividual === true).map((c) => c.id),
   );
@@ -334,6 +344,7 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     nomeVendedor,
     melhorFuncionarioPorLoja,
     cargosComMetaIndividual,
+    cargosSemComissao,
   };
 }
 
@@ -347,6 +358,8 @@ interface EntradaMontada {
   metaGrupo: number | null;
   lojasGrupo: number[];
   lojasSemMeta: number[];
+  /** Cargo marcado como "não comissiona" — recebe só o piso. */
+  semComissao: boolean;
 }
 
 /**
@@ -401,7 +414,10 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
       ? lojasGrupo.reduce((a, l) => a + (metaDaLoja(ctx, l) ?? 0), 0)
       : null;
 
-  const regra = escolherRegra(ctx.regras, f, competencia);
+  // Caixa e afins: não comissionam, então nenhuma regra os alcança — o que
+  // recebem é o piso do cargo, salário puro.
+  const semComissao = !!f.cargoId && ctx.cargosSemComissao.has(f.cargoId);
+  const regra = semComissao ? null : escolherRegra(ctx.regras, f, competencia);
   const entrada: EntradaApuracao = {
     competencia,
     funcionario: f,
@@ -412,7 +428,7 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
     },
     metas: { individual: metaIndividual, loja: metaLoja, grupo: metaGrupo },
     regra,
-    bonus: bonusAplicaveis(ctx.bonus, f, competencia),
+    bonus: semComissao ? [] : bonusAplicaveis(ctx.bonus, f, competencia),
     ajustes: ctx.ajustesDaComp.filter((a) => a.funcionarioId === f.id),
     extras: {
       // Melhor vendedor é por PESSOA, não por código: quem tem dois códigos na
@@ -422,7 +438,18 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
     },
     regraPiso: ctx.cfg.regraPiso,
   };
-  return { f, entrada, regra, piso, metaIndividual, metaLoja, metaGrupo, lojasGrupo, lojasSemMeta };
+  return {
+    f,
+    entrada,
+    regra,
+    piso,
+    metaIndividual,
+    metaLoja,
+    metaGrupo,
+    lojasGrupo,
+    lojasSemMeta,
+    semComissao,
+  };
 }
 
 /** Cálculo ao vivo (não grava nada). */
@@ -461,8 +488,18 @@ export async function calcularCompetencia(
       if (total > 0) inativosComVenda.push({ nome: bruto.nome, total });
       continue;
     }
-    const { f, entrada, regra, piso, metaIndividual, metaLoja, metaGrupo, lojasGrupo, lojasSemMeta } =
-      montarEntrada(bruto, ctx);
+    const {
+      f,
+      entrada,
+      regra,
+      piso,
+      metaIndividual,
+      metaLoja,
+      metaGrupo,
+      lojasGrupo,
+      lojasSemMeta,
+      semComissao,
+    } = montarEntrada(bruto, ctx);
     if (lojasSemMeta.length > 0 && (bruto.lojasGrupo ?? []).length > 0) {
       semMetaGrupo.push(
         `${bruto.nome}: falta a meta de ${lojasSemMeta.map((l) => nomeLoja.get(l) ?? l).join(", ")}`,
@@ -475,9 +512,11 @@ export async function calcularCompetencia(
     // Quem responde por um grupo de lojas (supervisor) não precisa estar
     // lotado em nenhuma delas — só cobra quem ficou sem loja E sem grupo.
     if (f.lojaId == null && lojasGrupo.length === 0) semLoja.push(f.nome);
-    if (!regra) semRegra.push(f.nome);
+    if (!regra && !semComissao) semRegra.push(f.nome);
     if (piso.valor == null) semPiso.push(f.nome);
-    if (metaIndividual == null && metaLoja == null && metaGrupo == null) semMeta.push(f.nome);
+    if (!semComissao && metaIndividual == null && metaLoja == null && metaGrupo == null) {
+      semMeta.push(f.nome);
+    }
     if (f.lojaId != null) {
       comissaoPorLoja.set(f.lojaId, (comissaoPorLoja.get(f.lojaId) ?? 0) + res.valorDevido);
     }
@@ -498,6 +537,7 @@ export async function calcularCompetencia(
       funcionarioNome: f.nome,
       cargoId: f.cargoId,
       cargoNome: f.cargoId ? (nomeCargo.get(f.cargoId) ?? null) : null,
+      semComissao,
       lojaId: f.lojaId,
       lojaNome: f.lojaId != null ? (nomeLoja.get(f.lojaId) ?? null) : null,
       empresaId,
@@ -539,8 +579,16 @@ export async function calcularCompetencia(
       ajustes: cent(linhas.reduce((s, l) => s + l.ajustesTotal, 0)),
       comissaoTotal: cent(linhas.reduce((s, l) => s + l.comissaoTotal, 0)),
       valorDevido,
+      // Piso garantido é o que a empresa paga ALÉM do que a comissão gerou —
+      // conta só de quem comissiona. O piso da caixa não é complemento de
+      // comissão nenhuma: é o salário dela, e sai contado à parte.
       pisoUtilizado: cent(
-        linhas.filter((l) => l.pisoAplicado).reduce((s, l) => s + (l.piso - l.comissaoTotal), 0),
+        linhas
+          .filter((l) => l.pisoAplicado && !l.semComissao)
+          .reduce((s, l) => s + (l.piso - l.comissaoTotal), 0),
+      ),
+      pisoSemComissao: cent(
+        linhas.filter((l) => l.semComissao).reduce((s, l) => s + l.valorDevido, 0),
       ),
       acimaDaMeta: linhas.filter((l) => (l.atingimentoPct ?? 0) >= 100).length,
       funcionarios: linhas.length,
@@ -643,6 +691,7 @@ async function lerFechamentoCongelado(
         comissaoTotal: 0,
         valorDevido: 0,
         pisoUtilizado: 0,
+        pisoSemComissao: 0,
         acimaDaMeta: 0,
         funcionarios: linhas.length,
       },

@@ -137,6 +137,12 @@ export interface Cargo {
    * loja ou pelo grupo, e dividir com eles reduziria a meta de quem vende.
    */
   recebeMetaIndividual?: boolean;
+  /**
+   * Comissiona? Caixa e afins recebem só o piso do cargo — nenhuma regra e
+   * nenhum bônus os alcança, e o piso deles é salário, não piso garantido.
+   * Ausente = sim (o padrão é comissionar).
+   */
+  recebeComissao?: boolean;
   ativo: boolean;
 }
 

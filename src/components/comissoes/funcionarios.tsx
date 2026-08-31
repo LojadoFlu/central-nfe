@@ -312,7 +312,9 @@ export function Funcionarios({
               O piso é definido aqui, por cargo — vale para todo mundo do cargo. Só quem tiver
               acordo diferente precisa de piso próprio na ficha. Marque{" "}
               <strong>meta individual</strong> nos cargos que dividem a meta da loja entre si
-              (vendedor, subgerente); gerente e supervisor são medidos pela loja ou pelo grupo.
+              (vendedor, subgerente); gerente e supervisor são medidos pela loja ou pelo grupo. Desmarque{" "}
+              <strong>comissiona</strong> no cargo que só recebe o piso (caixa): ele continua na
+              folha, mas fora da comissão e fora do piso garantido usado.
             </p>
             <div className="divide-y divide-border">
               {cargos.map((c) => {
@@ -351,12 +353,39 @@ export function Funcionarios({
                                     ordem: c.ordem,
                                     pisoGarantido: c.pisoGarantido ?? null,
                                     recebeMetaIndividual: e.target.checked,
+                                    recebeComissao: c.recebeComissao !== false,
                                   }),
                                 "Cargo salvo.",
                               )
                             }
                           />
                           meta individual
+                        </label>
+                        {/* Caixa recebe o piso do cargo e nada mais: nenhuma
+                            regra nem bônus a alcança, e esse piso é salário —
+                            não entra no "piso garantido usado". */}
+                        <label className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            className="size-3.5"
+                            checked={c.recebeComissao !== false}
+                            disabled={ocupado}
+                            onChange={(e) =>
+                              executar(
+                                () =>
+                                  salvarCargo({
+                                    id: c.id,
+                                    nome: c.nome,
+                                    ordem: c.ordem,
+                                    pisoGarantido: c.pisoGarantido ?? null,
+                                    recebeMetaIndividual: c.recebeMetaIndividual === true,
+                                    recebeComissao: e.target.checked,
+                                  }),
+                                "Cargo salvo.",
+                              )
+                            }
+                          />
+                          comissiona
                         </label>
                         <Button
                           size="sm"
@@ -371,6 +400,7 @@ export function Funcionarios({
                                   ordem: c.ordem,
                                   pisoGarantido: piso,
                                   recebeMetaIndividual: c.recebeMetaIndividual === true,
+                                  recebeComissao: c.recebeComissao !== false,
                                 }),
                               "Cargo salvo.",
                             )

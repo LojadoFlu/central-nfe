@@ -93,6 +93,12 @@ export interface Cargo {
   pisoGarantido?: number | null;
   /** A meta da loja é dividida entre as pessoas dos cargos marcados. */
   recebeMetaIndividual?: boolean;
+  /**
+   * Comissiona? Caixa e afins recebem só o piso do cargo — nenhuma regra e
+   * nenhum bônus os alcança, e o piso deles é salário, não piso garantido.
+   * Ausente = sim (o padrão é comissionar).
+   */
+  recebeComissao?: boolean;
   ativo: boolean;
 }
 
@@ -193,6 +199,8 @@ export interface LinhaApuracao {
   competencia: Competencia;
   cargoId: string | null;
   cargoNome: string | null;
+  /** Cargo que não comissiona: recebe só o piso. */
+  semComissao?: boolean;
   lojaId: number | null;
   lojaNome: string | null;
   empresaId: string | null;
@@ -234,6 +242,8 @@ export interface ResultadoCompetencia {
     comissaoTotal: number;
     valorDevido: number;
     pisoUtilizado: number;
+    /** Piso de quem não comissiona (caixa): salário, não complemento. */
+    pisoSemComissao: number;
     acimaDaMeta: number;
     funcionarios: number;
   };

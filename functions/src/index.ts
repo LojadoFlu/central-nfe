@@ -3970,6 +3970,8 @@ export const comissoesSalvarCargo = onCall(opcoes, async (req) => {
       ordem: num(req.data?.ordem, 99),
       pisoGarantido,
       recebeMetaIndividual: req.data?.recebeMetaIndividual === true,
+      // Ausente = comissiona: o padrão é o cargo participar da comissão.
+      recebeComissao: req.data?.recebeComissao !== false,
       ativo: req.data?.ativo !== false,
       atualizadoEm: agoraISO(),
     },
