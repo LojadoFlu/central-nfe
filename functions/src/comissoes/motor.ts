@@ -377,7 +377,9 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
   // quem não vende no PDV, pela loja. Sem isso, um supervisor recém-cadastrado
   // aparecia medido por uma venda própria que ele nem faz.
   const escopos = new Set((e.regra?.componentes ?? []).map((c) => c.escopoVenda));
-  const supervisiona = (e.funcionario.lojasGrupo ?? []).length > 1;
+  // Uma loja marcada já basta: supervisor de uma loja só é medido por ela,
+  // não pela venda que ele mesmo faz no balcão.
+  const supervisiona = (e.funcionario.lojasGrupo ?? []).length >= 1;
   const escopoPrincipal: EscopoVenda = escopos.has("grupo")
     ? "grupo"
     : escopos.has("loja")

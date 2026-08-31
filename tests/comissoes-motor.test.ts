@@ -999,6 +999,25 @@ describe("sem regra cadastrada, o escopo segue o formato da pessoa", () => {
     grupo: { liquida: 800_000, bruta: 800_000 },
   };
 
+  it("supervisor de UMA loja só também é medido por ela", () => {
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, cargoId: "supervisor", lojasGrupo: [582], pisoGarantido: 2396.99 },
+        regra: null,
+        metas: { individual: 80_000, loja: 400_000, grupo: 400_000 },
+        vendas: {
+          individual: { liquida: 500, bruta: 500 },
+          loja: { liquida: 300_000, bruta: 300_000 },
+          grupo: { liquida: 300_000, bruta: 300_000 },
+        },
+      }),
+    );
+    expect(r.escopoMeta).toBe("grupo");
+    expect(r.vendaConsiderada).toBe(300_000);
+    expect(r.metaConsiderada).toBe(400_000);
+    expect(r.atingimentoPct).toBe(75);
+  });
+
   it("supervisor com lojas marcadas é medido pelo grupo, não pela venda própria", () => {
     const r = apurar(
       entrada({

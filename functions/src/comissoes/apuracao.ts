@@ -387,7 +387,7 @@ export async function calcularCompetencia(
     }
     const { f, entrada, regra, piso, metaIndividual, metaLoja, metaGrupo, lojasGrupo, lojasSemMeta } =
       montarEntrada(bruto, ctx);
-    if (lojasGrupo.length > 1 && lojasSemMeta.length > 0) {
+    if (lojasSemMeta.length > 0 && (bruto.lojasGrupo ?? []).length > 0) {
       semMetaGrupo.push(
         `${bruto.nome}: falta a meta de ${lojasSemMeta.map((l) => nomeLoja.get(l) ?? l).join(", ")}`,
       );
