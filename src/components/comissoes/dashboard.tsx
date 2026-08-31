@@ -12,12 +12,17 @@ import type { CustoMes, ResultadoCompetencia } from "@/lib/comissoes/tipos";
 import { custoComissoes } from "@/lib/comissoes/repo";
 import { BarraMeta, Select, mesLabel, pctFmt } from "./comum";
 
-type Criterio = "valorDevido" | "vendaConsiderada" | "atingimentoPct";
+type Criterio = "valorDevido" | "comissaoTotal" | "vendaConsiderada" | "atingimentoPct";
 
+// "Valor pago" e "comissão" não são a mesma coisa: quando a comissão fica
+// abaixo do piso, paga-se o piso. O rótulo dizia "comissão" e ordenava pelo
+// valor pago — dois nomes para números que divergem justamente em quem está
+// no piso.
 const CRITERIOS: { valor: Criterio; label: string }[] = [
+  { valor: "valorDevido", label: "Valor pago" },
+  { valor: "comissaoTotal", label: "Comissão calculada" },
   { valor: "vendaConsiderada", label: "Venda" },
   { valor: "atingimentoPct", label: "Atingimento da meta" },
-  { valor: "valorDevido", label: "Comissão" },
 ];
 
 /** 12 competências terminando na atual. */
@@ -124,10 +129,11 @@ export function Dashboard({
                 value={criterio}
                 onChange={(e) => setCriterio(e.target.value as Criterio)}
                 className="h-9 w-auto"
+                aria-label="Ordenar por"
               >
                 {CRITERIOS.map((c) => (
                   <option key={c.valor} value={c.valor}>
-                    Por {c.label.toLowerCase()}
+                    Ordenar por {c.label.toLowerCase()}
                   </option>
                 ))}
               </Select>
@@ -152,7 +158,13 @@ export function Dashboard({
                   <BarraMeta pct={l.atingimentoPct} />
                 </div>
                 <div className="shrink-0 text-right">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Valor pago
+                  </p>
                   <p className="font-semibold tnum">{formatBRL(l.valorDevido)}</p>
+                  {l.pisoAplicado ? (
+                    <p className="text-[10px] text-warning">no piso</p>
+                  ) : null}
                   {l.valorDevidoProjetado != null && l.valorDevidoProjetado !== l.valorDevido ? (
                     <p className="text-[11px] text-muted-foreground tnum">
                       projeção {formatBRL(l.valorDevidoProjetado)}
