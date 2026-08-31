@@ -24,15 +24,12 @@ import {
   escolherMeta,
   escolherMetaLoja,
   escolherRegra,
-  metaDistribuidaPorSemana,
   pisoEfetivo,
-  semanasDaMetaDaLoja,
 } from "./motor";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./grupos";
 import type {
   Ajuste,
   EscopoVenda,
-  Participacao,
   Bonus,
   Cargo,
   EntradaApuracao,
@@ -250,10 +247,6 @@ interface ContextoCalculo {
   nomeCargo: Map<string, string>;
   pisoPorCargo: Map<string, number | null>;
   nomeVendedor: Map<string, string | null>;
-  /** Por loja: quantos dividem a meta em CADA semana (férias mudam isso). */
-  participantesPorLojaSemana: Map<number, number[]>;
-  /** Por funcionário: em quais semanas ele entra na meta. */
-  participacaoPorFuncionario: Map<string, boolean[]>;
   /** Melhor vendedor de cada loja, por PESSOA (somando os códigos dela). */
   melhorFuncionarioPorLoja: Map<number, string>;
   /** Meta da loja = SOMA das metas dos vendedores dela (definição do Rodrigo). */
@@ -272,7 +265,7 @@ function recebeMetaIndividual(f: Funcionario, cargosComMeta: Set<string>): boole
 }
 
 async function montarContexto(competencia: string): Promise<ContextoCalculo> {
-  const [cfg, funcionarios, cargos, regras, metas, bonus, ajustes, participacoes, vendas, lojasSnap, sellersSnap] =
+  const [cfg, funcionarios, cargos, regras, metas, bonus, ajustes, vendas, lojasSnap, sellersSnap] =
     await Promise.all([
       carregarConfig(),
       lerColecao<Funcionario>("com_funcionarios"),
@@ -281,7 +274,6 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
       lerColecao<Meta>("com_metas"),
       lerColecao<Bonus>("com_bonus"),
       lerColecao<Ajuste>("com_ajustes"),
-      lerColecao<Participacao>("com_participacoes"),
       lerVendas(competencia),
       db.collection("pdv_stores").get(),
       db.collection("pdv_sellers").get(),
@@ -299,25 +291,6 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
   const cargosComMetaIndividual = new Set(
     cargos.filter((c) => c.recebeMetaIndividual === true).map((c) => c.id),
   );
-  // Sem documento de participação, a pessoa entra em todas as semanas.
-  const participacaoPorFuncionario = new Map<string, boolean[]>();
-  for (const p of participacoes) {
-    if (p.competencia !== competencia) continue;
-    participacaoPorFuncionario.set(
-      p.funcionarioId,
-      [0, 1, 2, 3, 4, 5].map((i) => p.semanas?.[i] !== false),
-    );
-  }
-  const participantesPorLojaSemana = new Map<number, number[]>();
-  for (const f of funcionarios) {
-    if (!recebeMetaIndividual(f, cargosComMetaIndividual)) continue;
-    const loja = canonizar(grupos, f.lojaId);
-    if (loja == null) continue;
-    const semanas = participacaoPorFuncionario.get(f.id) ?? [true, true, true, true, true, true];
-    const atual = participantesPorLojaSemana.get(loja) ?? [0, 0, 0, 0, 0, 0];
-    for (let i = 0; i < 6; i++) if (semanas[i]) atual[i] += 1;
-    participantesPorLojaSemana.set(loja, atual);
-  }
 
   const consolidado = consolidar(
     vendas.map((v) => ({ ...v, lojaId: canonizar(grupos, v.lojaId) })),
@@ -377,8 +350,6 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     // Piso mora no CARGO; o campo do funcionário é exceção (§5, §10).
     pisoPorCargo: new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null])),
     nomeVendedor,
-    participantesPorLojaSemana,
-    participacaoPorFuncionario,
     melhorFuncionarioPorLoja,
     metaDaLojaSomada,
     cargosComMetaIndividual,
@@ -432,19 +403,15 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
   const metaLoja = metaDaLoja(ctx, f.lojaId);
   // Meta do vendedor: a própria, se houver acordo individual; senão, a meta da
   // loja dividida igualmente entre os vendedores dela.
-  const metaPropria = escolherMeta(metasDaComp, f, competencia);
-  const metaIndividual =
-    metaPropria ??
-    (recebeMetaIndividual(f, ctx.cargosComMetaIndividual) && f.lojaId != null
-      ? metaDistribuidaPorSemana(
-          semanasDaMetaDaLoja(metasDaComp, f.lojaId, competencia) ?? [],
-          ctx.participacaoPorFuncionario.get(f.id) ?? [true, true, true, true, true, true],
-          ctx.participantesPorLojaSemana.get(f.lojaId) ?? [0, 0, 0, 0, 0, 0],
-        )
-      : null);
-  // Meta do supervisor = soma das metas das lojas que ele supervisiona.
-  // Se faltar a meta de alguma, a soma seria menor que a real e inflaria o
-  // atingimento — então fica sem meta e a loja que falta é apontada.
+  // Meta da pessoa: a que foi cadastrada ou importada para ela. Sem isso, ela
+  // fica SEM meta — e aparece nas pendências. A divisão automática da meta da
+  // loja saiu: a decisão de quanto cada um vende é tomada na operação e chega
+  // pelo arquivo, com quem entrou e quem ficou de fora de cada semana.
+  const metaIndividual = escolherMeta(metasDaComp, f, competencia);
+
+  // Meta do supervisor = soma das metas das lojas que ele acompanha. Faltando
+  // a de alguma, fica sem meta: somar parcial daria alvo menor e atingimento
+  // inflado.
   const lojasSemMeta = lojasGrupo.filter((l) => metaDaLoja(ctx, l) == null);
   const metaGrupo =
     lojasGrupo.length > 0 && lojasSemMeta.length === 0

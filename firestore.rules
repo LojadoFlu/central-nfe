@@ -275,10 +275,6 @@ service cloud.firestore {
       allow read: if podeComissoes();
       allow write: if false;
     }
-    match /com_participacoes/{id} {
-      allow read: if podeComissoes();
-      allow write: if false;
-    }
     match /com_estornos/{id} {
       allow read: if podeComissoes();
       allow write: if false;

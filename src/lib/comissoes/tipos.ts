@@ -129,14 +129,6 @@ export interface Meta {
   semanas?: (number | null)[] | null;
 }
 
-/** Em quais semanas a pessoa entra na meta da loja (férias, afastamento). */
-export interface Participacao {
-  id: string;
-  competencia: Competencia;
-  funcionarioId: string;
-  semanas: boolean[];
-}
-
 export interface VendedorPdv {
   id: string;
   nome: string | null;

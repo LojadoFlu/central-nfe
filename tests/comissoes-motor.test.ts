@@ -8,9 +8,6 @@ import {
   escolherMeta,
   escolherMetaLoja,
   escolherRegra,
-  metaDistribuidaPorSemana,
-  metaPorVendedor,
-  semanasDaMetaDaLoja,
   pisoEfetivo,
   vigente,
 } from "../functions/src/comissoes/motor";
@@ -1077,48 +1074,6 @@ describe("sem regra cadastrada, o escopo segue o formato da pessoa", () => {
   });
 });
 
-describe("meta da loja dividida entre os vendedores", () => {
-  it("divide igualmente", () => {
-    expect(metaPorVendedor(400_000, 5)).toBe(80_000);
-    expect(metaPorVendedor(100_000, 3)).toBe(33_333.33);
-  });
-
-  it("loja sem meta continua sem meta", () => {
-    expect(metaPorVendedor(null, 5)).toBeNull();
-  });
-
-  it("loja sem vendedor não divide por zero", () => {
-    expect(metaPorVendedor(400_000, 0)).toBeNull();
-    expect(metaPorVendedor(400_000, -1)).toBeNull();
-  });
-
-  it("a meta distribuída faz o vendedor atingir a faixa certa", () => {
-    const regra = regraSimples(0);
-    regra.componentes[0].baseFaixa = "percentualMeta";
-    regra.componentes[0].faixas = [
-      { de: 0, percentual: 1 },
-      { de: 100, percentual: 2, rotulo: "Meta" },
-    ];
-    // Loja com meta de 400.000 e 5 vendedores → 80.000 para cada.
-    const meta = metaPorVendedor(400_000, 5);
-    const r = apurar(
-      entrada({
-        funcionario: { ...JOAO, pisoGarantido: 0 },
-        regra,
-        metas: { individual: meta, loja: 400_000, grupo: null },
-        vendas: {
-          individual: { liquida: 90_000, bruta: 90_000 },
-          loja: { liquida: 500_000, bruta: 500_000 },
-          grupo: { liquida: 0, bruta: 0 },
-        },
-      }),
-    );
-    expect(meta).toBe(80_000);
-    expect(r.atingimentoPct).toBe(112.5);
-    expect(r.comissaoBase).toBe(1800); // 90.000 × 2%
-  });
-});
-
 describe("meta da loja não vira meta individual de cada um", () => {
   const META_LOJA: Meta = { id: "m-loja", competencia: "2026-08", lojaId: 582, valor: 10_000 };
 
@@ -1127,10 +1082,6 @@ describe("meta da loja não vira meta individual de cada um", () => {
     // vendedor levava os 10.000 inteiros.
     expect(escolherMeta([META_LOJA], JOAO, "2026-08")).toBeNull();
     expect(escolherMetaLoja([META_LOJA], 582, "2026-08")).toBe(10_000);
-  });
-
-  it("10.000 entre 5 pessoas dá 2.000 para cada", () => {
-    expect(metaPorVendedor(escolherMetaLoja([META_LOJA], 582, "2026-08"), 5)).toBe(2000);
   });
 
   it("meta cadastrada para a pessoa continua vencendo", () => {
@@ -1168,54 +1119,6 @@ describe("meta da loja não vira meta individual de cada um", () => {
     expect(r.escopoMeta).toBe("loja");
     expect(r.metaConsiderada).toBe(10_000);
     expect(r.atingimentoPct).toBe(120);
-  });
-});
-
-describe("férias: quem não trabalha a semana não divide a meta dela", () => {
-  // Loja com meta de 2.000 por semana em 5 semanas = 10.000 no mês.
-  const SEMANAS_LOJA = [2000, 2000, 2000, 2000, 2000, null];
-  const TODAS = [true, true, true, true, true, true];
-
-  it("com 5 pessoas o mês inteiro, cada uma leva 2.000", () => {
-    const r = metaDistribuidaPorSemana(SEMANAS_LOJA, TODAS, [5, 5, 5, 5, 5, 0]);
-    expect(r).toBe(2000);
-  });
-
-  it("quem tira férias na semana 3 perde só aquela semana", () => {
-    const deFerias = [true, true, false, true, true, true];
-    // Nas semanas 1,2,4,5 são 5 pessoas; na 3, só 4 (ele saiu da conta).
-    const r = metaDistribuidaPorSemana(SEMANAS_LOJA, deFerias, [5, 5, 4, 5, 5, 0]);
-    expect(r).toBe(1600); // 4 semanas × 400
-  });
-
-  it("e quem ficou divide entre menos gente, então recebe mais", () => {
-    const r = metaDistribuidaPorSemana(SEMANAS_LOJA, TODAS, [5, 5, 4, 5, 5, 0]);
-    expect(r).toBe(2100); // 4×400 + 1×500
-  });
-
-  it("a meta da loja continua inteira: a soma das fatias fecha", () => {
-    const comFerias = metaDistribuidaPorSemana(SEMANAS_LOJA, [true, true, false, true, true, true], [5, 5, 4, 5, 5, 0]);
-    const semFerias = metaDistribuidaPorSemana(SEMANAS_LOJA, TODAS, [5, 5, 4, 5, 5, 0]);
-    expect(comFerias! + semFerias! * 4).toBe(10_000);
-  });
-
-  it("mês inteiro de férias: sem meta", () => {
-    const r = metaDistribuidaPorSemana(SEMANAS_LOJA, [false, false, false, false, false, false], [4, 4, 4, 4, 4, 0]);
-    expect(r).toBe(0);
-  });
-
-  it("loja sem meta nenhuma continua sem meta", () => {
-    expect(metaDistribuidaPorSemana([null, null, null, null, null, null], TODAS, [5, 5, 5, 5, 5, 5])).toBeNull();
-  });
-
-  it("meta antiga (só o total do mês) cai na semana 1 e divide igual", () => {
-    const semanas = semanasDaMetaDaLoja(
-      [{ id: "m", competencia: "2026-08", lojaId: 582, valor: 10_000 }],
-      582,
-      "2026-08",
-    );
-    expect(semanas).toEqual([10_000, null, null, null, null, null]);
-    expect(metaDistribuidaPorSemana(semanas!, TODAS, [5, 0, 0, 0, 0, 0])).toBe(2000);
   });
 });
 
