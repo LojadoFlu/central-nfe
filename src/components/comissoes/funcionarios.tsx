@@ -124,7 +124,15 @@ export function Funcionarios({
       {podeGerir ? (
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => setEdicao({ ...VAZIO })} disabled={ocupado}>
-            <Plus /> Novo funcionário
+            <Plus /> Novo vendedor (com código do PDV)
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setEdicao({ ...VAZIO, semPdv: true })}
+            disabled={ocupado}
+          >
+            <UserPlus /> Novo funcionário fora do PDV
           </Button>
           <Button
             size="sm"
@@ -409,8 +417,19 @@ export function Funcionarios({
         <Card className="border-primary/40">
           <CardContent className="space-y-3 py-4">
             <h2 className="text-[0.95rem] font-semibold tracking-tight">
-              {edicao.id ? `Editando ${edicao.nome}` : "Novo funcionário"}
+              {edicao.id
+                ? `Editando ${edicao.nome}`
+                : edicao.semPdv
+                  ? "Novo funcionário fora do PDV"
+                  : "Novo funcionário"}
             </h2>
+            {edicao.semPdv ? (
+              <p className="rounded-md bg-muted/50 p-2.5 text-xs text-muted-foreground">
+                Sem código de vendedor: esta pessoa não tem venda própria. A comissão dela sai da
+                regra do <strong>cargo</strong>, sobre a venda das <strong>lojas</strong> marcadas
+                abaixo. A sincronização com o PDV não mexe neste cadastro.
+              </p>
+            ) : null}
             <div className="grid gap-3 sm:grid-cols-2">
               <Campo label="Nome">
                 <Input value={edicao.nome} onChange={(e) => setEdicao({ ...edicao, nome: e.target.value })} />
@@ -531,8 +550,8 @@ export function Funcionarios({
             </div>
 
             <Campo
-              label="Lojas que supervisiona"
-              hint="Para supervisor: a meta dele é a SOMA das metas destas lojas, e a comissão incide sobre a venda somada. Vazio = só a loja dele."
+              label="Lojas deste funcionário"
+              hint="Marque as lojas pelas quais ele responde — gerente de duas lojas, supervisor, ou quem não vende no PDV. A meta dele vira a SOMA das metas destas lojas e a comissão incide sobre a venda somada. Vazio = só a loja principal acima."
             >
               <div className="flex flex-wrap gap-1.5">
                 {lojas.map((l) => {
