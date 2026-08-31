@@ -101,6 +101,8 @@ export interface Funcionario {
   cargoId: string | null;
   lojaId: number | null;
   pdvVendedorId?: string | null;
+  /** Não vende no PDV: comissiona pela loja/grupo, e a sync não mexe nele. */
+  semPdv?: boolean;
   lojasGrupo?: number[];
   /** Piso individual — EXCEÇÃO. Vazio (null) = herda o piso do cargo. */
   pisoGarantido?: number | null;

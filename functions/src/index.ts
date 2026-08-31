@@ -3988,7 +3988,9 @@ export const comissoesSalvarFuncionario = onCall(opcoes, async (req) => {
   const nome = texto(req.data?.nome, 120);
   if (!nome) throw new HttpsError("invalid-argument", "Informe o nome do funcionário.");
   const id = novoId("com_funcionarios", req.data?.id);
-  const pdvVendedorId = texto(req.data?.pdvVendedorId, 40) || null;
+  // Quem não vende no PDV não tem (nem pode ter) código de vendedor.
+  const semPdv = req.data?.semPdv === true;
+  const pdvVendedorId = semPdv ? null : texto(req.data?.pdvVendedorId, 40) || null;
 
   // Um código do PDV não pode estar em dois funcionários (§41 — sem venda dupla).
   if (pdvVendedorId) {
@@ -4015,6 +4017,7 @@ export const comissoesSalvarFuncionario = onCall(opcoes, async (req) => {
     cargoId: texto(req.data?.cargoId, 80) || null,
     lojaId: canonizar(grupos, numOuNulo(req.data?.lojaId)),
     pdvVendedorId,
+    semPdv,
     lojasGrupo: canonizarLista(
       grupos,
       Array.isArray(req.data?.lojasGrupo)
@@ -4574,3 +4577,75 @@ export const comissoesCusto = onCall(opcoes, async (req) => {
     .sort((a, b) => a.competencia.localeCompare(b.competencia));
   return { ok: true, meses };
 });
+
+/**
+ * Procura um vendedor nas equipes do PDV, por nome. Serve para achar quem não
+ * apareceu na sincronização: a listagem do PDV é por LOTAÇÃO, então quem está
+ * cadastrado noutra filial não entra no espelho mesmo trabalhando numa loja
+ * nossa. Não grava nada — é consulta.
+ */
+export const pdvnetProcurarVendedor = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
+  async (req) => {
+    await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+    const alvo = texto(req.data?.busca, 60)
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .trim()
+      .toUpperCase();
+    if (alvo.length < 3) {
+      throw new HttpsError("invalid-argument", "Informe ao menos 3 letras do nome.");
+    }
+    let cred;
+    try {
+      cred = await lerSegredoPdvnet();
+    } catch {
+      throw new HttpsError("failed-precondition", "Credenciais do PDVnet não configuradas.");
+    }
+    const cli = new PdvnetClient(cred);
+
+    const todas = await db.collection("pdv_stores").get();
+    const nomeLoja = new Map<number, string>();
+    const ativas: number[] = [];
+    const demais: number[] = [];
+    for (const d of todas.docs) {
+      const id = Number(d.id);
+      const v = d.data() as { nome?: string; grupoNome?: string; ativoSync?: boolean };
+      nomeLoja.set(id, v.grupoNome || v.nome || `Loja ${id}`);
+      (v.ativoSync ? ativas : demais).push(id);
+    }
+    // Varre primeiro as nossas; com `redeInteira`, segue pelas demais da rede.
+    const alvoLojas = req.data?.redeInteira === true ? [...ativas, ...demais] : ativas;
+
+    const achados: Record<string, unknown>[] = [];
+    let varridas = 0;
+    for (const lojaId of alvoLojas) {
+      let equipe;
+      try {
+        equipe = await cli.listarVendedoresDaFilial(lojaId);
+      } catch {
+        continue;
+      }
+      varridas++;
+      for (const v of equipe) {
+        const nome = `${v.Nome ?? ""} ${v.Apelido ?? ""}`
+          .normalize("NFD")
+          .replace(/[̀-ͯ]/g, "")
+          .toUpperCase();
+        if (!nome.includes(alvo)) continue;
+        achados.push({
+          codigo: v.Codigo ?? null,
+          nome: v.Nome ?? null,
+          apelido: v.Apelido ?? null,
+          cpf: v.Cpf ?? null,
+          tipo: v.Tipo ?? null,
+          lojaId,
+          lojaNome: nomeLoja.get(lojaId) ?? null,
+          lojaAtiva: ativas.includes(lojaId),
+        });
+      }
+      if (achados.length >= 50) break;
+    }
+    return { ok: true, busca: alvo, varridas, achados };
+  },
+);

@@ -134,6 +134,24 @@ export const salvarConfig = (i: Partial<ConfigComissoes>) =>
 export const sincronizarVendedoresPdv = (competencias?: string[]) =>
   chamar<ResultadoSyncQuadro>("comissoesSincronizarVendedores", { competencias });
 
+export interface AchadoPdv {
+  codigo: string | null;
+  nome: string | null;
+  apelido: string | null;
+  cpf: string | null;
+  tipo: string | null;
+  lojaId: number;
+  lojaNome: string | null;
+  lojaAtiva: boolean;
+}
+
+/** Procura um vendedor nas equipes do PDV (por lotação). Não grava nada. */
+export const procurarVendedorPdv = (busca: string, redeInteira = false) =>
+  chamar<{ ok: boolean; varridas: number; achados: AchadoPdv[] }>("pdvnetProcurarVendedor", {
+    busca,
+    redeInteira,
+  });
+
 export const marcarVendedor = (id: string, ignorado: boolean) =>
   chamar<{ ok: boolean; ignorado: boolean }>("comissoesMarcarVendedor", { id, ignorado });
 

@@ -887,3 +887,107 @@ describe("utilitários de competência", () => {
     expect(dataPagamentoFolha("2026-08", 31)).toBe("2026-09-28"); // limitado a 28
   });
 });
+
+describe("funcionário que não vende no PDV (gerente, supervisor, contratado de fora)", () => {
+  /** Sem código no PDV, a venda individual é zero — a comissão vem da loja. */
+  const GERENTE_SEM_PDV: Funcionario = {
+    id: "jessica",
+    nome: "Jéssica",
+    cargoId: "gerente",
+    lojaId: 582,
+    pdvVendedorId: null,
+    semPdv: true,
+    pisoGarantido: 2396.99,
+    ativo: true,
+  };
+
+  const regraGerente: Regra = {
+    id: "rg",
+    nome: "Gerente",
+    ativo: true,
+    cargoId: "gerente",
+    componentes: [
+      {
+        id: "c1",
+        rotulo: "Venda da loja",
+        escopoVenda: "loja",
+        baseCalculo: "liquida",
+        baseFaixa: "valor",
+        modelo: "integral",
+        faixas: [{ de: 0, percentual: 0.5 }],
+      },
+    ],
+    vigenciaDe: "2026-01",
+    vigenciaAte: null,
+  };
+
+  it("comissiona pela loja mesmo sem nenhuma venda própria", () => {
+    const r = apurar(
+      entrada({
+        funcionario: GERENTE_SEM_PDV,
+        regra: regraGerente,
+        metas: { individual: null, loja: 400_000, grupo: null },
+        vendas: {
+          individual: { liquida: 0, bruta: 0 },
+          loja: { liquida: 500_000, bruta: 500_000 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+      }),
+    );
+    expect(r.comissaoBase).toBe(2500); // 500.000 × 0,5%
+    expect(r.valorDevido).toBe(2500);
+    expect(r.escopoMeta).toBe("loja");
+    expect(r.metaConsiderada).toBe(400_000);
+  });
+
+  it("o piso continua valendo quando a loja vende pouco", () => {
+    const r = apurar(
+      entrada({
+        funcionario: GERENTE_SEM_PDV,
+        regra: regraGerente,
+        metas: { individual: null, loja: 400_000, grupo: null },
+        vendas: {
+          individual: { liquida: 0, bruta: 0 },
+          loja: { liquida: 200_000, bruta: 200_000 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+      }),
+    );
+    expect(r.comissaoBase).toBe(1000);
+    expect(r.valorDevido).toBe(2396.99);
+    expect(r.pisoAplicado).toBe(true);
+  });
+
+  it("supervisor sem PDV soma as lojas que acompanha", () => {
+    const porLoja = new Map([
+      [582, { liquida: 500_000, bruta: 500_000, qtd: 1 }],
+      [371, { liquida: 300_000, bruta: 300_000, qtd: 1 }],
+    ]);
+    const grupo = somarLojas(porLoja, [582, 371]);
+    const r = apurar(
+      entrada({
+        funcionario: {
+          ...GERENTE_SEM_PDV,
+          id: "sup",
+          cargoId: "supervisor",
+          lojasGrupo: [582, 371],
+          pisoGarantido: 0,
+        },
+        regra: {
+          ...regraGerente,
+          id: "rs",
+          cargoId: "supervisor",
+          componentes: [{ ...regraGerente.componentes[0], escopoVenda: "grupo", faixas: [{ de: 0, percentual: 0.15 }] }],
+        },
+        metas: { individual: null, loja: null, grupo: 700_000 },
+        vendas: {
+          individual: { liquida: 0, bruta: 0 },
+          loja: { liquida: 500_000, bruta: 500_000 },
+          grupo: { liquida: grupo.liquida, bruta: grupo.bruta },
+        },
+      }),
+    );
+    expect(grupo.liquida).toBe(800_000);
+    expect(r.comissaoBase).toBe(1200); // 800.000 × 0,15%
+  });
+});

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { formatBRL } from "@/lib/utils";
-import { Plus, RefreshCw, Trash2, UserPlus } from "lucide-react";
+import { Plus, RefreshCw, Search, Trash2, UserPlus } from "lucide-react";
 import type {
   Cargo,
   ConfigComissoes,
@@ -23,8 +23,10 @@ import {
   importarVendedores,
   marcarVendedor,
   salvarCargo,
+  procurarVendedorPdv,
   salvarFuncionario,
   sincronizarVendedoresPdv,
+  type AchadoPdv,
 } from "@/lib/comissoes/repo";
 import { numeroParaTexto } from "@/lib/comissoes/numero";
 import { pisoEfetivo } from "@/lib/comissoes/piso";
@@ -37,6 +39,7 @@ const VAZIO: Funcionario = {
   cargoId: null,
   lojaId: null,
   pdvVendedorId: null,
+  semPdv: false,
   lojasGrupo: [],
   pisoGarantido: null,
   admissao: null,
@@ -72,6 +75,8 @@ export function Funcionarios({
   const [mostrarCargos, setMostrarCargos] = useState(false);
   const [mostrarInativos, setMostrarInativos] = useState(false);
   const [resultadoSync, setResultadoSync] = useState<ResultadoSyncQuadro | null>(null);
+  const [buscaPdv, setBuscaPdv] = useState("");
+  const [achadosPdv, setAchadosPdv] = useState<AchadoPdv[] | null>(null);
 
   const nomeLoja = useMemo(
     () => new Map(lojas.map((l) => [l.id, l.grupoNome || l.nome || `Loja ${l.id}`])),
@@ -195,6 +200,79 @@ export function Funcionarios({
                 </div>
               </div>
             ))}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {podeGerir ? (
+        <Card>
+          <CardContent className="space-y-2 py-4">
+            <h2 className="flex items-center gap-1.5 text-[0.95rem] font-semibold tracking-tight">
+              <Search className="size-4" /> Procurar pessoa no PDV
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              A sincronização só enxerga quem está <strong>lotado</strong> numa das nossas lojas no
+              PDV. Quem estiver lotado em outra filial não aparece — procure aqui pelo nome e use o
+              código encontrado no cadastro.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                placeholder="Nome (ao menos 3 letras)"
+                value={buscaPdv}
+                onChange={(e) => setBuscaPdv(e.target.value)}
+              />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={ocupado || buscaPdv.trim().length < 3}
+                onClick={() =>
+                  executar(async () => {
+                    const r = await procurarVendedorPdv(buscaPdv.trim(), true);
+                    setAchadosPdv(r.achados);
+                  }, "Busca concluída.")
+                }
+              >
+                <Search /> Procurar
+              </Button>
+            </div>
+            {achadosPdv ? (
+              achadosPdv.length === 0 ? (
+                <p className="text-xs text-muted-foreground">
+                  Ninguém com esse nome nas equipes do PDV. Se a pessoa não é cadastrada lá, use{" "}
+                  <strong>Novo funcionário</strong> e marque &ldquo;não vende no PDV&rdquo;.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {achadosPdv.map((a) => (
+                    <div key={a.codigo} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="min-w-0 truncate">
+                        <strong>{a.nome}</strong>{" "}
+                        <span className="text-muted-foreground">
+                          · {a.codigo} · lotado em {a.lojaNome}
+                          {a.lojaAtiva ? "" : " (loja fora do nosso escopo)"}
+                        </span>
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={ocupado || vinculados.has(a.codigo ?? "")}
+                        onClick={() =>
+                          setEdicao({
+                            ...VAZIO,
+                            nome: a.nome ?? "",
+                            cpf: a.cpf ?? null,
+                            pdvVendedorId: a.codigo,
+                            cargoId: cargos[0]?.id ?? null,
+                          })
+                        }
+                      >
+                        {vinculados.has(a.codigo ?? "") ? "já cadastrado" : "Cadastrar"}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : null}
           </CardContent>
         </Card>
       ) : null}
@@ -347,24 +425,50 @@ export function Funcionarios({
                 </Select>
               </Campo>
               <Campo
-                label="Código no PDV"
-                hint="É o código que aparece na venda. Sem ele, o sistema não sabe quais vendas são desta pessoa."
+                label="Vende no PDV?"
+                hint="Gerente, supervisor, caixa e contratações de fora normalmente não vendem — comissionam pela loja ou pelo grupo, na regra do cargo."
               >
                 <Select
-                  value={edicao.pdvVendedorId ?? ""}
-                  onChange={(e) => setEdicao({ ...edicao, pdvVendedorId: e.target.value || null })}
+                  value={edicao.semPdv ? "0" : "1"}
+                  onChange={(e) =>
+                    setEdicao({
+                      ...edicao,
+                      semPdv: e.target.value === "0",
+                      pdvVendedorId: e.target.value === "0" ? null : edicao.pdvVendedorId,
+                    })
+                  }
                 >
-                  <option value="">— sem vínculo —</option>
-                  {vendedores
-                    .filter((v) => !vinculados.has(v.id) || v.id === edicao.pdvVendedorId)
-                    .map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.id} · {v.nome ?? v.apelido ?? "sem nome"}
-                        {v.lojaId != null ? ` · ${nomeLoja.get(v.lojaId) ?? v.lojaId}` : ""}
-                      </option>
-                    ))}
+                  <option value="1">Sim, tem código de vendedor</option>
+                  <option value="0">Não vende no PDV</option>
                 </Select>
               </Campo>
+              {!edicao.semPdv ? (
+                <Campo
+                  label="Código no PDV"
+                  hint="É o código que aparece na venda. Sem ele, o sistema não sabe quais vendas são desta pessoa."
+                >
+                  <Select
+                    value={edicao.pdvVendedorId ?? ""}
+                    onChange={(e) => setEdicao({ ...edicao, pdvVendedorId: e.target.value || null })}
+                  >
+                    <option value="">— sem vínculo —</option>
+                    {edicao.pdvVendedorId &&
+                    !vendedores.some((v) => v.id === edicao.pdvVendedorId) ? (
+                      <option value={edicao.pdvVendedorId}>
+                        {edicao.pdvVendedorId} · (código de fora das nossas lojas)
+                      </option>
+                    ) : null}
+                    {vendedores
+                      .filter((v) => !vinculados.has(v.id) || v.id === edicao.pdvVendedorId)
+                      .map((v) => (
+                        <option key={v.id} value={v.id}>
+                          {v.id} · {v.nome ?? v.apelido ?? "sem nome"}
+                          {v.lojaId != null ? ` · ${nomeLoja.get(v.lojaId) ?? v.lojaId}` : ""}
+                        </option>
+                      ))}
+                  </Select>
+                </Campo>
+              ) : null}
               <Campo
                 label="Piso individual (R$)"
                 hint={
@@ -537,7 +641,11 @@ export function Funcionarios({
                 <p className="flex items-center gap-2 truncate text-sm font-medium">
                   {f.nome}
                   {!f.ativo ? <Badge variant="neutral">inativo</Badge> : null}
-                  {!f.pdvVendedorId ? <Badge variant="destructive">sem PDV</Badge> : null}
+                  {f.semPdv ? (
+                    <Badge variant="neutral">não vende no PDV</Badge>
+                  ) : !f.pdvVendedorId ? (
+                    <Badge variant="destructive">sem PDV</Badge>
+                  ) : null}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
                   {f.cargoId ? (nomeCargo.get(f.cargoId) ?? "cargo removido") : "sem cargo"} ·{" "}

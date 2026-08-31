@@ -143,6 +143,12 @@ export interface Funcionario {
   lojaId: number | null;
   /** Id do vendedor no PDVnet (VendedorId das vendas). */
   pdvVendedorId?: string | null;
+  /**
+   * Não vende no PDV — gerente, supervisor, caixa, gente contratada fora.
+   * A comissão vem da loja ou do grupo de lojas, pela regra do cargo, e a
+   * sincronização com o PDV não mexe nesta pessoa.
+   */
+  semPdv?: boolean;
   /** Lojas que um supervisor acompanha (§13). Vazio = usa a própria loja. */
   lojasGrupo?: number[];
   /** Piso individual — EXCEÇÃO. Vazio (null) = herda o piso do cargo. */
