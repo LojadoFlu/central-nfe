@@ -4775,17 +4775,27 @@ export const comissoesImportarMetas = onCall(
     /** Chave do de-para de pessoa: loja e nome, normalizados. */
     const chaveVendedor = (loja: string | null, nome: string | null) =>
       `${normalizarNome(loja)}|${normalizarNome(nome)}`;
+    const lojasSnap = await db.collection("pdv_stores").get();
+    const gruposLojas = construirGrupos(
+      lojasSnap.docs.map((d) => ({ id: Number(d.id), ...(d.data() as object) }) as LojaBruta),
+    );
     const lojaPorNome = new Map<string, number>();
-    for (const d of (await db.collection("pdv_stores").get()).docs) {
+    for (const d of lojasSnap.docs) {
       const v = d.data() as { nome?: string; grupoNome?: string };
       for (const n of [v.nome, v.grupoNome]) {
         if (n) lojaPorNome.set(normalizarNome(n), Number(d.id));
       }
     }
+    /**
+     * Nome do arquivo → loja CANÔNICA. "FLU BARRA" é o nome de grupo das duas
+     * filiais (582 e 912): sem canonizar, a meta da Barra caía numa delas por
+     * acaso — a última a ser lida — e ficaria separada da outra metade.
+     */
     const resolverLoja = (nome: string | null): number | null => {
       if (!nome) return null;
       const chave = normalizarNome(nome);
-      return lojaPorNome.get(chave) ?? deParaLojas[chave] ?? null;
+      const bruta = lojaPorNome.get(chave) ?? deParaLojas[chave] ?? null;
+      return canonizar(gruposLojas, bruta);
     };
     const lojasNaoMapeadas = new Set<string>();
 
