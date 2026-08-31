@@ -16,17 +16,25 @@ function Coluna({ titulo, r, destaque }: { titulo: string; r: ResultadoApuracao;
   return (
     <div className={`rounded-md p-3 ${destaque ? "bg-primary/10" : "bg-muted/50"}`}>
       <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{titulo}</p>
-      <p className={`mt-1 text-xl font-bold tnum ${destaque ? "text-primary" : ""}`}>
+      <p className="mt-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+        Valor devido
+      </p>
+      <p className={`text-xl font-bold tnum ${destaque ? "text-primary" : ""}`}>
         {formatBRL(r.valorDevido)}
       </p>
       <div className="mt-2 space-y-0.5 text-[11px] text-muted-foreground">
         <p>Venda: {formatBRL(r.vendaConsiderada)}</p>
         <p>Meta: {r.metaConsiderada == null ? "—" : formatBRL(r.metaConsiderada)}</p>
         <p>Atingimento: {pctFmt(r.atingimentoPct)}</p>
-        <p>Comissão: {formatBRL(r.comissaoTotal)}</p>
-        <p>Piso: {formatBRL(r.piso)}</p>
-        {r.pisoAplicado ? <p className="text-warning">no piso</p> : null}
+        <p>Comissão calculada: {formatBRL(r.comissaoTotal)}</p>
+        <p>Piso garantido: {formatBRL(r.piso)}</p>
+        <p>% efetivo: {pctFmt(r.percentualEfetivo)}</p>
       </div>
+      {r.pisoAplicado ? (
+        <p className="mt-2 rounded bg-warning/15 px-2 py-1 text-[11px] text-warning">
+          A comissão ficou abaixo do piso — paga-se o piso.
+        </p>
+      ) : null}
     </div>
   );
 }

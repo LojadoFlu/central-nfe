@@ -444,7 +444,13 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
     metaConsiderada,
     escopoMeta: escopoPrincipal,
     atingimentoPct: atingimentos[escopoPrincipal],
-    percentualEfetivo: vendaConsiderada > 0 ? (comissaoBase / vendaConsiderada) * 100 : null,
+    // Percentual efetivo = o que a pessoa ganhou por real vendido. Precisa
+    // incluir o BÔNUS: quem modela meta/supermeta como bônus tem comissaoBase
+    // zero, e sem isso o número aparecia como 0% — e, pior, o estorno de venda
+    // cancelada (que usa este percentual) devolvia zero. Ajuste fica de fora:
+    // é correção pontual, não taxa por real vendido.
+    percentualEfetivo:
+      vendaConsiderada > 0 ? ((comissaoBase + bonusTotal) / vendaConsiderada) * 100 : null,
     comissaoBase,
     bonusTotal,
     ajustesTotal,

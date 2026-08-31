@@ -480,9 +480,21 @@ export function Regras({
           </Card>
         ))}
         {regras.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nenhuma regra cadastrada — sem regra, ninguém tem comissão calculada.
-          </p>
+          <Card className="border-warning/40 bg-warning/5">
+            <CardContent className="space-y-2 py-4 text-xs">
+              <p className="text-sm font-semibold text-warning">Nenhuma regra cadastrada</p>
+              <p>
+                Sem regra, a comissão base de todo mundo é zero. É aqui que entram{" "}
+                <strong>meta e supermeta</strong>: como faixas de um mesmo componente.
+              </p>
+              <p className="text-muted-foreground">
+                Numa faixa, só a atingida vale — quem faz 125% da meta recebe o percentual da
+                supermeta sobre a venda, e nada mais. Bônus é outra coisa: ele{" "}
+                <strong>soma</strong> ao que já existe. Dois bônus (um de meta e um de supermeta)
+                pagam os dois juntos quando a pessoa passa dos 125%.
+              </p>
+            </CardContent>
+          </Card>
         ) : null}
       </div>
     </div>

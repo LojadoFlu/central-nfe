@@ -664,6 +664,105 @@ describe("§14 — bônus", () => {
   });
 });
 
+describe("percentual efetivo (base do estorno)", () => {
+  const bonusMetaBase: Bonus = {
+    id: "b1",
+    nome: "Meta base",
+    ativo: true,
+    cargoId: "vendedor",
+    gatilho: { tipo: "atingimentoIndividual", minimoPct: 50 },
+    premio: { tipo: "percentual", valor: 4, escopoVenda: "individual", baseCalculo: "liquida" },
+    vigenciaDe: "2026-01",
+    vigenciaAte: null,
+  };
+
+  it("conta o bônus: quem paga só por bônus não pode ficar com 0%", () => {
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra: null,
+        metas: { individual: 40_000, loja: null, grupo: null },
+        vendas: {
+          individual: { liquida: 40_000, bruta: 40_000 },
+          loja: { liquida: 0, bruta: 0 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+        bonus: [bonusMetaBase],
+      }),
+    );
+    expect(r.comissaoBase).toBe(0);
+    expect(r.bonusTotal).toBe(1600);
+    expect(r.percentualEfetivo).toBe(4); // e não 0
+  });
+
+  it("ajuste não entra no percentual — é correção pontual, não taxa", () => {
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra: regraSimples(2),
+        vendas: {
+          individual: { liquida: 100_000, bruta: 100_000 },
+          loja: { liquida: 0, bruta: 0 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+        ajustes: [
+          { id: "a", funcionarioId: "joao", competencia: "2026-08", valor: 500, motivo: "x", tipo: "manual" },
+        ],
+      }),
+    );
+    expect(r.percentualEfetivo).toBe(2);
+  });
+
+  it("dois bônus de atingimento SOMAM — é assim que bônus funciona", () => {
+    const superMeta: Bonus = {
+      ...bonusMetaBase,
+      id: "b2",
+      nome: "Supermeta",
+      gatilho: { tipo: "atingimentoIndividual", minimoPct: 125 },
+      premio: { tipo: "percentual", valor: 4.5, escopoVenda: "individual", baseCalculo: "liquida" },
+    };
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra: null,
+        metas: { individual: 40_000, loja: null, grupo: null },
+        vendas: {
+          individual: { liquida: 50_000, bruta: 50_000 },
+          loja: { liquida: 0, bruta: 0 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+        bonus: [bonusMetaBase, superMeta],
+      }),
+    );
+    // 50.000 × 4% + 50.000 × 4,5% = 4.250 → 8,5% no total
+    expect(r.bonusTotal).toBe(4250);
+    expect(r.percentualEfetivo).toBe(8.5);
+  });
+
+  it("a mesma coisa como FAIXA de regra: só a faixa atingida vale", () => {
+    const regra = regraSimples(0);
+    regra.componentes[0].baseFaixa = "percentualMeta";
+    regra.componentes[0].faixas = [
+      { de: 50, percentual: 4, rotulo: "Meta" },
+      { de: 125, percentual: 4.5, rotulo: "Supermeta" },
+    ];
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, pisoGarantido: 0 },
+        regra,
+        metas: { individual: 40_000, loja: null, grupo: null },
+        vendas: {
+          individual: { liquida: 50_000, bruta: 50_000 },
+          loja: { liquida: 0, bruta: 0 },
+          grupo: { liquida: 0, bruta: 0 },
+        },
+      }),
+    );
+    expect(r.comissaoBase).toBe(2250); // 50.000 × 4,5%, não 8,5%
+    expect(r.percentualEfetivo).toBe(4.5);
+  });
+});
+
 describe("§31 — divergências e §9 — metas", () => {
   it("aponta funcionário sem regra e sem piso", () => {
     const r = apurar(entrada({ funcionario: { ...JOAO, pisoGarantido: null } }));
