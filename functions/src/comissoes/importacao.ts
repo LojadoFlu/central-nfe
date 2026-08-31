@@ -145,6 +145,7 @@ export function parseCsvMetas(texto: string): ResultadoParse {
   const linhas: LinhaImport[] = [];
   const erros: string[] = [];
   const cruas = (texto ?? "")
+    .replace(/^\uFEFF/, "") // BOM que o Excel põe no começo do arquivo
     .replace(/\r/g, "")
     .split("\n")
     .map((l) => l.trim())

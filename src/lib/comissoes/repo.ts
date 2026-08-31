@@ -100,6 +100,8 @@ export interface PreviaImportMetas {
   semCasar: { linha: number; nome: string | null; codigo: string | null; meta: number }[];
   resumo: {
     competencia: string;
+    /** Metas por pessoa que o arquivo substituiu. */
+    substituidas?: number;
     pessoas: number;
     total: number;
     semanas: string[];

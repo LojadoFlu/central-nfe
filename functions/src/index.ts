@@ -4759,7 +4759,18 @@ export const comissoesImportarMetas = onCall(
 
     const { linhas, erros } = parseCsvMetas(texto);
     if (linhas.length === 0) {
-      return { ok: false, erros: erros.length ? erros : ["Nenhuma linha aproveitável."], linhas: 0 };
+      // Mesma FORMA de resposta do caminho feliz: a tela não pode quebrar
+      // justamente quando tem um erro para mostrar.
+      return {
+        ok: false,
+        confirmado: false,
+        linhas: 0,
+        erros: erros.length ? erros : ["Nenhuma linha aproveitável no arquivo."],
+        ambiguos: [],
+        lojasNaoMapeadas: [],
+        semCasar: [],
+        resumo: [],
+      };
     }
 
     const funcionarios = (await db.collection("com_funcionarios").get()).docs.map(
@@ -4836,6 +4847,7 @@ export const comissoesImportarMetas = onCall(
     // Monta o resumo (e grava, se confirmado).
     const resumo: {
       competencia: string;
+      substituidas: number;
       pessoas: number;
       total: number;
       semanas: string[];
@@ -4856,6 +4868,28 @@ export const comissoesImportarMetas = onCall(
       let total = 0;
       let batch = db.batch();
       let ops = 0;
+
+      // O arquivo SUBSTITUI as metas por pessoa da competência. Sem isso, quem
+      // saiu do arquivo (saiu da loja, virou gerente) ficaria com a meta antiga
+      // para sempre, e ninguém perceberia.
+      let apagadas = 0;
+      if (confirmar) {
+        const antigas = await db
+          .collection("com_metas")
+          .where("competencia", "==", competencia)
+          .get();
+        for (const d of antigas.docs) {
+          const m = d.data() as { funcionarioId?: string | null };
+          if (!m.funcionarioId) continue; // meta de loja cadastrada à mão fica
+          batch.delete(d.ref);
+          apagadas++;
+          if (++ops >= 400) {
+            await batch.commit();
+            batch = db.batch();
+            ops = 0;
+          }
+        }
+      }
 
       for (const [funcionarioId, semanas] of porFunc) {
         const arr: (number | null)[] = [null, null, null, null, null, null];
@@ -4894,6 +4928,7 @@ export const comissoesImportarMetas = onCall(
       const comMeta = new Set(porFunc.keys());
       resumo.push({
         competencia,
+        substituidas: apagadas,
         pessoas: porFunc.size,
         total: Math.round(total * 100) / 100,
         semanas: datas,

@@ -47,8 +47,15 @@ export function ImportarMetas({
     }
   }
 
+  // Defensivo de propósito: se a resposta vier com forma diferente da esperada,
+  // a tela mostra o problema em vez de quebrar e esconder o problema.
+  const erros = previa?.erros ?? [];
+  const semCasar = previa?.semCasar ?? [];
+  const ambiguos = previa?.ambiguos ?? [];
+  const lojasNaoMapeadas = previa?.lojasNaoMapeadas ?? [];
+  const resumo = previa?.resumo ?? [];
   const temProblema =
-    !!previa && (previa.erros.length > 0 || previa.semCasar.length > 0 || previa.ambiguos.length > 0);
+    !!previa && (erros.length > 0 || semCasar.length > 0 || ambiguos.length > 0);
 
   return (
     <Card>
@@ -102,13 +109,17 @@ export function ImportarMetas({
 
         {previa ? (
           <div className="space-y-2 text-xs">
-            {previa.resumo.map((r) => (
+            {resumo.map((r) => (
               <div key={r.competencia} className="rounded-md bg-muted/50 p-2.5">
                 <p className="font-medium">
                   {mesLabel(r.competencia)} · {r.pessoas} pessoa(s) · {formatBRL(r.total)}
                 </p>
                 <p className="text-muted-foreground">
                   Semanas: {r.semanas.map((d) => formatarData(d)).join(", ")}
+                </p>
+                <p className="text-muted-foreground">
+                  O arquivo <strong>substitui</strong> as metas por pessoa desta competência —
+                  quem não estiver nele fica sem meta.
                 </p>
                 {r.semMeta.length > 0 ? (
                   <p className="mt-1 text-warning">
@@ -118,7 +129,7 @@ export function ImportarMetas({
               </div>
             ))}
 
-            {previa.lojasNaoMapeadas.length > 0 ? (
+            {lojasNaoMapeadas.length > 0 ? (
               <div className="space-y-1.5 rounded-md bg-warning/10 p-2.5">
                 <p className="font-semibold text-warning">
                   Nomes de loja que eu não reconheci
@@ -128,7 +139,7 @@ export function ImportarMetas({
                   Sem isso, o nome do vendedor é procurado no quadro inteiro, o que aumenta a chance
                   de homônimo.
                 </p>
-                {previa.lojasNaoMapeadas.map((nome) => (
+                {lojasNaoMapeadas.map((nome) => (
                   <div key={nome} className="flex items-center gap-2">
                     <span className="min-w-0 flex-1 truncate">{nome}</span>
                     <select
@@ -172,24 +183,24 @@ export function ImportarMetas({
                 <p className="flex items-center gap-1.5 font-semibold">
                   <TriangleAlert className="size-3.5" /> Confira antes de importar
                 </p>
-                {previa.erros.map((e, i) => (
+                {erros.map((e, i) => (
                   <p key={i}>{e}</p>
                 ))}
-                {previa.ambiguos.map((a, i) => (
+                {ambiguos.map((a, i) => (
                   <p key={`a${i}`}>Nome com mais de um cadastro: {a} — informe o código do PDV.</p>
                 ))}
-                {previa.semCasar.map((s, i) => (
+                {semCasar.map((s, i) => (
                   <p key={`s${i}`}>
                     Linha {s.linha}: {s.nome ?? s.codigo} ({formatBRL(s.meta)}) não casou com ninguém
                     do quadro.
                   </p>
                 ))}
               </div>
-            ) : (
+            ) : previa.linhas > 0 ? (
               <p className="flex items-center gap-1.5 text-success">
                 <Check className="size-3.5" /> Todas as linhas casaram com o cadastro.
               </p>
-            )}
+            ) : null}
           </div>
         ) : null}
       </CardContent>

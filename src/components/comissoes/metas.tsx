@@ -102,6 +102,30 @@ export function Metas({
     return funcionarios.filter((f) => f.ativo && f.cargoId && ids.has(f.cargoId) && f.lojaId != null);
   }, [funcionarios, cargos]);
 
+  /**
+   * Meta da loja quando as metas vieram do import: é a SOMA das metas dos
+   * vendedores dela. Aí não há o que digitar aqui — digitar seria criar um
+   * segundo número para a mesma coisa.
+   */
+  const somaImportadaPorLoja = useMemo(() => {
+    const porFuncionario = new Map(metas.filter((m) => m.funcionarioId).map((m) => [m.funcionarioId!, m]));
+    const m = new Map<number, { total: number; semanas: (number | null)[]; pessoas: number }>();
+    for (const f of funcionarios) {
+      if (!f.ativo || f.lojaId == null) continue;
+      const meta = porFuncionario.get(f.id);
+      if (!meta) continue;
+      const atual = m.get(f.lojaId) ?? { total: 0, semanas: [null, null, null, null, null, null], pessoas: 0 };
+      atual.total += meta.valor;
+      atual.pessoas += 1;
+      SEMANAS.forEach((i) => {
+        const v = meta.semanas?.[i];
+        if (v != null) atual.semanas[i] = (atual.semanas[i] ?? 0) + v;
+      });
+      m.set(f.lojaId, atual);
+    }
+    return m;
+  }, [metas, funcionarios]);
+
   /** Por loja e por semana: quantos dividem a meta daquela semana. */
   const participantesPorLojaSemana = useMemo(() => {
     const m = new Map<number, number[]>();
@@ -203,8 +227,9 @@ export function Metas({
           </p>
           <div className="space-y-3">
             {lojas.map((l) => {
-              const semanas = porLoja[l.id] ?? [null, null, null, null, null, null];
-              const total = somaSemanas(semanas);
+              const importada = somaImportadaPorLoja.get(l.id);
+              const semanas = importada ? importada.semanas : porLoja[l.id] ?? [null, null, null, null, null, null];
+              const total = importada ? Math.round(importada.total * 100) / 100 : somaSemanas(semanas);
               const participantes = participantesPorLojaSemana.get(l.id) ?? [0, 0, 0, 0, 0, 0];
               const daLoja = comMetaIndividual.filter((f) => f.lojaId === l.id);
               // Rateio semana a semana: quem está de férias numa semana não
@@ -220,6 +245,9 @@ export function Metas({
                     <span className="text-sm font-medium">{l.grupoNome || l.nome}</span>
                     <span className="text-xs text-muted-foreground tnum">
                       mês {formatBRL(total)}
+                      {importada
+                        ? ` · soma das metas de ${importada.pessoas} vendedor(es), importada`
+                        : ""}
                       {daLoja.length === 0
                         ? " · nenhum cargo com meta individual nesta loja"
                         : ` · ${formatBRL(fatiaCheia)} para quem trabalha o mês inteiro (${daLoja.length} pessoa(s))`}
@@ -234,7 +262,7 @@ export function Metas({
                         <InputNumero
                           className="h-9"
                           placeholder="—"
-                          disabled={!podeGerir}
+                          disabled={!podeGerir || !!importada}
                           value={semanas[i] ?? null}
                           onChange={(n) =>
                             setPorLoja((atual) => {
