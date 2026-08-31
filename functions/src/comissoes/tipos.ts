@@ -131,6 +131,12 @@ export interface Cargo {
    * um valor por cargo, em vez de repetir pessoa a pessoa.
    */
   pisoGarantido?: number | null;
+  /**
+   * Recebe meta individual: a meta da loja é dividida igualmente entre as
+   * pessoas destes cargos. Gerente e supervisor não entram — são medidos pela
+   * loja ou pelo grupo, e dividir com eles reduziria a meta de quem vende.
+   */
+  recebeMetaIndividual?: boolean;
   ativo: boolean;
 }
 

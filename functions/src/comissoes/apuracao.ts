@@ -247,17 +247,19 @@ interface ContextoCalculo {
   nomeCargo: Map<string, string>;
   pisoPorCargo: Map<string, number | null>;
   nomeVendedor: Map<string, string | null>;
-  /** Quantos vendedores cada loja tem — para dividir a meta da loja. */
+  /** Quantas pessoas com meta individual cada loja tem — para dividir a meta. */
   vendedoresPorLoja: Map<number, number>;
+  cargosComMetaIndividual: Set<string>;
 }
 
 /**
- * Vendedor para efeito de meta: está ativo, vende no PDV e não acompanha
- * lojas. Gerente e supervisor ficam de fora — eles são medidos pela loja ou
- * pelo grupo, e dividir a meta com eles reduziria a de quem está no balcão.
+ * Quem divide a meta da loja: quem está ativo e ocupa um cargo marcado como
+ * "recebe meta individual" (vendedor, subgerente). Gerente e supervisor ficam
+ * de fora — são medidos pela loja ou pelo grupo, e dividir com eles reduziria
+ * a meta de quem está no balcão. A marcação é do cargo, não adivinhada aqui.
  */
-function ehVendedorDeBalcao(f: Funcionario): boolean {
-  return f.ativo && f.semPdv !== true && !(f.lojasGrupo ?? []).length;
+function recebeMetaIndividual(f: Funcionario, cargosComMeta: Set<string>): boolean {
+  return f.ativo && !!f.cargoId && cargosComMeta.has(f.cargoId);
 }
 
 async function montarContexto(competencia: string): Promise<ContextoCalculo> {
@@ -284,9 +286,12 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
   const nomeVendedor = new Map<string, string | null>();
   for (const d of sellersSnap.docs) nomeVendedor.set(d.id, (d.data().nome as string) ?? null);
 
+  const cargosComMetaIndividual = new Set(
+    cargos.filter((c) => c.recebeMetaIndividual === true).map((c) => c.id),
+  );
   const vendedoresPorLoja = new Map<number, number>();
   for (const f of funcionarios) {
-    if (!ehVendedorDeBalcao(f)) continue;
+    if (!recebeMetaIndividual(f, cargosComMetaIndividual)) continue;
     const loja = canonizar(grupos, f.lojaId);
     if (loja == null) continue;
     vendedoresPorLoja.set(loja, (vendedoresPorLoja.get(loja) ?? 0) + 1);
@@ -311,6 +316,7 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     pisoPorCargo: new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null])),
     nomeVendedor,
     vendedoresPorLoja,
+    cargosComMetaIndividual,
   };
 }
 
@@ -349,7 +355,7 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
   const metaPropria = escolherMeta(metasDaComp, f, competencia);
   const metaIndividual =
     metaPropria ??
-    (ehVendedorDeBalcao(f) && f.lojaId != null
+    (recebeMetaIndividual(f, ctx.cargosComMetaIndividual) && f.lojaId != null
       ? metaPorVendedor(metaLoja, ctx.vendedoresPorLoja.get(f.lojaId) ?? 0)
       : null);
   // Meta do supervisor = soma das metas das lojas que ele supervisiona.

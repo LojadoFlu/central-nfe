@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatBRL } from "@/lib/utils";
 import { Copy, Save } from "lucide-react";
-import type { Funcionario, Meta, ResultadoCompetencia } from "@/lib/comissoes/tipos";
+import type { Cargo, Funcionario, Meta, ResultadoCompetencia } from "@/lib/comissoes/tipos";
 import type { StorePdv } from "@/lib/nfe/repo";
 import { listarMetas, salvarMetas } from "@/lib/comissoes/repo";
 import { Aviso, InputNumero, mesLabel } from "./comum";
@@ -30,6 +30,7 @@ export function Metas({
   competencia,
   metas,
   funcionarios,
+  cargos,
   apuracao,
   lojas,
   podeGerir,
@@ -38,6 +39,7 @@ export function Metas({
   competencia: string;
   metas: Meta[];
   funcionarios: Funcionario[];
+  cargos: Cargo[];
   apuracao: ResultadoCompetencia | null;
   lojas: StorePdv[];
   podeGerir: boolean;
@@ -68,16 +70,16 @@ export function Metas({
   }, [metas, competencia]);
 
   const ativos = useMemo(() => funcionarios.filter((f) => f.ativo), [funcionarios]);
-  /** Quem divide a meta da loja: vende no PDV e não acompanha lojas. */
+  /** Quem divide a meta da loja: cargo marcado como "recebe meta individual". */
   const vendedoresPorLoja = useMemo(() => {
+    const comMeta = new Set(cargos.filter((c) => c.recebeMetaIndividual).map((c) => c.id));
     const m = new Map<number, number>();
     for (const f of funcionarios) {
-      if (!f.ativo || f.semPdv === true || (f.lojasGrupo ?? []).length) continue;
-      if (f.lojaId == null) continue;
+      if (!f.ativo || !f.cargoId || !comMeta.has(f.cargoId) || f.lojaId == null) continue;
       m.set(f.lojaId, (m.get(f.lojaId) ?? 0) + 1);
     }
     return m;
-  }, [funcionarios]);
+  }, [funcionarios, cargos]);
   const totalLojas = useMemo(
     () => Object.values(porLoja).reduce<number>((s, sem) => s + somaSemanas(sem), 0),
     [porLoja],
@@ -175,9 +177,9 @@ export function Metas({
                     <span className="text-xs text-muted-foreground tnum">
                       mês {formatBRL(total)}
                       {porVendedor != null
-                        ? ` · ${formatBRL(porVendedor)} para cada um dos ${qtd} vendedores`
+                        ? ` · ${formatBRL(porVendedor)} para cada um dos ${qtd} com meta individual`
                         : qtd === 0
-                          ? " · sem vendedor cadastrado"
+                          ? " · nenhum cargo com meta individual nesta loja"
                           : ""}
                     </span>
                   </div>

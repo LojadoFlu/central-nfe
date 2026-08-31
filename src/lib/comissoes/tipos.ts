@@ -91,6 +91,8 @@ export interface Cargo {
   ordem?: number;
   /** Piso garantido do cargo — é aqui que o piso normalmente se define. */
   pisoGarantido?: number | null;
+  /** A meta da loja é dividida entre as pessoas dos cargos marcados. */
+  recebeMetaIndividual?: boolean;
   ativo: boolean;
 }
 

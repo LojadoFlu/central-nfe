@@ -283,7 +283,9 @@ export function Funcionarios({
             <h2 className="text-[0.95rem] font-semibold tracking-tight">Cargos e piso garantido</h2>
             <p className="text-xs text-muted-foreground">
               O piso é definido aqui, por cargo — vale para todo mundo do cargo. Só quem tiver
-              acordo diferente precisa de piso próprio na ficha.
+              acordo diferente precisa de piso próprio na ficha. Marque{" "}
+              <strong>meta individual</strong> nos cargos que dividem a meta da loja entre si
+              (vendedor, subgerente); gerente e supervisor são medidos pela loja ou pelo grupo.
             </p>
             <div className="divide-y divide-border">
               {cargos.map((c) => {
@@ -307,6 +309,28 @@ export function Funcionarios({
                     />
                     {podeGerir ? (
                       <>
+                        <label className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            className="size-3.5"
+                            checked={c.recebeMetaIndividual === true}
+                            disabled={ocupado}
+                            onChange={(e) =>
+                              executar(
+                                () =>
+                                  salvarCargo({
+                                    id: c.id,
+                                    nome: c.nome,
+                                    ordem: c.ordem,
+                                    pisoGarantido: c.pisoGarantido ?? null,
+                                    recebeMetaIndividual: e.target.checked,
+                                  }),
+                                "Cargo salvo.",
+                              )
+                            }
+                          />
+                          meta individual
+                        </label>
                         <Button
                           size="sm"
                           variant={mudou ? "default" : "outline"}
@@ -319,6 +343,7 @@ export function Funcionarios({
                                   nome: nome.trim(),
                                   ordem: c.ordem,
                                   pisoGarantido: piso,
+                                  recebeMetaIndividual: c.recebeMetaIndividual === true,
                                 }),
                               "Cargo salvo.",
                             )

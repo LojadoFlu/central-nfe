@@ -3960,12 +3960,19 @@ export const comissoesSalvarCargo = onCall(opcoes, async (req) => {
       nome,
       ordem: num(req.data?.ordem, 99),
       pisoGarantido,
+      recebeMetaIndividual: req.data?.recebeMetaIndividual === true,
       ativo: req.data?.ativo !== false,
       atualizadoEm: agoraISO(),
     },
     { merge: true },
   );
-  await auditar(uid, "comissoes.salvarCargo", { id, nome, pisoGarantido, anterior: anteriorCargo });
+  await auditar(uid, "comissoes.salvarCargo", {
+    id,
+    nome,
+    pisoGarantido,
+    recebeMetaIndividual: req.data?.recebeMetaIndividual === true,
+    anterior: anteriorCargo,
+  });
   return { ok: true, id };
 });
 

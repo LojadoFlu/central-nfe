@@ -228,6 +228,7 @@ export default function ComissoesPage() {
           competencia={competencia}
           metas={metas}
           funcionarios={funcionarios}
+          cargos={cargos}
           apuracao={apuracao}
           lojas={lojas}
           podeGerir={podeGerir}
