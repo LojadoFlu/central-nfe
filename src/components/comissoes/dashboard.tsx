@@ -35,6 +35,7 @@ export function Dashboard({
   apuracao: ResultadoCompetencia | null;
 }) {
   const [criterio, setCriterio] = useState<Criterio>("valorDevido");
+  const [cargo, setCargo] = useState("");
   const [historico, setHistorico] = useState<CustoMes[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -52,11 +53,16 @@ export function Dashboard({
     void carregar();
   }, [carregar]);
 
+  const cargos = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const l of apuracao?.linhas ?? []) if (l.cargoId) m.set(l.cargoId, l.cargoNome ?? l.cargoId);
+    return [...m.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [apuracao]);
+
   const ranking = useMemo(() => {
-    const linhas = [...(apuracao?.linhas ?? [])];
-    linhas.sort((a, b) => (b[criterio] ?? 0) - (a[criterio] ?? 0));
-    return linhas;
-  }, [apuracao, criterio]);
+    const linhas = (apuracao?.linhas ?? []).filter((l) => !cargo || l.cargoId === cargo);
+    return [...linhas].sort((a, b) => (b[criterio] ?? 0) - (a[criterio] ?? 0));
+  }, [apuracao, criterio, cargo]);
 
   const maiorCusto = useMemo(
     () => Math.max(1, ...(historico ?? []).map((m) => m.valorDevido)),
@@ -98,17 +104,34 @@ export function Dashboard({
             <h2 className="flex items-center gap-1.5 text-[0.95rem] font-semibold tracking-tight">
               <Medal className="size-4" /> Ranking
             </h2>
-            <Select
-              value={criterio}
-              onChange={(e) => setCriterio(e.target.value as Criterio)}
-              className="h-9 w-auto"
-            >
-              {CRITERIOS.map((c) => (
-                <option key={c.valor} value={c.valor}>
-                  Por {c.label.toLowerCase()}
-                </option>
-              ))}
-            </Select>
+            <div className="flex gap-2">
+              {/* Cargos diferentes não competem entre si: o supervisor é medido
+                  pela soma das lojas, então aparece com uma "venda" que nenhum
+                  vendedor alcança. Daí o filtro ao lado do critério. */}
+              <Select
+                value={cargo}
+                onChange={(e) => setCargo(e.target.value)}
+                className="h-9 w-auto"
+              >
+                <option value="">Todos os cargos</option>
+                {cargos.map(([id, nome]) => (
+                  <option key={id} value={id}>
+                    {nome}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                value={criterio}
+                onChange={(e) => setCriterio(e.target.value as Criterio)}
+                className="h-9 w-auto"
+              >
+                {CRITERIOS.map((c) => (
+                  <option key={c.valor} value={c.valor}>
+                    Por {c.label.toLowerCase()}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
           <div className="divide-y divide-border">
             {ranking.map((l, i) => (
@@ -123,7 +146,8 @@ export function Dashboard({
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{l.funcionarioNome}</p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {l.lojaNome ?? "sem loja"} · {formatBRL(l.vendaConsiderada)}
+                    {l.cargoNome ?? "sem cargo"} · {l.lojaNome ?? "sem loja"} ·{" "}
+                    {formatBRL(l.vendaConsiderada)}
                   </p>
                   <BarraMeta pct={l.atingimentoPct} />
                 </div>
