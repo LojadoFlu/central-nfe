@@ -294,10 +294,22 @@ async function reconciliarFuncionarios(
   }
 
   const funcSnap = await db.collection("com_funcionarios").get();
+  // Indexa por TODOS os códigos da pessoa, não só pelo principal. Quem foi
+  // juntado (a Barra tem a mesma pessoa em duas filiais) guarda o segundo
+  // código em `pdvVendedorIds`; olhando só o principal, a sync não reconhecia
+  // esse código, criava a pessoa de novo — e a venda dela contava duas vezes.
   const porCodigoPdv = new Map<string, { id: string; dados: Record<string, unknown> }>();
   for (const d of funcSnap.docs) {
-    const f = d.data() as { pdvVendedorId?: string | null };
-    if (f.pdvVendedorId) porCodigoPdv.set(f.pdvVendedorId, { id: d.id, dados: f as Record<string, unknown> });
+    const f = d.data() as { pdvVendedorId?: string | null; pdvVendedorIds?: string[] | null };
+    const codigos = [f.pdvVendedorId, ...(f.pdvVendedorIds ?? [])].filter(
+      (c): c is string => typeof c === "string" && c.trim() !== "",
+    );
+    for (const c of codigos) {
+      // O principal vence: é o cadastro que o admin enxerga na tela.
+      if (c === f.pdvVendedorId || !porCodigoPdv.has(c)) {
+        porCodigoPdv.set(c, { id: d.id, dados: f as Record<string, unknown> });
+      }
+    }
   }
 
   const cargoDe = (tipo: string | null): string | null => {
@@ -362,16 +374,19 @@ async function reconciliarFuncionarios(
       criados++;
     } else {
       const atual = existente.dados;
+      // Código secundário de alguém juntado: serve para NÃO recriar a pessoa,
+      // mas não manda no nome nem na loja dela — o principal é que manda.
+      const secundario = atual.pdvVendedorId !== v.id;
       const patch: Record<string, unknown> = {};
-      if (nome && atual.nome !== nome) patch.nome = nome;
+      if (!secundario && nome && atual.nome !== nome) patch.nome = nome;
       // Loja escolhida à mão vence o PDV: quem corrigiu na tela sabe de algo
       // que o PDV não sabe.
-      if (lojaId != null && atual.lojaId !== lojaId && atual.lojaManual !== true) {
+      if (!secundario && lojaId != null && atual.lojaId !== lojaId && atual.lojaManual !== true) {
         patch.lojaId = lojaId;
       }
       if (!atual.cargoId) patch.cargoId = cargoDe(v.tipo); // preenche, nunca sobrescreve
       if (!atual.cpf && v.cpf) patch.cpf = v.cpf;
-      if (saiu && atual.ativo !== false) {
+      if (!secundario && saiu && atual.ativo !== false) {
         patch.ativo = false;
         patch.motivoInativacao = "Inativo no PDV";
         inativados++;
