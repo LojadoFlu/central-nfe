@@ -304,13 +304,28 @@ export function Regras({
 
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium text-muted-foreground">
-                        Faixas ({c.baseFaixa === "percentualMeta" ? "% da meta" : "R$"} → % de comissão)
+                        Faixas
                       </p>
+                      <p className="text-[11px] leading-snug text-muted-foreground">
+                        Cada linha é um degrau: <strong>a partir de</strong> quanto ela vale, e{" "}
+                        <strong>quanto paga</strong>. O degrau vale até onde o próximo começa. Comece
+                        a primeira em {c.baseFaixa === "percentualMeta" ? "0%" : "R$ 0,00"} para
+                        cobrir quem fica abaixo da meta.
+                      </p>
+                      <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        <span className="flex-1">
+                          A partir de{" "}
+                          {c.baseFaixa === "percentualMeta" ? "(% da meta)" : "(R$ vendidos)"}
+                        </span>
+                        <span className="flex-1">Paga (% da venda)</span>
+                        <span className="flex-1">Nome (opcional)</span>
+                        <span className="w-9" />
+                      </div>
                       {c.faixas.map((f, fi) => (
                         <div key={fi} className="flex items-center gap-2">
                           <InputNumero
                             className="h-9"
-                            placeholder="a partir de"
+                            placeholder={c.baseFaixa === "percentualMeta" ? "0" : "0,00"}
                             value={f.de}
                             onChange={(n) =>
                               alterarComponente(idx, {
@@ -332,7 +347,7 @@ export function Regras({
                           />
                           <Input
                             className="h-9"
-                            placeholder="rótulo (Meta…)"
+                            placeholder="Meta, Supermeta…"
                             value={f.rotulo ?? ""}
                             onChange={(e) =>
                               alterarComponente(idx, {
@@ -354,12 +369,43 @@ export function Regras({
                           </Button>
                         </div>
                       ))}
+                      <p className="rounded-md bg-muted/60 p-2 text-[11px] leading-relaxed">
+                        {[...c.faixas]
+                          .sort((a, b) => a.de - b.de)
+                          .map((f, i, arr) => {
+                            const prox = arr[i + 1];
+                            const de =
+                              c.baseFaixa === "percentualMeta" ? pctFmt(f.de) : formatBRL(f.de);
+                            const ate = prox
+                              ? c.baseFaixa === "percentualMeta"
+                                ? pctFmt(prox.de)
+                                : formatBRL(prox.de)
+                              : null;
+                            return `${ate ? `De ${de} a ${ate}` : `De ${de} em diante`} → paga ${pctFmt(f.percentual)}${f.rotulo ? ` (${f.rotulo})` : ""}`;
+                          })
+                          .join(" · ")}
+                        {c.modelo === "integral"
+                          ? " — o degrau atingido vale sobre TUDO que foi vendido."
+                          : " — cada fatia da venda paga o percentual do degrau dela."}
+                      </p>
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() =>
                           alterarComponente(idx, {
-                            faixas: [...c.faixas, { de: 0, percentual: 0, rotulo: null }],
+                            // Já sugere o degrau seguinte: primeira faixa em zero,
+                            // as próximas começando acima da última.
+                            faixas: [
+                              ...c.faixas,
+                              {
+                                de: c.faixas.length
+                                  ? Math.max(...c.faixas.map((x) => x.de)) +
+                                    (c.baseFaixa === "percentualMeta" ? 25 : 10000)
+                                  : 0,
+                                percentual: 0,
+                                rotulo: null,
+                              },
+                            ],
                           })
                         }
                       >
