@@ -448,6 +448,11 @@ export async function calcularCompetencia(
 
   for (const bruto of funcionarios) {
     if (!bruto.ativo) {
+      // Código institucional da loja não é gente: a venda dele já é da loja e
+      // não deve pedir providência nenhuma no fechamento.
+      if (typeof bruto.motivoInativacao === "string" && bruto.motivoInativacao.includes("Código da loja")) {
+        continue;
+      }
       // Inativo que vendeu: a venda não comissiona ninguém. Melhor gritar.
       const total = codigosPdv(bruto).reduce(
         (acc, c) => acc + (consolidado.porVendedor.get(c)?.liquida ?? 0),

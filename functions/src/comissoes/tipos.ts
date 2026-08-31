@@ -167,6 +167,8 @@ export interface Funcionario {
   pisoGarantido?: number | null;
   admissao?: string | null;
   ativo: boolean;
+  /** Por que foi inativado — a sync usa para não confundir código de loja com gente. */
+  motivoInativacao?: string | null;
 }
 
 /** Meta de uma competência (§9). */
