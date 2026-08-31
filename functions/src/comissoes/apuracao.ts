@@ -223,11 +223,31 @@ export async function apurarCompetencia(competencia: string): Promise<ResultadoC
   return vivo;
 }
 
-/** Cálculo ao vivo (não grava nada). */
-export async function calcularCompetencia(
-  competencia: string,
-  status: StatusFechamento,
-): Promise<ResultadoCompetencia> {
+/**
+ * Tudo que a apuração de uma competência precisa, carregado uma vez.
+ * A simulação usa o MESMO contexto e a MESMA montagem de entrada — antes ela
+ * refazia esse trabalho por conta própria e foi divergindo: ficou sem meta de
+ * grupo e sem o agrupamento de filiais, então supervisor e Barra davam números
+ * diferentes dos da apuração.
+ */
+interface ContextoCalculo {
+  competencia: string;
+  cfg: ConfigComissoes;
+  funcionarios: Funcionario[];
+  cargos: Cargo[];
+  regras: Regra[];
+  bonus: Bonus[];
+  metasDaComp: Meta[];
+  ajustesDaComp: Ajuste[];
+  grupos: ReturnType<typeof construirGrupos>;
+  consolidado: ReturnType<typeof consolidar>;
+  nomeLoja: Map<number, string>;
+  nomeCargo: Map<string, string>;
+  pisoPorCargo: Map<string, number | null>;
+  nomeVendedor: Map<string, string | null>;
+}
+
+async function montarContexto(competencia: string): Promise<ContextoCalculo> {
   const [cfg, funcionarios, cargos, regras, metas, bonus, ajustes, vendas, lojasSnap, sellersSnap] =
     await Promise.all([
       carregarConfig(),
@@ -248,17 +268,103 @@ export async function calcularCompetencia(
   const grupos = construirGrupos(
     lojasSnap.docs.map((d) => ({ id: Number(d.id), ...(d.data() as object) }) as LojaBruta),
   );
-  const consolidado = consolidar(
-    vendas.map((v) => ({ ...v, lojaId: canonizar(grupos, v.lojaId) })),
+  const nomeVendedor = new Map<string, string | null>();
+  for (const d of sellersSnap.docs) nomeVendedor.set(d.id, (d.data().nome as string) ?? null);
+
+  return {
+    competencia,
+    cfg,
+    funcionarios,
+    cargos,
+    regras,
+    bonus,
+    metasDaComp: metas
+      .filter((m) => m.competencia === competencia)
+      .map((m) => ({ ...m, lojaId: canonizar(grupos, m.lojaId) })),
+    ajustesDaComp: ajustes.filter((a) => a.competencia === competencia),
+    grupos,
+    consolidado: consolidar(vendas.map((v) => ({ ...v, lojaId: canonizar(grupos, v.lojaId) }))),
+    nomeLoja: grupos.nomeDoGrupo,
+    nomeCargo: new Map(cargos.map((c) => [c.id, c.nome])),
+    // Piso mora no CARGO; o campo do funcionário é exceção (§5, §10).
+    pisoPorCargo: new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null])),
+    nomeVendedor,
+  };
+}
+
+interface EntradaMontada {
+  f: Funcionario;
+  entrada: EntradaApuracao;
+  regra: Regra | null;
+  piso: ReturnType<typeof pisoEfetivo>;
+  metaIndividual: number | null;
+  metaLoja: number | null;
+  metaGrupo: number | null;
+  lojasGrupo: number[];
+  lojasSemMeta: number[];
+}
+
+/** Monta a entrada do motor para UMA pessoa. Único lugar que faz isso. */
+function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada {
+  const { competencia, consolidado, grupos, metasDaComp } = ctx;
+  // Cadastro antigo pode apontar para a filial irmã: normaliza na leitura.
+  const piso = pisoEfetivo(bruto, ctx.pisoPorCargo);
+  const f: Funcionario = {
+    ...bruto,
+    lojaId: canonizar(grupos, bruto.lojaId),
+    lojasGrupo: canonizarLista(grupos, bruto.lojasGrupo),
+    pisoGarantido: piso.valor,
+  };
+  const vendedorId = f.pdvVendedorId ?? null;
+  const individual = (vendedorId && consolidado.porVendedor.get(vendedorId)) || ZERO;
+  const loja = (f.lojaId != null && consolidado.porLoja.get(f.lojaId)) || ZERO;
+  const lojasGrupo = f.lojasGrupo?.length ? f.lojasGrupo : f.lojaId != null ? [f.lojaId] : [];
+  const grupo = somarLojas(consolidado.porLoja, lojasGrupo);
+
+  const metaIndividual = escolherMeta(metasDaComp, f, competencia);
+  const metaLoja = escolherMetaLoja(metasDaComp, f.lojaId, competencia);
+  // Meta do supervisor = soma das metas das lojas que ele supervisiona.
+  // Se faltar a meta de alguma, a soma seria menor que a real e inflaria o
+  // atingimento — então fica sem meta e a loja que falta é apontada.
+  const lojasSemMeta = lojasGrupo.filter(
+    (l) => escolherMetaLoja(metasDaComp, l, competencia) == null,
   );
-  const nomeLoja = grupos.nomeDoGrupo;
-  const nomeCargo = new Map(cargos.map((c) => [c.id, c.nome]));
-  // Piso mora no CARGO; o campo do funcionário é exceção (§5, §10).
-  const pisoPorCargo = new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null]));
-  const metasDaComp = metas
-    .filter((m) => m.competencia === competencia)
-    .map((m) => ({ ...m, lojaId: canonizar(grupos, m.lojaId) }));
-  const ajustesDaComp = ajustes.filter((a) => a.competencia === competencia);
+  const metaGrupo =
+    lojasGrupo.length > 0 && lojasSemMeta.length === 0
+      ? lojasGrupo.reduce((a, l) => a + (escolherMetaLoja(metasDaComp, l, competencia) ?? 0), 0)
+      : null;
+
+  const regra = escolherRegra(ctx.regras, f, competencia);
+  const entrada: EntradaApuracao = {
+    competencia,
+    funcionario: f,
+    vendas: {
+      individual: { liquida: individual.liquida, bruta: individual.bruta },
+      loja: { liquida: loja.liquida, bruta: loja.bruta },
+      grupo: { liquida: grupo.liquida, bruta: grupo.bruta },
+    },
+    metas: { individual: metaIndividual, loja: metaLoja, grupo: metaGrupo },
+    regra,
+    bonus: bonusAplicaveis(ctx.bonus, f, competencia),
+    ajustes: ctx.ajustesDaComp.filter((a) => a.funcionarioId === f.id),
+    extras: {
+      melhorVendedorLoja:
+        f.lojaId != null && !!vendedorId
+          ? consolidado.melhorVendedorPorLoja.get(f.lojaId) === vendedorId
+          : false,
+    },
+    regraPiso: ctx.cfg.regraPiso,
+  };
+  return { f, entrada, regra, piso, metaIndividual, metaLoja, metaGrupo, lojasGrupo, lojasSemMeta };
+}
+
+/** Cálculo ao vivo (não grava nada). */
+export async function calcularCompetencia(
+  competencia: string,
+  status: StatusFechamento,
+): Promise<ResultadoCompetencia> {
+  const ctx = await montarContexto(competencia);
+  const { cfg, funcionarios, consolidado, grupos, metasDaComp, nomeLoja, nomeCargo } = ctx;
   const prog = progresso(competencia);
   const fatorProjecao = prog.emCurso && prog.decorridos > 0 ? prog.totais / prog.decorridos : null;
 
@@ -279,59 +385,14 @@ export async function calcularCompetencia(
       if (t && t.liquida > 0) inativosComVenda.push({ nome: bruto.nome, total: t.liquida });
       continue;
     }
-    // Cadastro antigo pode apontar para a filial irmã: normaliza na leitura.
-    const piso = pisoEfetivo(bruto, pisoPorCargo);
-    const f: Funcionario = {
-      ...bruto,
-      lojaId: canonizar(grupos, bruto.lojaId),
-      lojasGrupo: canonizarLista(grupos, bruto.lojasGrupo),
-      pisoGarantido: piso.valor,
-    };
-    const vendedorId = f.pdvVendedorId ?? null;
-    const individual = (vendedorId && consolidado.porVendedor.get(vendedorId)) || ZERO;
-    const loja = (f.lojaId != null && consolidado.porLoja.get(f.lojaId)) || ZERO;
-    const lojasGrupo = f.lojasGrupo?.length ? f.lojasGrupo : f.lojaId != null ? [f.lojaId] : [];
-    const grupo = somarLojas(consolidado.porLoja, lojasGrupo);
-
-    const metaIndividual = escolherMeta(metasDaComp, f, competencia);
-    const metaLoja = escolherMetaLoja(metasDaComp, f.lojaId, competencia);
-    // Meta do supervisor = soma das metas das lojas que ele supervisiona.
-    // Se faltar a meta de alguma, a soma seria menor que a real e inflaria o
-    // atingimento — então fica sem meta e a loja que falta é apontada.
-    const lojasSemMeta = lojasGrupo.filter(
-      (l) => escolherMetaLoja(metasDaComp, l, competencia) == null,
-    );
-    const metaGrupo =
-      lojasGrupo.length > 0 && lojasSemMeta.length === 0
-        ? lojasGrupo.reduce((a, l) => a + (escolherMetaLoja(metasDaComp, l, competencia) ?? 0), 0)
-        : null;
+    const { f, entrada, regra, piso, metaIndividual, metaLoja, metaGrupo, lojasGrupo, lojasSemMeta } =
+      montarEntrada(bruto, ctx);
     if (lojasGrupo.length > 1 && lojasSemMeta.length > 0) {
       semMetaGrupo.push(
         `${bruto.nome}: falta a meta de ${lojasSemMeta.map((l) => nomeLoja.get(l) ?? l).join(", ")}`,
       );
     }
 
-    const regra = escolherRegra(regras, f, competencia);
-    const entrada: EntradaApuracao = {
-      competencia,
-      funcionario: f,
-      vendas: {
-        individual: { liquida: individual.liquida, bruta: individual.bruta },
-        loja: { liquida: loja.liquida, bruta: loja.bruta },
-        grupo: { liquida: grupo.liquida, bruta: grupo.bruta },
-      },
-      metas: { individual: metaIndividual, loja: metaLoja, grupo: metaGrupo },
-      regra,
-      bonus: bonusAplicaveis(bonus, f, competencia),
-      ajustes: ajustesDaComp.filter((a) => a.funcionarioId === f.id),
-      extras: {
-        melhorVendedorLoja:
-          f.lojaId != null && !!vendedorId
-            ? consolidado.melhorVendedorPorLoja.get(f.lojaId) === vendedorId
-            : false,
-      },
-      regraPiso: cfg.regraPiso,
-    };
     const res = apurar(entrada);
     const proj = fatorProjecao ? apurar(escalarVendas(entrada, fatorProjecao)) : null;
 
@@ -361,7 +422,7 @@ export async function calcularCompetencia(
       lojaId: f.lojaId,
       lojaNome: f.lojaId != null ? (nomeLoja.get(f.lojaId) ?? null) : null,
       empresaId,
-      pdvVendedorId: vendedorId,
+      pdvVendedorId: f.pdvVendedorId ?? null,
       regraId: regra?.id ?? null,
       regraNome: regra?.nome ?? null,
       pisoOrigem: piso.origem,
@@ -380,11 +441,9 @@ export async function calcularCompetencia(
   const vinculados = new Set(
     funcionarios.map((f) => f.pdvVendedorId).filter((v): v is string => !!v),
   );
-  const nomeVendedor = new Map<string, string | null>();
-  for (const d of sellersSnap.docs) nomeVendedor.set(d.id, (d.data().nome as string) ?? null);
   const vendedoresSemCadastro = [...consolidado.porVendedor.entries()]
     .filter(([id]) => !vinculados.has(id))
-    .map(([id, t]) => ({ id, nome: nomeVendedor.get(id) ?? null, total: t.liquida }))
+    .map(([id, t]) => ({ id, nome: ctx.nomeVendedor.get(id) ?? null, total: t.liquida }))
     .sort((a, b) => b.total - a.total);
 
   const faturamento = cent([...consolidado.porLoja.values()].reduce((s, t) => s + t.liquida, 0));
@@ -642,64 +701,18 @@ export async function simular(
     regraId?: string | null;
   },
 ): Promise<{ atual: ResultadoApuracao; simulado: ResultadoApuracao }> {
-  const base = await calcularCompetencia(competencia, "aberto");
-  const linha = base.linhas.find((l) => l.funcionarioId === funcionarioId);
-  if (!linha) throw new Error("Funcionário não encontrado nesta competência.");
-
-  const [funcionarios, cargos, regras, metas, bonus, ajustes, cfg, vendas] = await Promise.all([
-    lerColecao<Funcionario>("com_funcionarios"),
-    lerColecao<Cargo>("com_cargos"),
-    lerColecao<Regra>("com_regras"),
-    lerColecao<Meta>("com_metas"),
-    lerColecao<Bonus>("com_bonus"),
-    lerColecao<Ajuste>("com_ajustes"),
-    carregarConfig(),
-    lerVendas(competencia),
-  ]);
-  const bruto = funcionarios.find((x) => x.id === funcionarioId);
+  const ctx = await montarContexto(competencia);
+  const bruto = ctx.funcionarios.find((x) => x.id === funcionarioId);
   if (!bruto) throw new Error("Funcionário não encontrado.");
-  const pisoPorCargo = new Map(cargos.map((c) => [c.id, c.pisoGarantido ?? null]));
-  const f: Funcionario = {
-    ...bruto,
-    pisoGarantido: pisoEfetivo(bruto, pisoPorCargo).valor,
-  };
 
-  const consolidado = consolidar(vendas);
-  const individual = (f.pdvVendedorId && consolidado.porVendedor.get(f.pdvVendedorId)) || ZERO;
-  const loja = (f.lojaId != null && consolidado.porLoja.get(f.lojaId)) || ZERO;
-  const lojasGrupo = f.lojasGrupo?.length ? f.lojasGrupo : f.lojaId != null ? [f.lojaId] : [];
-  const grupo = somarLojas(consolidado.porLoja, lojasGrupo);
-  const metasDaComp = metas.filter((m) => m.competencia === competencia);
-
-  const entradaBase: EntradaApuracao = {
-    competencia,
-    funcionario: f,
-    vendas: {
-      individual: { liquida: individual.liquida, bruta: individual.bruta },
-      loja: { liquida: loja.liquida, bruta: loja.bruta },
-      grupo: { liquida: grupo.liquida, bruta: grupo.bruta },
-    },
-    metas: {
-      individual: escolherMeta(metasDaComp, f, competencia),
-      loja: escolherMetaLoja(metasDaComp, f.lojaId, competencia),
-      grupo: null,
-    },
-    regra: escolherRegra(regras, f, competencia),
-    bonus: bonusAplicaveis(bonus, f, competencia),
-    ajustes: ajustes.filter((a) => a.competencia === competencia && a.funcionarioId === f.id),
-    extras: {
-      melhorVendedorLoja:
-        f.lojaId != null && !!f.pdvVendedorId
-          ? consolidado.melhorVendedorPorLoja.get(f.lojaId) === f.pdvVendedorId
-          : false,
-    },
-    regraPiso: cfg.regraPiso,
-  };
+  // Mesma montagem da apuração: o cenário "hoje" é, por construção, idêntico
+  // ao que a tela de acompanhamento mostra — regra, meta de grupo, piso do
+  // cargo e agrupamento de filiais inclusos.
+  const { f, entrada: entradaBase } = montarEntrada(bruto, ctx);
 
   const simulada: EntradaApuracao = {
     ...entradaBase,
-    funcionario:
-      overrides.piso !== undefined ? { ...f, pisoGarantido: overrides.piso } : f,
+    funcionario: overrides.piso !== undefined ? { ...f, pisoGarantido: overrides.piso } : f,
     vendas: {
       individual:
         overrides.vendaIndividual != null
@@ -720,7 +733,7 @@ export async function simular(
       grupo: entradaBase.metas.grupo,
     },
     regra: overrides.regraId
-      ? (regras.find((r) => r.id === overrides.regraId) ?? entradaBase.regra)
+      ? (ctx.regras.find((r) => r.id === overrides.regraId) ?? entradaBase.regra)
       : entradaBase.regra,
   };
 
