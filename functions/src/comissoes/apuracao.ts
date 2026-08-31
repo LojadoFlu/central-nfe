@@ -472,7 +472,9 @@ export async function calcularCompetencia(
     const res = apurar(entrada);
     const proj = fatorProjecao ? apurar(escalarVendas(entrada, fatorProjecao)) : null;
 
-    if (f.lojaId == null) semLoja.push(f.nome);
+    // Quem responde por um grupo de lojas (supervisor) não precisa estar
+    // lotado em nenhuma delas — só cobra quem ficou sem loja E sem grupo.
+    if (f.lojaId == null && lojasGrupo.length === 0) semLoja.push(f.nome);
     if (!regra) semRegra.push(f.nome);
     if (piso.valor == null) semPiso.push(f.nome);
     if (metaIndividual == null && metaLoja == null && metaGrupo == null) semMeta.push(f.nome);
