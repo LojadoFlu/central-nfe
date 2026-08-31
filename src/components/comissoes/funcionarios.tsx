@@ -62,9 +62,9 @@ export function Funcionarios({
 }) {
   const [edicao, setEdicao] = useState<Funcionario | null>(null);
   const [novoCargo, setNovoCargo] = useState("");
-  const [novoPiso, setNovoPiso] = useState("");
+  const [novoPiso, setNovoPiso] = useState<number | null>(null);
   const [nomesCargo, setNomesCargo] = useState<Record<string, string>>({});
-  const [pisosCargo, setPisosCargo] = useState<Record<string, string>>({});
+  const [pisosCargo, setPisosCargo] = useState<Record<string, number | null>>({});
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -210,10 +210,8 @@ export function Funcionarios({
             <div className="divide-y divide-border">
               {cargos.map((c) => {
                 const nome = nomesCargo[c.id] ?? c.nome;
-                const piso = pisosCargo[c.id] ?? (c.pisoGarantido == null ? "" : String(c.pisoGarantido));
-                const mudou =
-                  nome !== c.nome ||
-                  piso !== (c.pisoGarantido == null ? "" : String(c.pisoGarantido));
+                const piso = c.id in pisosCargo ? pisosCargo[c.id] : (c.pisoGarantido ?? null);
+                const mudou = nome !== c.nome || piso !== (c.pisoGarantido ?? null);
                 return (
                   <div key={c.id} className="flex items-center gap-2 py-2">
                     <Input
@@ -225,11 +223,9 @@ export function Funcionarios({
                     <InputNumero
                       className="h-9 w-32"
                       placeholder="piso R$"
-                      value={piso === "" ? null : Number(piso)}
+                      value={piso}
                       disabled={!podeGerir}
-                      onChange={(n) =>
-                        setPisosCargo({ ...pisosCargo, [c.id]: n == null ? "" : String(n) })
-                      }
+                      onChange={(n) => setPisosCargo((atual) => ({ ...atual, [c.id]: n }))}
                     />
                     {podeGerir ? (
                       <>
@@ -244,7 +240,7 @@ export function Funcionarios({
                                   id: c.id,
                                   nome: nome.trim(),
                                   ordem: c.ordem,
-                                  pisoGarantido: piso === "" ? null : Number(piso),
+                                  pisoGarantido: piso,
                                 }),
                               "Cargo salvo.",
                             )
@@ -280,8 +276,8 @@ export function Funcionarios({
                 <InputNumero
                   className="w-32"
                   placeholder="piso R$"
-                  value={novoPiso === "" ? null : Number(novoPiso)}
-                  onChange={(n) => setNovoPiso(n == null ? "" : String(n))}
+                  value={novoPiso}
+                  onChange={setNovoPiso}
                 />
                 <Button
                   size="sm"
@@ -291,10 +287,10 @@ export function Funcionarios({
                       await salvarCargo({
                         nome: novoCargo.trim(),
                         ordem: cargos.length + 1,
-                        pisoGarantido: novoPiso === "" ? null : Number(novoPiso),
+                        pisoGarantido: novoPiso,
                       });
                       setNovoCargo("");
-                      setNovoPiso("");
+                      setNovoPiso(null);
                     }, "Cargo criado.")
                   }
                 >

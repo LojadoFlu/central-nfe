@@ -112,10 +112,13 @@ export function InputNumero({
   className?: string;
 } & Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "type">) {
   const [texto, setTexto] = React.useState(() => numeroParaTexto(value));
+  const ref = React.useRef<HTMLInputElement>(null);
 
-  // Valor mudou por fora (recarregou, trocou de registro): re-sincroniza — mas
-  // sem atropelar quem está no meio da digitação ("1712," ainda vale 1712).
+  // Valor mudou por fora (recarregou, trocou de registro): re-sincroniza. Nunca
+  // enquanto o campo está em foco — reescrever o texto no meio da digitação é o
+  // que fazia "1712,50" virar "1712" na frente de quem estava digitando.
   React.useEffect(() => {
+    if (document.activeElement === ref.current) return;
     if (parseNumeroBR(texto) !== (value ?? null)) setTexto(numeroParaTexto(value));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
@@ -123,6 +126,7 @@ export function InputNumero({
   return (
     <Input
       {...props}
+      ref={ref}
       type="text"
       inputMode="decimal"
       className={cn("tnum", className)}
