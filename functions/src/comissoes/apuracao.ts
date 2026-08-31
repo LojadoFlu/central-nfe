@@ -171,6 +171,8 @@ export interface ResultadoCompetencia {
     gruposSemMeta: string[];
     /** Vendeu no mês, mas o cadastro está inativo — a venda não comissiona ninguém. */
     inativosComVenda: { nome: string; total: number }[];
+    /** Sem loja: fica fora da meta da loja e do grupo de qualquer supervisor. */
+    funcionariosSemLoja: string[];
   };
   status: StatusFechamento;
   /** true quando os números vêm do fechamento congelado, não de um novo cálculo. */
@@ -441,6 +443,7 @@ export async function calcularCompetencia(
   const semPiso: string[] = [];
   const semMeta: string[] = [];
   const semMetaGrupo: string[] = [];
+  const semLoja: string[] = [];
   const inativosComVenda: { nome: string; total: number }[] = [];
 
   for (const bruto of funcionarios) {
@@ -464,6 +467,7 @@ export async function calcularCompetencia(
     const res = apurar(entrada);
     const proj = fatorProjecao ? apurar(escalarVendas(entrada, fatorProjecao)) : null;
 
+    if (f.lojaId == null) semLoja.push(f.nome);
     if (!regra) semRegra.push(f.nome);
     if (piso.valor == null) semPiso.push(f.nome);
     if (metaIndividual == null && metaLoja == null && metaGrupo == null) semMeta.push(f.nome);
@@ -570,6 +574,7 @@ export async function calcularCompetencia(
       funcionariosSemMeta: semMeta,
       gruposSemMeta: semMetaGrupo,
       inativosComVenda,
+      funcionariosSemLoja: semLoja,
     },
     status,
     congelado: false,
@@ -647,6 +652,7 @@ async function lerFechamentoCongelado(
       funcionariosSemMeta: [],
       gruposSemMeta: [],
       inativosComVenda: [],
+      funcionariosSemLoja: [],
       ...(fechamento.divergencias ?? {}),
     },
     status: "fechado",

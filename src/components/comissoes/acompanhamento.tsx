@@ -130,6 +130,7 @@ export function Acompanhamento({
     apuracao.divergencias.funcionariosSemPiso.length +
     apuracao.divergencias.gruposSemMeta.length +
     apuracao.divergencias.inativosComVenda.length +
+    apuracao.divergencias.funcionariosSemLoja.length +
     (apuracao.divergencias.vendasSemVendedor.qtd > 0 ? 1 : 0);
 
   return (
@@ -206,6 +207,12 @@ export function Acompanhamento({
             ) : null}
             {apuracao.divergencias.funcionariosSemMeta.length > 0 ? (
               <p>Sem meta: {apuracao.divergencias.funcionariosSemMeta.join(", ")}.</p>
+            ) : null}
+            {apuracao.divergencias.funcionariosSemLoja.length > 0 ? (
+              <p>
+                Sem loja: {apuracao.divergencias.funcionariosSemLoja.join(", ")} — ficam fora da
+                meta da loja e do grupo de qualquer supervisor.
+              </p>
             ) : null}
             {apuracao.divergencias.gruposSemMeta.map((g, i) => (
               <p key={i}>{g}.</p>

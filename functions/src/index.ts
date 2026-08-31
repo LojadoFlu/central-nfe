@@ -4039,6 +4039,9 @@ export const comissoesSalvarFuncionario = onCall(opcoes, async (req) => {
     cpf: texto(req.data?.cpf, 14).replace(/\D/g, "") || null,
     cargoId: texto(req.data?.cargoId, 80) || null,
     lojaId: canonizar(grupos, numOuNulo(req.data?.lojaId)),
+    // Loja escolhida na tela: a sincronização com o PDV não mexe mais nela.
+    // O PDV pode ter a pessoa lotada numa filial e a operação tê-la noutra.
+    lojaManual: numOuNulo(req.data?.lojaId) != null,
     pdvVendedorId,
     pdvVendedorIds,
     semPdv,

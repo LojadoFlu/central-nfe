@@ -258,6 +258,7 @@ export interface ResultadoCompetencia {
     funcionariosSemMeta: string[];
     gruposSemMeta: string[];
     inativosComVenda: { nome: string; total: number }[];
+    funcionariosSemLoja: string[];
   };
   status: StatusFechamento;
   congelado: boolean;

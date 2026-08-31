@@ -81,6 +81,12 @@ export function Fechamento({
     if (d.funcionariosSemMeta.length > 0) {
       itens.push({ texto: `Sem meta: ${d.funcionariosSemMeta.join(", ")}`, grave: false });
     }
+    if (d.funcionariosSemLoja.length > 0) {
+      itens.push({
+        texto: `Sem loja: ${d.funcionariosSemLoja.join(", ")} — ficam fora da meta da loja`,
+        grave: true,
+      });
+    }
     for (const g of d.gruposSemMeta) itens.push({ texto: g, grave: true });
     for (const v of d.inativosComVenda) {
       itens.push({

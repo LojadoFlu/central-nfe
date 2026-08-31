@@ -178,7 +178,9 @@ export async function sincronizarVendedores(
     comVenda = vendaPorCodigoLoja.size;
   }
 
-  // Loja principal = onde mais vendeu no período.
+  // Loja principal = onde mais vendeu no período; quem não vendeu fica com a
+  // loja da equipe em que aparece. Sem esta segunda parte, quem estava de
+  // férias, entrou agora ou é caixa ficava "sem loja" — e fora de toda meta.
   for (const [id, m] of vendaPorCodigoLoja) {
     const v = porCodigo.get(id);
     if (!v) continue;
@@ -191,6 +193,9 @@ export async function sincronizarVendedores(
       }
     }
     v.lojaId = melhor;
+  }
+  for (const v of porCodigo.values()) {
+    if (v.lojaId == null && v.lojas.length > 0) v.lojaId = v.lojas[0];
   }
 
   // 4) Quem vendeu mas não apareceu em nenhuma equipe: busca individual.
@@ -359,7 +364,11 @@ async function reconciliarFuncionarios(
       const atual = existente.dados;
       const patch: Record<string, unknown> = {};
       if (nome && atual.nome !== nome) patch.nome = nome;
-      if (lojaId != null && atual.lojaId !== lojaId) patch.lojaId = lojaId;
+      // Loja escolhida à mão vence o PDV: quem corrigiu na tela sabe de algo
+      // que o PDV não sabe.
+      if (lojaId != null && atual.lojaId !== lojaId && atual.lojaManual !== true) {
+        patch.lojaId = lojaId;
+      }
       if (!atual.cargoId) patch.cargoId = cargoDe(v.tipo); // preenche, nunca sobrescreve
       if (!atual.cpf && v.cpf) patch.cpf = v.cpf;
       if (saiu && atual.ativo !== false) {
