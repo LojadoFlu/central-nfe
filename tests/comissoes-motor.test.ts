@@ -1173,3 +1173,57 @@ describe("mesma pessoa com mais de um código no PDV (Barra = 582 + 912)", () =>
     expect(r.comissaoBase).toBe(1986.2);
   });
 });
+
+describe("cargo que não comissiona (caixa)", () => {
+  const CAIXA: Funcionario = {
+    id: "caixa",
+    nome: "Ana Carolina",
+    cargoId: "caixa",
+    lojaId: 582,
+    pdvVendedorId: null,
+    semPdv: true,
+    pisoGarantido: 1712,
+    ativo: true,
+  };
+  const vendasDaLoja = {
+    individual: { liquida: 0, bruta: 0 },
+    loja: { liquida: 416_599.07, bruta: 416_599.07 },
+    grupo: { liquida: 416_599.07, bruta: 416_599.07 },
+  };
+
+  it("não leva o resultado da loja: trabalha só pelo fixo", () => {
+    const r = apurar(
+      entrada({ funcionario: CAIXA, semComissao: true, vendas: vendasDaLoja, metas: { individual: null, loja: 375_999.99, grupo: null } }),
+    );
+    expect(r.escopoMeta).toBe("individual");
+    expect(r.vendaConsiderada).toBe(0);
+    expect(r.metaConsiderada).toBeNull();
+    expect(r.atingimentoPct).toBeNull();
+    expect(r.valorDevido).toBe(1712);
+  });
+
+  it("sem a marca, quem não vende no PDV continua medido pela loja", () => {
+    const r = apurar(entrada({ funcionario: CAIXA, vendas: vendasDaLoja, metas: { individual: null, loja: 375_999.99, grupo: null } }));
+    expect(r.escopoMeta).toBe("loja");
+    expect(r.vendaConsiderada).toBe(416_599.07);
+  });
+
+  it("a memória diz que é fixo do cargo, não piso complementando comissão", () => {
+    const r = apurar(entrada({ funcionario: CAIXA, semComissao: true, vendas: vendasDaLoja }));
+    expect(r.memoria.map((m) => m.rotulo)).toContain("Fixo do cargo");
+    expect(r.memoria.map((m) => m.rotulo)).not.toContain("Piso garantido");
+  });
+
+  it("caixa que vendeu no balcão aparece com a venda dela, e nada muda no que recebe", () => {
+    const r = apurar(
+      entrada({
+        funcionario: { ...CAIXA, semPdv: false, pdvVendedorId: "05820099" },
+        semComissao: true,
+        vendas: { ...vendasDaLoja, individual: { liquida: 419.95, bruta: 419.95 } },
+      }),
+    );
+    expect(r.vendaConsiderada).toBe(419.95);
+    expect(r.comissaoTotal).toBe(0);
+    expect(r.valorDevido).toBe(1712);
+  });
+});

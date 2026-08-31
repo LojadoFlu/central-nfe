@@ -222,6 +222,11 @@ export interface EntradaApuracao {
     grupo: number | null;
   };
   regra: Regra | null;
+  /**
+   * Cargo que não comissiona (caixa): recebe o piso e nada mais. Não é medido
+   * por venda nenhuma — nem a própria, nem a da loja.
+   */
+  semComissao?: boolean;
   bonus: Bonus[];
   ajustes: Ajuste[];
   /** Sinais extras vindos da consolidação. */

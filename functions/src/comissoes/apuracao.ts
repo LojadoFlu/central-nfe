@@ -428,6 +428,7 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
     },
     metas: { individual: metaIndividual, loja: metaLoja, grupo: metaGrupo },
     regra,
+    semComissao,
     bonus: semComissao ? [] : bonusAplicaveis(ctx.bonus, f, competencia),
     ajustes: ctx.ajustesDaComp.filter((a) => a.funcionarioId === f.id),
     extras: {

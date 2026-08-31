@@ -400,7 +400,11 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
   // Uma loja marcada já basta: supervisor de uma loja só é medido por ela,
   // não pela venda que ele mesmo faz no balcão.
   const supervisiona = (e.funcionario.lojasGrupo ?? []).length >= 1;
-  const escopoPrincipal: EscopoVenda = escopos.has("grupo")
+  // Caixa não é medida por venda: nem a da loja (que não é dela), nem a do
+  // balcão. Fica no escopo individual, que é o que ela de fato fez.
+  const escopoPrincipal: EscopoVenda = e.semComissao
+    ? "individual"
+    : escopos.has("grupo")
     ? "grupo"
     : escopos.has("loja")
       ? "loja"
@@ -501,7 +505,13 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
     e.regraPiso === "soma" ? centavos(piso + comissaoTotal) : centavos(Math.max(piso, comissaoTotal));
   const pisoAplicado = e.regraPiso === "maior" && piso > comissaoTotal;
 
-  if (pisoAplicado) {
+  if (e.semComissao) {
+    memoria.push({
+      rotulo: "Fixo do cargo",
+      detalhe: "Cargo sem comissão — recebe o piso, sem medição por venda",
+      valor: piso,
+    });
+  } else if (pisoAplicado) {
     memoria.push({
       rotulo: "Piso garantido",
       detalhe: `Comissão de ${brl(comissaoTotal)} ficou abaixo do piso — prevalece o piso`,
