@@ -2,7 +2,7 @@
 
 // Cadastro de funcionários, cargos e vínculo com o PDV (§4, §2, §31).
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -76,6 +76,7 @@ export function Funcionarios({
   const [mostrarInativos, setMostrarInativos] = useState(false);
   const [resultadoSync, setResultadoSync] = useState<ResultadoSyncQuadro | null>(null);
   const [buscaPdv, setBuscaPdv] = useState("");
+  const formRef = useRef<HTMLDivElement>(null);
   const [achadosPdv, setAchadosPdv] = useState<AchadoPdv[] | null>(null);
 
   const nomeLoja = useMemo(
@@ -98,6 +99,12 @@ export function Funcionarios({
   const naoSaoPessoas = useMemo(() => vendedores.filter((v) => v.ignorado), [vendedores]);
   const ativos = useMemo(() => funcionarios.filter((f) => f.ativo), [funcionarios]);
   const inativos = useMemo(() => funcionarios.filter((f) => !f.ativo), [funcionarios]);
+
+  // Abrir o formulário no meio de uma lista de 34 pessoas não adianta se ele
+  // ficar fora da tela — no celular isso passa por "o botão não faz nada".
+  useEffect(() => {
+    if (edicao && !edicao.id) formRef.current?.scrollIntoView({ block: "center" });
+  }, [edicao]);
 
   async function executar(fn: () => Promise<unknown>, mensagem: string) {
     setOcupado(true);
@@ -414,7 +421,7 @@ export function Funcionarios({
       ) : null}
 
       {edicao ? (
-        <Card className="border-primary/40">
+        <Card className="border-primary/40" ref={formRef}>
           <CardContent className="space-y-3 py-4">
             <h2 className="text-[0.95rem] font-semibold tracking-tight">
               {edicao.id

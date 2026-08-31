@@ -12,6 +12,11 @@ export { parseNumeroBR };
 export const CLASSE_CAMPO =
   "h-11 w-full rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
 
+/**
+ * Rótulo + campo. O rótulo é AMARRADO ao controle (htmlFor/id): sem isso,
+ * tocar no texto não foca o campo — o que no celular é a diferença entre
+ * acertar e errar o alvo — e leitor de tela não anuncia o nome do campo.
+ */
 export function Campo({
   label,
   hint,
@@ -23,11 +28,27 @@ export function Campo({
   children: React.ReactNode;
   className?: string;
 }) {
+  const id = React.useId();
+  const idDica = `${id}-dica`;
+  const controle =
+    React.isValidElement(children) &&
+    !(children.props as { id?: string }).id
+      ? React.cloneElement(children as React.ReactElement<Record<string, unknown>>, {
+          id,
+          ...(hint ? { "aria-describedby": idDica } : {}),
+        })
+      : children;
   return (
     <div className={cn("space-y-1", className)}>
-      <label className="block text-xs font-medium text-muted-foreground">{label}</label>
-      {children}
-      {hint ? <p className="text-[11px] leading-snug text-muted-foreground">{hint}</p> : null}
+      <label htmlFor={id} className="block text-xs font-medium text-muted-foreground">
+        {label}
+      </label>
+      {controle}
+      {hint ? (
+        <p id={idDica} className="text-[11px] leading-snug text-muted-foreground">
+          {hint}
+        </p>
+      ) : null}
     </div>
   );
 }
