@@ -8,8 +8,10 @@
 // da semana determina sozinha a competência.
 
 export interface LinhaImport {
-  /** Segunda-feira da semana, yyyy-MM-dd. */
+  /** Primeiro dia da semana (as datas do arquivo são os limites dela). */
   semanaInicio: string;
+  /** Último dia da semana. A semana não atravessa o mês: no fim ela é cortada. */
+  semanaFim?: string | null;
   codigoPdv: string | null;
   nome: string | null;
   loja: string | null;
@@ -63,6 +65,10 @@ const CABECALHOS: Record<string, string> = {
   semanainicio: "semanaInicio",
   data: "semanaInicio",
   inicio: "semanaInicio",
+  data_inicio: "semanaInicio",
+  fim: "semanaFim",
+  data_fim: "semanaFim",
+  semana_fim: "semanaFim",
   codigo: "codigoPdv",
   codigo_pdv: "codigoPdv",
   codigopdv: "codigoPdv",
@@ -83,6 +89,54 @@ function separador(linha: string): string {
 }
 
 /**
+ * Linha SEM cabeçalho, lida pelo FORMATO dos campos e não pela posição: as
+ * datas são reconhecidas como datas, a meta como o número depois delas, o nome
+ * como o texto entre as duas coisas e a loja como o texto antes da primeira
+ * data.
+ *
+ * O export do Controle de Vez vem assim:
+ *   Flu Laranjeiras;30/08/2026;31/08/2026;Lazlo;4600,00
+ *
+ * As duas datas são os limites da semana. Ler pelo formato evita quebrar
+ * quando alguém acrescentar ou mover uma coluna — e isso vai acontecer.
+ */
+function lerLinhaSemCabecalho(campos: string[]): Omit<LinhaImport, "linha"> | null {
+  const datas: number[] = [];
+  campos.forEach((c, i) => {
+    if (dataDoCsv(c)) datas.push(i);
+  });
+  if (datas.length === 0) return null;
+
+  const ultimaData = datas[datas.length - 1];
+  let iMeta = -1;
+  for (let i = campos.length - 1; i > ultimaData; i--) {
+    if (/\d/.test(campos[i]) && valorDoCsv(campos[i]) != null) {
+      iMeta = i;
+      break;
+    }
+  }
+  if (iMeta < 0) return null;
+
+  let nome: string | null = null;
+  let codigoPdv: string | null = null;
+  for (let i = ultimaData + 1; i < iMeta; i++) {
+    const v = campos[i].trim();
+    if (!v) continue;
+    if (/^\d{4,}$/.test(v)) codigoPdv = v;
+    else if (!nome) nome = v;
+  }
+
+  return {
+    semanaInicio: dataDoCsv(campos[datas[0]])!,
+    semanaFim: datas.length > 1 ? dataDoCsv(campos[ultimaData]) : null,
+    codigoPdv,
+    nome,
+    loja: datas[0] > 0 ? campos[0].trim() || null : null,
+    meta: valorDoCsv(campos[iMeta])!,
+  };
+}
+
+/**
  * Lê o CSV/TSV exportado. Aceita cabeçalho em qualquer ordem e nomes usuais de
  * coluna. Linha sem data ou sem meta vira erro apontando o número da linha —
  * arquivo de meta com linha engolida em silêncio é folha errada no fim do mês.
@@ -98,50 +152,60 @@ export function parseCsvMetas(texto: string): ResultadoParse {
   if (cruas.length === 0) return { linhas, erros: ["Arquivo vazio."] };
 
   const sep = separador(cruas[0]);
-  const cabecalho = cruas[0]
-    .split(sep)
-    .map((c) => normalizarNome(c).toLowerCase().replace(/ /g, "_"));
-  const mapa = cabecalho.map((c) => CABECALHOS[c] ?? null);
-  if (!mapa.includes("semanaInicio") || !mapa.includes("meta")) {
-    return {
-      linhas,
-      erros: [
-        'Cabeçalho não reconhecido. Esperado ao menos as colunas "semana_inicio" e "meta" (e "codigo_pdv" ou "nome").',
-      ],
-    };
-  }
+  const primeira = cruas[0].split(sep);
+  const mapa = primeira.map(
+    (c) => CABECALHOS[normalizarNome(c).toLowerCase().replace(/ /g, "_")] ?? null,
+  );
+  // Cabeçalho é opcional: o export do Controle de Vez vem sem.
+  const temCabecalho = mapa.filter(Boolean).length >= 2 && !primeira.some((c) => dataDoCsv(c));
 
-  for (let i = 1; i < cruas.length; i++) {
-    const campos = cruas[i].split(sep);
+  for (let i = temCabecalho ? 1 : 0; i < cruas.length; i++) {
+    const campos = cruas[i].split(sep).map((c) => c.trim());
+    const numero = i + 1;
+
+    if (!temCabecalho) {
+      const lida = lerLinhaSemCabecalho(campos);
+      if (!lida) {
+        erros.push(`Linha ${numero}: não reconheci data e meta em "${cruas[i].slice(0, 60)}".`);
+        continue;
+      }
+      if (!lida.codigoPdv && !lida.nome) {
+        erros.push(`Linha ${numero}: sem código do PDV nem nome — não dá para saber de quem é.`);
+        continue;
+      }
+      linhas.push({ ...lida, linha: numero });
+      continue;
+    }
+
     const registro: Record<string, string> = {};
     mapa.forEach((chave, j) => {
       if (chave) registro[chave] = (campos[j] ?? "").trim();
     });
-
     const semanaInicio = dataDoCsv(registro.semanaInicio ?? "");
     const meta = valorDoCsv(registro.meta ?? "");
     const codigoPdv = (registro.codigoPdv ?? "").trim() || null;
     const nome = (registro.nome ?? "").trim() || null;
 
     if (!semanaInicio) {
-      erros.push(`Linha ${i + 1}: data da semana inválida ("${registro.semanaInicio ?? ""}").`);
+      erros.push(`Linha ${numero}: data da semana inválida ("${registro.semanaInicio ?? ""}").`);
       continue;
     }
     if (meta == null) {
-      erros.push(`Linha ${i + 1}: meta inválida ("${registro.meta ?? ""}").`);
+      erros.push(`Linha ${numero}: meta inválida ("${registro.meta ?? ""}").`);
       continue;
     }
     if (!codigoPdv && !nome) {
-      erros.push(`Linha ${i + 1}: sem código do PDV nem nome — não dá para saber de quem é.`);
+      erros.push(`Linha ${numero}: sem código do PDV nem nome — não dá para saber de quem é.`);
       continue;
     }
     linhas.push({
       semanaInicio,
+      semanaFim: dataDoCsv(registro.semanaFim ?? "") ?? null,
       codigoPdv,
       nome,
       loja: (registro.loja ?? "").trim() || null,
       meta,
-      linha: i + 1,
+      linha: numero,
     });
   }
   return { linhas, erros };
@@ -161,4 +225,32 @@ export function indicesDasSemanas(datas: string[]): Map<string, number> {
   const m = new Map<string, number>();
   unicas.forEach((d, i) => m.set(d, i));
   return m;
+}
+
+/**
+ * Acha a pessoa pelo nome que veio no arquivo. O export manda o nome curto
+ * ("Lazlo") e o cadastro tem o completo ("LAZLO SENTO SE") — exigir igualdade
+ * não casaria ninguém.
+ *
+ * A ordem importa: igual > começa com > mesmo primeiro nome. Só vale quando
+ * sobra UM candidato; havendo mais de um, devolve todos para alguém decidir,
+ * porque chutar aqui é pagar a comissão de um para outro.
+ */
+export function acharPorNome<T extends { nome: string }>(
+  nomeDoArquivo: string,
+  candidatos: T[],
+): { achado: T | null; ambiguos: T[] } {
+  const alvo = normalizarNome(nomeDoArquivo);
+  if (!alvo) return { achado: null, ambiguos: [] };
+
+  const tentativas = [
+    candidatos.filter((c) => normalizarNome(c.nome) === alvo),
+    candidatos.filter((c) => normalizarNome(c.nome).startsWith(`${alvo} `)),
+    candidatos.filter((c) => normalizarNome(c.nome).split(" ")[0] === alvo.split(" ")[0]),
+  ];
+  for (const grupo of tentativas) {
+    if (grupo.length === 1) return { achado: grupo[0], ambiguos: [] };
+    if (grupo.length > 1) return { achado: null, ambiguos: grupo };
+  }
+  return { achado: null, ambiguos: [] };
 }

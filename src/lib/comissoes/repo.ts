@@ -96,6 +96,7 @@ export interface PreviaImportMetas {
   linhas: number;
   erros: string[];
   ambiguos: string[];
+  lojasNaoMapeadas: string[];
   semCasar: { linha: number; nome: string | null; codigo: string | null; meta: number }[];
   resumo: {
     competencia: string;

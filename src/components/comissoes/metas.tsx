@@ -188,7 +188,7 @@ export function Metas({
         </div>
       ) : null}
 
-      {podeGerir ? <ImportarMetas onImportado={onRecarregar} /> : null}
+      {podeGerir ? <ImportarMetas lojas={lojas} onImportado={onRecarregar} /> : null}
 
       <Card>
         <CardContent className="space-y-2 py-4">

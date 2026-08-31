@@ -9,10 +9,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatBRL, formatarData } from "@/lib/utils";
 import { Check, TriangleAlert, Upload } from "lucide-react";
-import { importarMetas, type PreviaImportMetas } from "@/lib/comissoes/repo";
+import { importarMetas, obterConfig, salvarConfig, type PreviaImportMetas } from "@/lib/comissoes/repo";
+import type { StorePdv } from "@/lib/nfe/repo";
 import { Aviso, mesLabel } from "./comum";
 
-export function ImportarMetas({ onImportado }: { onImportado: () => Promise<void> }) {
+export function ImportarMetas({
+  lojas,
+  onImportado,
+}: {
+  lojas: StorePdv[];
+  onImportado: () => Promise<void>;
+}) {
   const [texto, setTexto] = useState("");
   const [previa, setPrevia] = useState<PreviaImportMetas | null>(null);
   const [ocupado, setOcupado] = useState(false);
@@ -49,7 +56,9 @@ export function ImportarMetas({ onImportado }: { onImportado: () => Promise<void
         <h2 className="text-[0.95rem] font-semibold tracking-tight">Importar metas do Controle de Vez</h2>
         <p className="text-xs text-muted-foreground">
           A meta de cada vendedor vem pronta de lá — aqui ela só é conferida e guardada. A meta da
-          loja passa a ser a <strong>soma</strong> das metas dos vendedores dela.
+          loja passa a ser a <strong>soma</strong> das metas dos vendedores dela. O arquivo pode vir
+          sem cabeçalho, no formato{" "}
+          <code className="text-[10px]">Loja;início;fim;nome;meta</code>.
         </p>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -108,6 +117,55 @@ export function ImportarMetas({ onImportado }: { onImportado: () => Promise<void
                 ) : null}
               </div>
             ))}
+
+            {previa.lojasNaoMapeadas.length > 0 ? (
+              <div className="space-y-1.5 rounded-md bg-warning/10 p-2.5">
+                <p className="font-semibold text-warning">
+                  Nomes de loja que eu não reconheci
+                </p>
+                <p className="text-muted-foreground">
+                  Diga a qual loja daqui cada um corresponde — fica salvo e não pergunto de novo.
+                  Sem isso, o nome do vendedor é procurado no quadro inteiro, o que aumenta a chance
+                  de homônimo.
+                </p>
+                {previa.lojasNaoMapeadas.map((nome) => (
+                  <div key={nome} className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate">{nome}</span>
+                    <select
+                      className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                      defaultValue=""
+                      disabled={ocupado}
+                      onChange={async (e) => {
+                        if (!e.target.value) return;
+                        setOcupado(true);
+                        try {
+                          const cfg = await obterConfig();
+                          await salvarConfig({
+                            ...cfg,
+                            lojasImport: {
+                              ...(cfg.lojasImport ?? {}),
+                              [nome]: Number(e.target.value),
+                            },
+                          });
+                          await rodar(false);
+                        } catch (err) {
+                          setErro((err as Error).message);
+                        } finally {
+                          setOcupado(false);
+                        }
+                      }}
+                    >
+                      <option value="">— escolher loja —</option>
+                      {lojas.map((l) => (
+                        <option key={l.id} value={String(l.id)}>
+                          {l.grupoNome || l.nome}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             {temProblema ? (
               <div className="space-y-1 rounded-md bg-destructive/10 p-2.5 text-destructive">

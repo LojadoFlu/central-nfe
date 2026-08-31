@@ -26,6 +26,7 @@ import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-venda
 import { sincronizarVendedores } from "./comissoes/vendedores";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./comissoes/grupos";
 import {
+  acharPorNome,
   competenciaDaSemana,
   indicesDasSemanas,
   normalizarNome,
@@ -4378,6 +4379,14 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
   const diaPagamentoFolha = diaBruto >= 1 && diaBruto <= 28 ? diaBruto : 5;
   const mesPagamento = String(req.data?.mesPagamento) === "mesmo" ? "mesmo" : "seguinte";
   const provisaoNoFluxo = req.data?.provisaoNoFluxo === true;
+  // De-para dos nomes de loja do arquivo de metas ("FLU LARANJEIRAS" → 335).
+  const lojasImport: Record<string, number> = {};
+  const mapaLojas = (req.data?.lojasImport ?? {}) as Record<string, unknown>;
+  for (const [nome, loja] of Object.entries(mapaLojas)) {
+    const chave = normalizarNome(nome);
+    const id = numOuNulo(loja);
+    if (chave && id != null) lojasImport[chave] = id;
+  }
   const sincronizarFuncionarios = req.data?.sincronizarFuncionarios !== false;
   const cargosPorTipoPdv: Record<string, string> = {};
   const mapaIn = (req.data?.cargosPorTipoPdv ?? {}) as Record<string, unknown>;
@@ -4394,6 +4403,7 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
     provisaoNoFluxo,
     sincronizarFuncionarios,
     cargosPorTipoPdv,
+    lojasImport,
   };
   await db
     .collection("com_config")
@@ -4755,14 +4765,30 @@ export const comissoesImportarMetas = onCall(
     const funcionarios = (await db.collection("com_funcionarios").get()).docs.map(
       (d) => ({ id: d.id, ...(d.data() as object) }) as Funcionario,
     );
+    const ativos = funcionarios.filter((f) => f.ativo !== false);
     const porCodigo = new Map<string, Funcionario>();
-    const porNome = new Map<string, Funcionario[]>();
-    for (const f of funcionarios) {
-      if (f.ativo === false) continue;
-      for (const c of codigosPdv(f)) porCodigo.set(c, f);
-      const chave = normalizarNome(f.nome);
-      porNome.set(chave, [...(porNome.get(chave) ?? []), f]);
+    for (const f of ativos) for (const c of codigosPdv(f)) porCodigo.set(c, f);
+
+    // Nome de loja do outro app ("Flu Laranjeiras") → loja daqui (FLU CLUBE).
+    // Primeiro tenta pelo próprio nome; o que não bater vem do de-para salvo
+    // nas configurações, e o que sobrar é reportado para o admin amarrar.
+    const cfgImport = (await db.collection("com_config").doc("geral").get()).data() as
+      | { lojasImport?: Record<string, number> }
+      | undefined;
+    const deParaLojas = cfgImport?.lojasImport ?? {};
+    const lojaPorNome = new Map<string, number>();
+    for (const d of (await db.collection("pdv_stores").get()).docs) {
+      const v = d.data() as { nome?: string; grupoNome?: string };
+      for (const n of [v.nome, v.grupoNome]) {
+        if (n) lojaPorNome.set(normalizarNome(n), Number(d.id));
+      }
     }
+    const resolverLoja = (nome: string | null): number | null => {
+      if (!nome) return null;
+      const chave = normalizarNome(nome);
+      return lojaPorNome.get(chave) ?? deParaLojas[chave] ?? null;
+    };
+    const lojasNaoMapeadas = new Set<string>();
 
     // competência → funcionárioId → { semanas por data, total }
     const porCompetencia = new Map<string, Map<string, Map<string, number>>>();
@@ -4770,12 +4796,31 @@ export const comissoesImportarMetas = onCall(
     const ambiguos: string[] = [];
 
     for (const l of linhas) {
-      let f = l.codigoPdv ? porCodigo.get(l.codigoPdv) : undefined;
+      let f: Funcionario | null = l.codigoPdv ? (porCodigo.get(l.codigoPdv) ?? null) : null;
+
       if (!f && l.nome) {
-        const candidatos = porNome.get(normalizarNome(l.nome)) ?? [];
-        if (candidatos.length === 1) f = candidatos[0];
-        else if (candidatos.length > 1) ambiguos.push(`${l.nome} (${candidatos.length} cadastros)`);
+        // O export manda o nome curto ("Lazlo"); procura primeiro dentro da
+        // loja, que é onde a chance de homônimo é menor.
+        const lojaId = resolverLoja(l.loja);
+        if (l.loja && lojaId == null) lojasNaoMapeadas.add(l.loja);
+        const naLoja = lojaId != null ? ativos.filter((x) => x.lojaId === lojaId) : [];
+        const tentativa = acharPorNome(l.nome, naLoja.length ? naLoja : ativos);
+        if (tentativa.achado) {
+          f = tentativa.achado;
+        } else if (tentativa.ambiguos.length > 1) {
+          ambiguos.push(
+            `${l.nome} → ${tentativa.ambiguos.map((c) => c.nome).join(" / ")}`,
+          );
+        } else if (naLoja.length) {
+          // Não achou na loja: tenta no quadro inteiro antes de desistir.
+          const geral = acharPorNome(l.nome, ativos);
+          if (geral.achado) f = geral.achado;
+          else if (geral.ambiguos.length > 1) {
+            ambiguos.push(`${l.nome} → ${geral.ambiguos.map((c) => c.nome).join(" / ")}`);
+          }
+        }
       }
+
       if (!f) {
         semCasar.push({ linha: l.linha, nome: l.nome, codigo: l.codigoPdv, meta: l.meta });
         continue;
@@ -4871,6 +4916,7 @@ export const comissoesImportarMetas = onCall(
       linhas: linhas.length,
       erros,
       ambiguos: [...new Set(ambiguos)],
+      lojasNaoMapeadas: [...lojasNaoMapeadas],
       semCasar,
       resumo: resumo.sort((a, b) => a.competencia.localeCompare(b.competencia)),
     };

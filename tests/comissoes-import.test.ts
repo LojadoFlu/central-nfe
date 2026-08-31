@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  acharPorNome,
   competenciaDaSemana,
   dataDoCsv,
   indicesDasSemanas,
@@ -71,10 +72,12 @@ describe("parse do arquivo", () => {
     expect(r.erros[0]).toContain("não dá para saber de quem é");
   });
 
-  it("recusa cabeçalho que não tem o mínimo", () => {
+  it("arquivo sem data nenhuma é recusado linha a linha", () => {
+    // Sem cabeçalho conhecido e sem data, não há como saber de que semana é.
     const r = parseCsvMetas("pessoa;quanto\nLUIZ;12000");
     expect(r.linhas).toHaveLength(0);
-    expect(r.erros[0]).toContain("Cabeçalho não reconhecido");
+    expect(r.erros).toHaveLength(2);
+    expect(r.erros[0]).toContain("não reconheci data e meta");
   });
 
   it("arquivo vazio não passa por engano", () => {
@@ -93,5 +96,77 @@ describe("semanas e competência", () => {
     expect(i.get("2026-08-04")).toBe(0);
     expect(i.get("2026-08-11")).toBe(1);
     expect(i.get("2026-08-18")).toBe(2);
+  });
+});
+
+describe("formato real do Controle de Vez (sem cabeçalho)", () => {
+  const REAL = [
+    "Flu Laranjeiras;30/08/2026;31/08/2026;Lazlo;4600,00",
+    "Flu Laranjeiras;24/08/2026;29/08/2026;Lazlo;18400,00",
+    "Flu Laranjeiras;24/08/2026;29/08/2026;Marcos;21000,00",
+  ].join("\n");
+
+  it("lê loja, limites da semana, nome e meta sem cabeçalho nenhum", () => {
+    const r = parseCsvMetas(REAL);
+    expect(r.erros).toEqual([]);
+    expect(r.linhas).toHaveLength(3);
+    expect(r.linhas[0]).toMatchObject({
+      loja: "Flu Laranjeiras",
+      semanaInicio: "2026-08-30",
+      semanaFim: "2026-08-31",
+      nome: "Lazlo",
+      meta: 4600,
+    });
+  });
+
+  it("a semana cortada no fim do mês fica na competência dela", () => {
+    const r = parseCsvMetas(REAL);
+    expect(competenciaDaSemana(r.linhas[0].semanaInicio)).toBe("2026-08");
+    // 30/08 a 31/08 são dois dias: a semana foi cortada no fim do mês.
+    expect(r.linhas[0].semanaFim).toBe("2026-08-31");
+  });
+
+  it("não confunde a primeira linha de dados com cabeçalho", () => {
+    expect(parseCsvMetas(REAL).linhas[0].nome).toBe("Lazlo");
+  });
+
+  it("uma coluna a mais no meio não quebra a leitura", () => {
+    const r = parseCsvMetas("Flu Laranjeiras;30/08/2026;31/08/2026;03350006;Lazlo;4600,00");
+    expect(r.linhas[0]).toMatchObject({ codigoPdv: "03350006", nome: "Lazlo", meta: 4600 });
+  });
+});
+
+describe("casar o nome curto do arquivo com o nome do cadastro", () => {
+  const QUADRO = [
+    { id: "1", nome: "LAZLO SENTO SE" },
+    { id: "2", nome: "MARCOS COSTA DA SILVA" },
+    { id: "3", nome: "MARCOS JR" },
+    { id: "4", nome: "TAIS MAC DOWELL ROSSI" },
+  ];
+
+  it('"Lazlo" acha LAZLO SENTO SE', () => {
+    expect(acharPorNome("Lazlo", QUADRO).achado?.id).toBe("1");
+  });
+
+  it("nome completo continua achando", () => {
+    expect(acharPorNome("TAIS MAC DOWELL ROSSI", QUADRO).achado?.id).toBe("4");
+  });
+
+  it('"Marcos" é ambíguo e NÃO escolhe sozinho', () => {
+    const r = acharPorNome("Marcos", QUADRO);
+    expect(r.achado).toBeNull();
+    expect(r.ambiguos.map((c) => c.nome).sort()).toEqual(["MARCOS COSTA DA SILVA", "MARCOS JR"]);
+  });
+
+  it('"Marcos Jr" resolve a ambiguidade', () => {
+    expect(acharPorNome("Marcos Jr", QUADRO).achado?.id).toBe("3");
+  });
+
+  it("acento e caixa não atrapalham", () => {
+    expect(acharPorNome("taís", QUADRO).achado?.id).toBe("4");
+  });
+
+  it("quem não existe não casa com ninguém", () => {
+    expect(acharPorNome("FULANO", QUADRO).achado).toBeNull();
   });
 });

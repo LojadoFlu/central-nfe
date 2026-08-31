@@ -281,6 +281,8 @@ export interface ConfigComissoes {
   sincronizarFuncionarios: boolean;
   /** Tipo do vendedor no PDV ("V", "G"…) → cargo daqui, na criação. */
   cargosPorTipoPdv: Record<string, string>;
+  /** Nome de loja do arquivo de metas → id da loja daqui. */
+  lojasImport?: Record<string, number>;
 }
 
 export interface ResultadoSyncQuadro {
