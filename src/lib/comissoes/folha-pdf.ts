@@ -197,19 +197,6 @@ export function montarPdfPorLoja(
         formatBRL(p.total),
         p.faltas ? String(p.faltas) : "—",
       ]),
-      foot: [
-        [
-          {
-            content: `TOTAL — ${loja.pessoas.length} pessoa${loja.pessoas.length === 1 ? "" : "s"}`,
-            colSpan: 2,
-          },
-          formatBRL(loja.piso),
-          formatBRL(loja.gratificacao),
-          loja.desconto ? `-${formatBRL(loja.desconto)}` : "—",
-          formatBRL(loja.total),
-          loja.faltas ? String(loja.faltas) : "—",
-        ],
-      ],
       styles: { fontSize: 8.5, cellPadding: 1.6 },
       headStyles: { fillColor: VERDE, fontSize: 8.5 },
       alternateRowStyles: { fillColor: CINZA_CLARO },
