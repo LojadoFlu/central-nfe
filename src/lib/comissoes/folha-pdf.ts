@@ -2,6 +2,7 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
 import type { LinhaApuracao, ResultadoCompetencia } from "./tipos";
+import { custoDaLinha } from "./custo";
 import { STATUS_LABEL } from "./tipos";
 
 const MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
@@ -109,13 +110,8 @@ export function folhaPorLoja(linhas: LinhaApuracao[]): FolhaDaLoja[] {
       desconto: 0,
       total: 0,
     };
-    // O desconto já saiu do valor devido; para a folha fechar (piso +
-    // gratificação − desconto = total), ele é somado de volta antes de separar
-    // o piso da gratificação.
-    const desconto = cent(l.descontosTotal ?? 0);
-    const bruto = cent(l.valorDevido + desconto);
-    const piso = cent(Math.min(l.piso ?? 0, bruto));
-    const gratificacao = cent(bruto - piso);
+    // Mesma conta do dashboard — os dois papéis contam a mesma história.
+    const { piso, comissao: gratificacao, desconto } = custoDaLinha(l);
     grupo.pessoas.push({
       nome: l.funcionarioNome,
       cargo: l.cargoNome ?? "sem cargo",

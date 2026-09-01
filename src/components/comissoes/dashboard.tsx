@@ -10,6 +10,7 @@ import { formatBRL, formatarData } from "@/lib/utils";
 import { Medal } from "lucide-react";
 import type { CustoMes, ResultadoCompetencia } from "@/lib/comissoes/tipos";
 import { custoComissoes } from "@/lib/comissoes/repo";
+import { custoDaFolha } from "@/lib/comissoes/custo";
 import { BarraMeta, Select, mesLabel, pctFmt } from "./comum";
 
 type Criterio = "valorDevido" | "comissaoTotal" | "vendaConsiderada" | "atingimentoPct";
@@ -76,16 +77,37 @@ export function Dashboard({
 
   if (!apuracao) return <Skeleton className="h-40" />;
   const t = apuracao.totais;
+  const custo = custoDaFolha(apuracao.linhas);
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <StatCard label="Faturamento" value={formatBRL(t.faturamento)} />
+        {/* A folha se divide em duas partes que a operação decide de formas
+            diferentes: o piso é do cargo, a comissão é do desempenho. */}
         <StatCard
-          label="Custo de comissões"
-          value={formatBRL(t.valorDevido)}
+          label="Custo piso"
+          value={formatBRL(custo.piso)}
+          hint={`fixo garantido${
+            t.pisoSemComissao > 0 ? ` · ${formatBRL(t.pisoSemComissao)} de quem não comissiona` : ""
+          }`}
+        />
+        <StatCard
+          label="Custo comissão"
+          value={formatBRL(custo.comissao)}
+          hint={
+            t.faturamento > 0
+              ? `${pctFmt((custo.comissao / t.faturamento) * 100)} da venda · bônus ${formatBRL(t.bonus)}`
+              : `bônus ${formatBRL(t.bonus)}`
+          }
+        />
+        <StatCard
+          label="Custo total"
+          value={formatBRL(custo.total)}
           tone="warning"
-          hint={t.faturamento > 0 ? `${pctFmt((t.valorDevido / t.faturamento) * 100)} da venda` : undefined}
+          hint={`${
+            t.faturamento > 0 ? `${pctFmt((custo.total / t.faturamento) * 100)} da venda` : ""
+          }${custo.desconto > 0 ? ` · já sem ${formatBRL(custo.desconto)} de descontos` : ""}`}
         />
         <StatCard
           label="Folha sai em"
@@ -202,11 +224,10 @@ export function Dashboard({
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Piso garantido dentro deste total: {formatBRL(t.pisoUtilizado)} · bônus{" "}
-              {formatBRL(t.bonus)}
-              {t.pisoSemComissao > 0
-                ? ` · piso de quem não comissiona ${formatBRL(t.pisoSemComissao)}`
-                : ""}
+              Piso {formatBRL(custo.piso)} + comissão {formatBRL(custo.comissao)}
+              {custo.desconto > 0 ? ` − descontos ${formatBRL(custo.desconto)}` : ""} ={" "}
+              {formatBRL(custo.total)}. Desse piso, {formatBRL(t.pisoUtilizado)} é complemento de
+              quem comissiona e não alcançou o próprio piso.
             </p>
           </CardContent>
         </Card>
