@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatBRL } from "@/lib/utils";
 import { Play } from "lucide-react";
-import type { EscopoVenda, Funcionario, ResultadoApuracao } from "@/lib/comissoes/tipos";
+import type { EscopoVenda, Funcionario, Indicador, ResultadoApuracao } from "@/lib/comissoes/tipos";
 import { simularComissao } from "@/lib/comissoes/repo";
 import { Aviso, Campo, InputNumero, Select, mesLabel, pctFmt } from "./comum";
 
@@ -50,11 +50,18 @@ function Coluna({ titulo, r, destaque }: { titulo: string; r: ResultadoApuracao;
 export function Simulador({
   competencia,
   funcionarios,
+  indicadores,
+  atingidos,
 }: {
   competencia: string;
   funcionarios: Funcionario[];
+  indicadores: Indicador[];
+  /** funcionarioId → metas secundárias batidas na competência. */
+  atingidos: Map<string, string[]>;
 }) {
   const [funcionarioId, setFuncionarioId] = useState("");
+  // Começa no que está marcado de verdade; daí a pessoa mexe para simular.
+  const [marcados, setMarcados] = useState<string[]>([]);
   const [venda, setVenda] = useState<number | null>(null);
   const [meta, setMeta] = useState<number | null>(null);
   const [piso, setPiso] = useState<number | null>(null);
@@ -70,7 +77,14 @@ export function Simulador({
     setOcupado(true);
     setErro(null);
     try {
-      const r = await simularComissao({ competencia, funcionarioId, venda, meta, piso });
+      const r = await simularComissao({
+        competencia,
+        funcionarioId,
+        venda,
+        meta,
+        piso,
+        indicadores: indicadores.length > 0 ? marcados : undefined,
+      });
       setRes({ atual: r.atual, simulado: r.simulado, escopo: r.escopo });
     } catch (e) {
       setErro((e as Error).message);
@@ -102,7 +116,13 @@ export function Simulador({
           </p>
           <div className="grid gap-3 sm:grid-cols-4">
             <Campo label="Funcionário">
-              <Select value={funcionarioId} onChange={(e) => setFuncionarioId(e.target.value)}>
+              <Select
+                value={funcionarioId}
+                onChange={(e) => {
+                  setFuncionarioId(e.target.value);
+                  setMarcados(atingidos.get(e.target.value) ?? []);
+                }}
+              >
                 <option value="">— selecione —</option>
                 {funcionarios
                   .filter((f) => f.ativo)
@@ -123,6 +143,31 @@ export function Simulador({
               <InputNumero value={piso} onChange={setPiso} />
             </Campo>
           </div>
+          {indicadores.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-md bg-muted/40 px-3 py-2">
+              <span className="text-xs text-muted-foreground">Bateu as metas secundárias?</span>
+              {indicadores.map((i) => (
+                <label key={i.id} className="flex items-center gap-1.5 text-xs">
+                  <input
+                    type="checkbox"
+                    className="size-3.5"
+                    checked={marcados.includes(i.id)}
+                    onChange={(e) =>
+                      setMarcados(
+                        e.target.checked
+                          ? [...marcados, i.id]
+                          : marcados.filter((x) => x !== i.id),
+                      )
+                    }
+                  />
+                  {i.nome}
+                </label>
+              ))}
+              <span className="text-[11px] text-muted-foreground">
+                Começa no que está marcado no mês; mexer aqui não grava nada.
+              </span>
+            </div>
+          ) : null}
           <Button size="sm" disabled={ocupado || !funcionarioId} onClick={rodar}>
             <Play /> {ocupado ? "Calculando…" : "Simular"}
           </Button>

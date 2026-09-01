@@ -215,7 +215,12 @@ export default function ComissoesPage() {
           onRecarregar={recarregarTudo}
         />
       ) : aba === "Simulador" ? (
-        <Simulador competencia={competencia} funcionarios={funcionarios} />
+        <Simulador
+          competencia={competencia}
+          funcionarios={funcionarios}
+          indicadores={indicadores}
+          atingidos={atingidos}
+        />
       ) : aba === "Auditoria" ? (
         <Auditoria />
       ) : aba === "Funcionários" ? (

@@ -4631,6 +4631,11 @@ export const comissoesSimular = onCall(
         venda: d.venda == null ? undefined : num(d.venda),
         meta: d.meta == null ? undefined : num(d.meta),
         piso: d.piso == null ? undefined : num(d.piso),
+        // Lista ausente = usa as metas secundárias realmente marcadas; lista
+        // vazia = simular como se nenhuma tivesse sido batida.
+        indicadores: Array.isArray(d.indicadores)
+          ? d.indicadores.map((i: unknown) => texto(i, 80)).filter(Boolean)
+          : undefined,
       });
       return { ok: true, ...r };
     } catch (e) {

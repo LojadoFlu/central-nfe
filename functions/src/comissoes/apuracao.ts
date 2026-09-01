@@ -884,11 +884,14 @@ export async function simular(
     venda?: number | null;
     meta?: number | null;
     piso?: number | null;
+    /** Metas secundárias a considerar batidas. null = as marcadas de verdade. */
+    indicadores?: string[] | null;
   },
 ): Promise<{
   atual: ResultadoApuracao;
   simulado: ResultadoApuracao;
   escopo: EscopoVenda;
+  indicadores: { id: string; nome: string; atingido: boolean }[];
 }> {
   const ctx = await montarContexto(competencia);
   const bruto = ctx.funcionarios.find((x) => x.id === funcionarioId);
@@ -907,14 +910,35 @@ export async function simular(
   const metas = { ...entradaBase.metas };
   if (overrides.meta != null) metas[escopo] = overrides.meta;
 
+  // PA, VA e afins não saem de venda: são marcados. Sem poder marcá-los aqui,
+  // o simulador nunca mostrava o bônus preso a eles.
+  const indicadores =
+    overrides.indicadores == null
+      ? entradaBase.indicadores
+      : (entradaBase.indicadores ?? []).map((i) => ({
+          ...i,
+          atingido: overrides.indicadores!.includes(i.id),
+        }));
+
   const simulada: EntradaApuracao = {
     ...entradaBase,
     funcionario: overrides.piso != null ? { ...f, pisoGarantido: overrides.piso } : f,
     vendas,
     metas,
+    indicadores,
   };
 
-  return { atual, simulado: apurar(simulada), escopo };
+  return {
+    atual,
+    simulado: apurar(simulada),
+    escopo,
+    // A tela precisa saber o que existe e o que já está marcado de verdade.
+    indicadores: (entradaBase.indicadores ?? []).map((i) => ({
+      id: i.id,
+      nome: i.nome,
+      atingido: i.atingido,
+    })),
+  };
 }
 
 /**

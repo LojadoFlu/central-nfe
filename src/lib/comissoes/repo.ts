@@ -256,12 +256,15 @@ export const simularComissao = (i: {
   venda?: number | null;
   meta?: number | null;
   piso?: number | null;
+  /** Metas secundárias a considerar batidas. Ausente = as marcadas de verdade. */
+  indicadores?: string[];
 }) =>
   chamar<{
     ok: boolean;
     atual: ResultadoApuracao;
     simulado: ResultadoApuracao;
     escopo: EscopoVenda;
+    indicadores: { id: string; nome: string; atingido: boolean }[];
   }>("comissoesSimular", i);
 
 export const listarAuditoria = (limite = 200) =>
