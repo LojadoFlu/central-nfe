@@ -10,7 +10,7 @@ import { formatBRL, formatarData } from "@/lib/utils";
 import { Medal } from "lucide-react";
 import type { CustoMes, ResultadoCompetencia } from "@/lib/comissoes/tipos";
 import { custoComissoes } from "@/lib/comissoes/repo";
-import { custoDaFolha } from "@/lib/comissoes/custo";
+import { custoDaFolha, custoDaLinha } from "@/lib/comissoes/custo";
 import { BarraMeta, Select, mesLabel, pctFmt } from "./comum";
 
 type Criterio = "valorDevido" | "comissaoTotal" | "vendaConsiderada" | "atingimentoPct";
@@ -70,6 +70,38 @@ export function Dashboard({
     return [...linhas].sort((a, b) => (b[criterio] ?? 0) - (a[criterio] ?? 0));
   }, [apuracao, criterio, cargo]);
 
+  /**
+   * Quem ficou no piso gerou comissão que não virou pagamento nenhum — ela foi
+   * absorvida. É o número que explica por que o variável é menor que o que as
+   * regras calcularam.
+   */
+  const absorvidoPeloPiso = useMemo(() => {
+    const linhas = (apuracao?.linhas ?? []).filter((l) => l.pisoAplicado && !l.semComissao);
+    return Math.round(linhas.reduce((s, l) => s + l.comissaoTotal, 0) * 100) / 100;
+  }, [apuracao]);
+
+  /** Piso × variável de cada cargo — a mesma divisão da folha, por cargo. */
+  const custoPorCargo = useMemo(() => {
+    const m = new Map<string, { nome: string; piso: number; variavel: number; total: number; pessoas: number }>();
+    for (const l of apuracao?.linhas ?? []) {
+      const chave = l.cargoId ?? "sem";
+      const c = custoDaLinha(l);
+      const atual = m.get(chave) ?? {
+        nome: l.cargoNome ?? "Sem cargo",
+        piso: 0,
+        variavel: 0,
+        total: 0,
+        pessoas: 0,
+      };
+      atual.piso += c.piso;
+      atual.variavel += c.comissao;
+      atual.total += c.total;
+      atual.pessoas += 1;
+      m.set(chave, atual);
+    }
+    return [...m.values()].sort((a, b) => b.total - a.total);
+  }, [apuracao]);
+
   const maiorCusto = useMemo(
     () => Math.max(1, ...(historico ?? []).map((m) => m.valorDevido)),
     [historico],
@@ -83,17 +115,17 @@ export function Dashboard({
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
         <StatCard label="Faturamento" value={formatBRL(t.faturamento)} />
-        {/* A folha se divide em duas partes que a operação decide de formas
-            diferentes: o piso é do cargo, a comissão é do desempenho. */}
+        {/* Folha = piso + (regras + bônus). O piso é o que sai mesmo sem
+            venda; o variável é só o que o alcance das metas acrescentou. */}
         <StatCard
-          label="Custo piso"
+          label="Piso total pago"
           value={formatBRL(custo.piso)}
-          hint={`fixo garantido${
+          hint={`sai mesmo sem venda${
             t.pisoSemComissao > 0 ? ` · ${formatBRL(t.pisoSemComissao)} de quem não comissiona` : ""
           }`}
         />
         <StatCard
-          label="Custo comissão"
+          label="Variável (regras + bônus)"
           value={formatBRL(custo.comissao)}
           hint={
             t.faturamento > 0
@@ -102,7 +134,7 @@ export function Dashboard({
           }
         />
         <StatCard
-          label="Custo total"
+          label="Folha total"
           value={formatBRL(custo.total)}
           tone="warning"
           hint={`${
@@ -124,6 +156,81 @@ export function Dashboard({
           }
         />
       </div>
+
+      {/* Folha = piso + (regras + bônus). Separar as duas partes responde a
+          pergunta que se faz antes de fechar: quanto sai de qualquer jeito e
+          quanto foi o desempenho que acrescentou. */}
+      <Card>
+        <CardContent className="space-y-3 py-4">
+          <h2 className="text-[0.95rem] font-semibold tracking-tight">Composição da folha</h2>
+          <div className="flex h-3 overflow-hidden rounded bg-muted">
+            <div
+              className="h-full bg-primary"
+              style={{ width: `${custo.total > 0 ? (custo.piso / custo.total) * 100 : 0}%` }}
+            />
+            <div
+              className="h-full bg-warning"
+              style={{ width: `${custo.total > 0 ? (custo.comissao / custo.total) * 100 : 0}%` }}
+            />
+          </div>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2">
+                <span className="size-2.5 rounded-sm bg-primary" />
+                Piso total pago
+                <span className="text-xs text-muted-foreground">sai mesmo sem venda</span>
+              </span>
+              <span className="shrink-0 font-semibold tnum">
+                {formatBRL(custo.piso)}
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  {custo.total > 0 ? pctFmt((custo.piso / custo.total) * 100) : "—"}
+                </span>
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2">
+                <span className="size-2.5 rounded-sm bg-warning" />
+                Variável (regras + bônus)
+                <span className="text-xs text-muted-foreground">o que o alcance acrescentou</span>
+              </span>
+              <span className="shrink-0 font-semibold tnum">
+                {formatBRL(custo.comissao)}
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  {custo.total > 0 ? pctFmt((custo.comissao / custo.total) * 100) : "—"}
+                </span>
+              </span>
+            </div>
+            {custo.desconto > 0 ? (
+              <div className="flex items-center justify-between gap-3">
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <span className="size-2.5 rounded-sm bg-border" />
+                  Descontos de folha
+                  <span className="text-xs">retirada, falta, suspensão</span>
+                </span>
+                <span className="shrink-0 font-semibold tnum text-destructive">
+                  − {formatBRL(custo.desconto)}
+                </span>
+              </div>
+            ) : null}
+            <div className="flex items-center justify-between gap-3 border-t border-border pt-1.5 font-semibold">
+              <span>Folha total</span>
+              <span className="tnum">
+                {formatBRL(custo.total)}
+                <span className="ml-2 text-xs font-normal text-muted-foreground">
+                  {t.faturamento > 0 ? `${pctFmt((custo.total / t.faturamento) * 100)} da venda` : ""}
+                </span>
+              </span>
+            </div>
+          </div>
+          {absorvidoPeloPiso > 0 ? (
+            <p className="text-[11px] text-muted-foreground">
+              Quem não alcançou o próprio piso gerou {formatBRL(absorvidoPeloPiso)} em regras e
+              bônus, que não virou pagamento — o piso já cobria. A empresa completou{" "}
+              {formatBRL(t.pisoUtilizado)} até o piso dessas pessoas.
+            </p>
+          ) : null}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardContent className="space-y-2 py-4">
@@ -202,33 +309,47 @@ export function Dashboard({
         </CardContent>
       </Card>
 
-      {apuracao.porCargo.length > 0 ? (
+      {custoPorCargo.length > 0 ? (
         <Card>
           <CardContent className="space-y-2 py-4">
             <h2 className="text-[0.95rem] font-semibold tracking-tight">Custo por cargo</h2>
-            <div className="divide-y divide-border">
-              {apuracao.porCargo.map((c) => (
-                <div key={c.cargoId ?? "sem"} className="flex items-center justify-between gap-3 py-2 text-sm">
-                  <span className="min-w-0 truncate">
-                    {c.cargoNome}{" "}
-                    <span className="text-muted-foreground">
-                      · {c.funcionarios} pessoa{c.funcionarios === 1 ? "" : "s"}
-                    </span>
-                  </span>
-                  <span className="shrink-0 font-semibold tnum">{formatBRL(c.valor)}</span>
-                </div>
-              ))}
-              <div className="flex items-center justify-between gap-3 py-2 text-sm font-semibold">
-                <span>Total</span>
-                <span className="tnum">{formatBRL(t.valorDevido)}</span>
-              </div>
+            {/* A mesma divisão da folha, por cargo: cargo que só tem piso
+                aparece com variável zerada, e é isso mesmo. */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                    <th className="py-1.5 pr-3 font-medium">Cargo</th>
+                    <th className="py-1.5 text-right font-medium">Piso</th>
+                    <th className="py-1.5 text-right font-medium">Variável</th>
+                    <th className="py-1.5 text-right font-medium">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {custoPorCargo.map((c) => (
+                    <tr key={c.nome} className="border-b border-border/60">
+                      <td className="py-1.5 pr-3">
+                        <span className="block truncate">{c.nome}</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {c.pessoas} pessoa{c.pessoas === 1 ? "" : "s"}
+                        </span>
+                      </td>
+                      <td className="py-1.5 text-right tnum">{formatBRL(c.piso)}</td>
+                      <td className="py-1.5 text-right tnum">{formatBRL(c.variavel)}</td>
+                      <td className="py-1.5 text-right font-semibold tnum">{formatBRL(c.total)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="font-semibold">
+                    <td className="py-1.5 pr-3">Total</td>
+                    <td className="py-1.5 text-right tnum">{formatBRL(custo.piso)}</td>
+                    <td className="py-1.5 text-right tnum">{formatBRL(custo.comissao)}</td>
+                    <td className="py-1.5 text-right tnum">{formatBRL(custo.total)}</td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              Piso {formatBRL(custo.piso)} + comissão {formatBRL(custo.comissao)}
-              {custo.desconto > 0 ? ` − descontos ${formatBRL(custo.desconto)}` : ""} ={" "}
-              {formatBRL(custo.total)}. Desse piso, {formatBRL(t.pisoUtilizado)} é complemento de
-              quem comissiona e não alcançou o próprio piso.
-            </p>
           </CardContent>
         </Card>
       ) : null}
