@@ -171,3 +171,32 @@ describe("cargo sem gratificação no relatório", () => {
     expect(loja.pessoas[0].ocultaGratificacao).toBe(false);
   });
 });
+
+describe("nome que vai para a contabilidade", () => {
+  it("usa o nome completo quando existe", () => {
+    const [loja] = folhaPorLoja([
+      linha({ funcionarioNome: "HENZO BARRA", funcionarioNomeCompleto: "Henzo Almeida Barra" }),
+    ]);
+    expect(loja.pessoas[0].nome).toBe("Henzo Almeida Barra");
+  });
+
+  it("sem nome completo, fica o do PDV", () => {
+    const [loja] = folhaPorLoja([linha({ funcionarioNome: "HENZO BARRA" })]);
+    expect(loja.pessoas[0].nome).toBe("HENZO BARRA");
+  });
+
+  it("nome completo vazio não vira linha em branco", () => {
+    const [loja] = folhaPorLoja([
+      linha({ funcionarioNome: "HENZO BARRA", funcionarioNomeCompleto: "" }),
+    ]);
+    expect(loja.pessoas[0].nome).toBe("HENZO BARRA");
+  });
+
+  it("a ordenação segue o nome impresso", () => {
+    const [loja] = folhaPorLoja([
+      linha({ funcionarioNome: "ZE", funcionarioNomeCompleto: "Ana Maria Souza" }),
+      linha({ funcionarioNome: "ANA" }),
+    ]);
+    expect(loja.pessoas.map((p) => p.nome)).toEqual(["ANA", "Ana Maria Souza"]);
+  });
+});

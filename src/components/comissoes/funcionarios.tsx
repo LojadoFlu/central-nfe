@@ -514,6 +514,18 @@ export function Funcionarios({
               <Campo label="Nome">
                 <Input value={edicao.nome} onChange={(e) => setEdicao({ ...edicao, nome: e.target.value })} />
               </Campo>
+              {/* O nome do PDV é muitas vezes apelido, e a sync o reescreve.
+                  O de carteira mora aqui e nunca é sobrescrito. */}
+              <Campo
+                label="Nome completo (contabilidade)"
+                hint="Vazio = usa o nome acima. É este que sai no PDF da folha."
+              >
+                <Input
+                  value={edicao.nomeCompleto ?? ""}
+                  placeholder={edicao.nome}
+                  onChange={(e) => setEdicao({ ...edicao, nomeCompleto: e.target.value })}
+                />
+              </Campo>
               <Campo label="CPF">
                 <Input
                   value={edicao.cpf ?? ""}

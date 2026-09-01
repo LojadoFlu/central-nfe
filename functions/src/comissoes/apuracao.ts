@@ -124,6 +124,8 @@ export async function lerVendas(competencia: string): Promise<VendaBruta[]> {
 
 export interface LinhaApuracao extends ResultadoApuracao {
   funcionarioNome: string;
+  /** Nome de carteira, quando cadastrado — é o que vai no relatório da folha. */
+  funcionarioNomeCompleto: string | null;
   cargoId: string | null;
   cargoNome: string | null;
   /** Cargo que não comissiona: recebe só o piso. */
@@ -610,6 +612,7 @@ export async function calcularCompetencia(
       ...res,
       faltas,
       funcionarioNome: f.nome,
+      funcionarioNomeCompleto: f.nomeCompleto ?? null,
       cargoId: f.cargoId,
       cargoNome: f.cargoId ? (nomeCargo.get(f.cargoId) ?? null) : null,
       semComissao,

@@ -203,7 +203,13 @@ export interface Cargo {
 /** Funcionário (§4). O piso é o mínimo garantido do mês (§5). */
 export interface Funcionario {
   id: string;
+  /** Como a pessoa aparece nas telas — vem do PDV, às vezes é apelido. */
   nome: string;
+  /**
+   * Nome de carteira, para o relatório que vai à contabilidade. Vazio = usa o
+   * `nome`. Campo NOSSO: a sincronização com o PDV nunca o sobrescreve.
+   */
+  nomeCompleto?: string | null;
   cpf?: string | null;
   cargoId: string | null;
   lojaId: number | null;

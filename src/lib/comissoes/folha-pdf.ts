@@ -123,7 +123,9 @@ export function folhaPorLoja(
     // Mesma conta do dashboard — os dois papéis contam a mesma história.
     const { piso, comissao: gratificacao, desconto } = custoDaLinha(l);
     grupo.pessoas.push({
-      nome: l.funcionarioNome,
+      // O relatório vai para a contabilidade: nome de carteira quando existe,
+      // porque o do PDV muitas vezes é apelido.
+      nome: l.funcionarioNomeCompleto || l.funcionarioNome,
       cargo: l.cargoNome ?? "sem cargo",
       piso,
       gratificacao,
@@ -241,68 +243,6 @@ export function montarPdfPorLoja(
     );
     doc.setTextColor(20);
   });
-
-  if (lojas.length > 1) {
-    const direita = { halign: "right" as const };
-    doc.addPage();
-    const y = cabecalhoFlu(doc, {
-      titulo: "Resumo da rede",
-      subtitulo: `Folha de ${mesExtenso(apuracao.competencia)}${empresa ? "  ·  " + empresa : ""}  ·  Pagamento em ${formatarData(
-        apuracao.pagamentoEm,
-      )}  ·  ${STATUS_LABEL[apuracao.status]}`,
-      escudo,
-    });
-    autoTable(doc, {
-      startY: y + 8,
-      margin: { left: M, right: M },
-      head: [
-        [
-          "Loja",
-          { content: "Pessoas", styles: direita },
-          { content: "Piso", styles: direita },
-          { content: "Gratificação", styles: direita },
-          { content: "Desconto", styles: direita },
-          { content: "Total", styles: direita },
-          { content: "Faltas / Suspensões", styles: direita },
-        ],
-      ],
-      body: lojas.map((l) => [
-        l.lojaNome,
-        String(l.pessoas.length),
-        formatBRL(l.piso),
-        formatBRL(l.gratificacao),
-        l.desconto ? `-${formatBRL(l.desconto)}` : "—",
-        formatBRL(l.total),
-        l.faltas ? String(l.faltas) : "—",
-      ]),
-      foot: [
-        [
-          "TOTAL",
-          String(lojas.reduce((s, l) => s + l.pessoas.length, 0)),
-          formatBRL(cent(lojas.reduce((s, l) => s + l.piso, 0))),
-          formatBRL(cent(lojas.reduce((s, l) => s + l.gratificacao, 0))),
-          `-${formatBRL(cent(lojas.reduce((s, l) => s + l.desconto, 0)))}`,
-          formatBRL(apuracao.totais.valorDevido),
-          String(lojas.reduce((s, l) => s + l.faltas, 0)),
-        ],
-      ],
-      styles: { fontSize: 8.5, cellPadding: 1.6 },
-      headStyles: { fillColor: VERDE, fontSize: 8.5 },
-      alternateRowStyles: { fillColor: CINZA_CLARO },
-      footStyles: { fillColor: CINZA_CLARO, textColor: GRENA, fontStyle: "bold" },
-      // Mesmas larguras da página da loja, pelo mesmo motivo: número não pode
-      // quebrar linha.
-      columnStyles: {
-        0: { cellWidth: 42 },
-        1: { halign: "right", cellWidth: 22 },
-        2: { halign: "right", cellWidth: 22 },
-        3: { halign: "right", cellWidth: 24 },
-        4: { halign: "right", cellWidth: 24 },
-        5: { halign: "right", cellWidth: 24, fontStyle: "bold" },
-        6: { halign: "right", cellWidth: 24 },
-      },
-    });
-  }
 
   return doc;
 }

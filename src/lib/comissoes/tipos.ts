@@ -154,7 +154,13 @@ export interface Cargo {
 
 export interface Funcionario {
   id: string;
+  /** Como a pessoa aparece nas telas — vem do PDV, às vezes é apelido. */
   nome: string;
+  /**
+   * Nome de carteira, para o relatório que vai à contabilidade. Vazio = usa o
+   * `nome`. Campo NOSSO: a sincronização com o PDV nunca o sobrescreve.
+   */
+  nomeCompleto?: string | null;
   cpf?: string | null;
   cargoId: string | null;
   lojaId: number | null;
@@ -248,6 +254,8 @@ export interface ResultadoApuracao {
 export interface LinhaApuracao {
   funcionarioId: string;
   funcionarioNome: string;
+  /** Nome de carteira, quando cadastrado — é o que vai no relatório da folha. */
+  funcionarioNomeCompleto?: string | null;
   competencia: Competencia;
   cargoId: string | null;
   cargoNome: string | null;

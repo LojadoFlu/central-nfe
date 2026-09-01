@@ -4040,6 +4040,8 @@ export const comissoesSalvarFuncionario = onCall(opcoes, async (req) => {
   const dados = {
     id,
     nome,
+    // Nome de carteira: o PDV não sabe dele, então a sync não mexe.
+    nomeCompleto: texto(req.data?.nomeCompleto, 120) || null,
     cpf: texto(req.data?.cpf, 14).replace(/\D/g, "") || null,
     cargoId: texto(req.data?.cargoId, 80) || null,
     lojaId: canonizar(grupos, numOuNulo(req.data?.lojaId)),
