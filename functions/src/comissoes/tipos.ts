@@ -137,6 +137,12 @@ export interface Ajuste {
   tipo: "manual" | "estorno" | "desconto";
   /** Só para desconto: "retirada", "falta", "suspensao", "outro". */
   categoria?: string | null;
+  /** Falta e suspensão: os dias não trabalhados, em "YYYY-MM-DD". */
+  dias?: string[] | null;
+  /** DSRs perdidos no cálculo — um por semana com falta. */
+  dsr?: number | null;
+  /** Valor do dia usado (salário ÷ divisor), guardado para o histórico. */
+  valorDia?: number | null;
   criadoPor?: string | null;
   criadoEm?: string | null;
 }

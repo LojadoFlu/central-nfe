@@ -12,9 +12,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { formatBRL, formatarDataHora } from "@/lib/utils";
+import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
 import { Plus, Trash2 } from "lucide-react";
-import type { Ajuste, Funcionario } from "@/lib/comissoes/tipos";
+import type { Ajuste, Cargo, ConfigComissoes, Funcionario } from "@/lib/comissoes/tipos";
+import { calcularDescontoFalta } from "@/lib/comissoes/faltas";
+import { pisoEfetivo } from "@/lib/comissoes/piso";
 import { excluirAjuste, salvarAjuste } from "@/lib/comissoes/repo";
 import { Aviso, Campo, InputNumero, Select, mesLabel } from "./comum";
 
@@ -29,12 +31,16 @@ export function Ajustes({
   competencia,
   ajustes,
   funcionarios,
+  cargos,
+  config,
   podeGerir,
   onRecarregar,
 }: {
   competencia: string;
   ajustes: Ajuste[];
   funcionarios: Funcionario[];
+  cargos: Cargo[];
+  config: ConfigComissoes;
   podeGerir: boolean;
   onRecarregar: () => Promise<void>;
 }) {
@@ -43,11 +49,36 @@ export function Ajustes({
   const [motivo, setMotivo] = useState("");
   const [tipo, setTipo] = useState<"manual" | "desconto">("desconto");
   const [categoria, setCategoria] = useState<string>("retirada");
+  // Falta e suspensão não têm valor digitado: ele sai dos dias.
+  const [dias, setDias] = useState<string[]>([]);
+  const [novoDia, setNovoDia] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
   const nome = useMemo(() => new Map(funcionarios.map((f) => [f.id, f.nome])), [funcionarios]);
+
+  const ehFalta = tipo === "desconto" && (categoria === "falta" || categoria === "suspensao");
+  /**
+   * Prévia do desconto — mesma conta do servidor, que é quem grava. Serve para
+   * a pessoa ver o número antes de lançar, e conferir depois.
+   */
+  const previa = useMemo(() => {
+    const f = funcionarios.find((x) => x.id === funcionarioId);
+    if (!ehFalta || !f) return null;
+    const piso = pisoEfetivo(f, cargos);
+    if (piso.valor == null) return { semPiso: true, calc: null };
+    return {
+      semPiso: false,
+      calc: calcularDescontoFalta({
+        dias,
+        base: piso.valor,
+        diasBaseMes: config.diasBaseMes,
+        descontarDsr: config.descontarDsrPorFalta,
+      }),
+      piso: piso.valor,
+    };
+  }, [ehFalta, funcionarioId, funcionarios, cargos, dias, config]);
   const lancamentos = useMemo(() => ajustes.filter((a) => a.tipo !== "desconto"), [ajustes]);
   const descontos = useMemo(() => ajustes.filter((a) => a.tipo === "desconto"), [ajustes]);
   const total = useMemo(() => lancamentos.reduce((s, a) => s + a.valor, 0), [lancamentos]);
@@ -118,17 +149,26 @@ export function Ajustes({
                     ))}
                 </Select>
               </Campo>
+              {ehFalta ? null : (
+                <Campo
+                  label="Valor (R$)"
+                  hint={
+                    tipo === "desconto"
+                      ? "Quanto descontar — sempre positivo."
+                      : "Negativo para tirar da comissão."
+                  }
+                >
+                  <InputNumero value={valor} onChange={setValor} />
+                </Campo>
+              )}
               <Campo
-                label="Valor (R$)"
+                label="Motivo"
                 hint={
-                  tipo === "desconto"
-                    ? "Quanto descontar — sempre positivo."
-                    : "Negativo para tirar da comissão."
+                  ehFalta
+                    ? "Opcional — sem ele, entra a conta dos dias."
+                    : "Fica no histórico e na memória de cálculo."
                 }
               >
-                <InputNumero value={valor} onChange={setValor} />
-              </Campo>
-              <Campo label="Motivo" hint="Fica no histórico e na memória de cálculo.">
                 <Input
                   value={motivo}
                   placeholder={
@@ -140,9 +180,83 @@ export function Ajustes({
                 />
               </Campo>
             </div>
+
+            {ehFalta ? (
+              <div className="space-y-2 rounded-md bg-muted/40 px-3 py-2">
+                <div className="flex flex-wrap items-end gap-2">
+                  <Campo label="Dia não trabalhado">
+                    <Input
+                      type="date"
+                      className="h-9 w-44"
+                      value={novoDia}
+                      min={`${competencia}-01`}
+                      max={`${competencia}-31`}
+                      onChange={(e) => setNovoDia(e.target.value)}
+                    />
+                  </Campo>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!novoDia || dias.includes(novoDia)}
+                    onClick={() => {
+                      setDias([...dias, novoDia].sort());
+                      setNovoDia("");
+                    }}
+                  >
+                    <Plus /> Incluir dia
+                  </Button>
+                </div>
+                {dias.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {dias.map((d) => (
+                      <button
+                        key={d}
+                        className="rounded bg-background px-2 py-1 text-xs hover:line-through"
+                        title="Tirar este dia"
+                        onClick={() => setDias(dias.filter((x) => x !== d))}
+                      >
+                        {formatarData(d)} ✕
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {previa?.semPiso ? (
+                  <p className="text-xs text-destructive">
+                    Esta pessoa está sem piso — o desconto sai do piso do cargo. Defina o piso em
+                    Funcionários antes de lançar.
+                  </p>
+                ) : previa?.calc && previa.calc.dias > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {previa.calc.dias} dia{previa.calc.dias === 1 ? "" : "s"}
+                    {previa.calc.dsr > 0
+                      ? ` + ${previa.calc.dsr} DSR (descanso semanal)`
+                      : ""} × {formatBRL(previa.calc.valorDia)} ={" "}
+                    <strong className="text-destructive">{formatBRL(previa.calc.valor)}</strong>
+                    <span className="ml-1">
+                      · piso {formatBRL(previa.piso ?? 0)} ÷ {config.diasBaseMes} dias
+                    </span>
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Inclua os dias não trabalhados — o valor sai deles: salário ÷{" "}
+                    {config.diasBaseMes}
+                    {config.descontarDsrPorFalta
+                      ? ", mais o descanso semanal da semana em que faltou."
+                      : "."}
+                  </p>
+                )}
+              </div>
+            ) : null}
+
             <Button
               size="sm"
-              disabled={ocupado || !funcionarioId || !motivo.trim() || !valor}
+              disabled={
+                ocupado ||
+                !funcionarioId ||
+                (ehFalta
+                  ? dias.length === 0 || !previa?.calc?.valor
+                  : !motivo.trim() || !valor)
+              }
               onClick={() =>
                 executar(async () => {
                   await salvarAjuste({
@@ -152,9 +266,11 @@ export function Ajustes({
                     motivo: motivo.trim(),
                     tipo,
                     categoria: tipo === "desconto" ? categoria : undefined,
+                    dias: ehFalta ? dias : undefined,
                   });
                   setValor(null);
                   setMotivo("");
+                  setDias([]);
                 }, tipo === "desconto" ? "Desconto lançado." : "Ajuste lançado.")
               }
             >
@@ -184,6 +300,13 @@ export function Ajustes({
                       <Badge variant="neutral">{CATEGORIA_LABEL[a.categoria ?? "outro"] ?? a.categoria}</Badge>
                     </p>
                     <p className="text-xs text-muted-foreground">{a.motivo}</p>
+                    {a.dias && a.dias.length > 0 ? (
+                      <p className="text-[11px] text-muted-foreground">
+                        {a.dias.map((d) => formatarData(d)).join(" · ")}
+                        {a.dsr ? ` · ${a.dsr} DSR` : ""}
+                        {a.valorDia ? ` · dia ${formatBRL(a.valorDia)}` : ""}
+                      </p>
+                    ) : null}
                     {a.criadoEm ? (
                       <p className="text-[11px] text-muted-foreground">{formatarDataHora(a.criadoEm)}</p>
                     ) : null}

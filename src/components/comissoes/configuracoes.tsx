@@ -32,6 +32,10 @@ export function Configuracoes({
   const [cargosPorTipoPdv, setCargosPorTipoPdv] = useState<Record<string, string>>(
     config.cargosPorTipoPdv ?? {},
   );
+  const [diasBaseMes, setDiasBaseMes] = useState(String(config.diasBaseMes ?? 30));
+  const [descontarDsrPorFalta, setDescontarDsrPorFalta] = useState(
+    config.descontarDsrPorFalta !== false,
+  );
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -136,6 +140,38 @@ export function Configuracoes({
             </Select>
           </Campo>
 
+          {/* Desconto de falta: a lei dá o desenho (dia = salário ÷ 30 e o DSR
+              da semana), o acordo coletivo pode mudar os números — por isso
+              eles ficam aqui, e não dentro da conta. */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Campo
+              label="Divisor do mês no desconto de falta"
+              hint="Valor do dia = salário ÷ este número. 30 para o mensalista."
+            >
+              <Input
+                type="number"
+                min={1}
+                max={31}
+                disabled={!podeGerir}
+                value={diasBaseMes}
+                onChange={(e) => setDiasBaseMes(e.target.value)}
+              />
+            </Campo>
+            <Campo
+              label="Falta faz perder o descanso semanal (DSR)"
+              hint="Lei 605/1949: falta injustificada na semana tira também o descanso remunerado dela."
+            >
+              <Select
+                value={descontarDsrPorFalta ? "1" : "0"}
+                disabled={!podeGerir}
+                onChange={(e) => setDescontarDsrPorFalta(e.target.value === "1")}
+              >
+                <option value="1">Sim, descontar o DSR (padrão)</option>
+                <option value="0">Não, só os dias</option>
+              </Select>
+            </Campo>
+          </div>
+
           <div className="space-y-1">
             <label className="block text-xs font-medium text-muted-foreground">
               Cargo de quem entra pelo PDV
@@ -188,6 +224,8 @@ export function Configuracoes({
                     cargosPorTipoPdv: Object.fromEntries(
                       Object.entries(cargosPorTipoPdv).filter(([, v]) => v),
                     ),
+                    diasBaseMes: Number(diasBaseMes) || 30,
+                    descontarDsrPorFalta,
                   });
                   await onRecarregar();
                   setOk("Configuração salva.");

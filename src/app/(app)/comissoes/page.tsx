@@ -279,6 +279,8 @@ export default function ComissoesPage() {
           competencia={competencia}
           ajustes={ajustes}
           funcionarios={funcionarios}
+          cargos={cargos}
+          config={config}
           podeGerir={podeGerir}
           onRecarregar={recarregarTudo}
         />

@@ -101,6 +101,12 @@ export interface Ajuste {
    */
   tipo: "manual" | "estorno" | "desconto";
   categoria?: string | null;
+  /** Falta e suspensão: os dias não trabalhados, em "YYYY-MM-DD". */
+  dias?: string[] | null;
+  /** DSRs perdidos no cálculo — um por semana com falta. */
+  dsr?: number | null;
+  /** Valor do dia usado (salário ÷ divisor), guardado para o histórico. */
+  valorDia?: number | null;
   criadoPor?: string | null;
   criadoEm?: string | null;
 }
@@ -242,6 +248,8 @@ export interface LinhaApuracao {
   cargoNome: string | null;
   /** Cargo que não comissiona: recebe só o piso. */
   semComissao?: boolean;
+  /** Dias não trabalhados no mês (falta + suspensão) e quanto custaram. */
+  faltas?: { dias: number; valor: number };
   lojaId: number | null;
   lojaNome: string | null;
   empresaId: string | null;
@@ -330,6 +338,10 @@ export interface ConfigComissoes {
   provisaoNoFluxo: boolean;
   /** O cadastro de funcionários segue o PDV automaticamente. */
   sincronizarFuncionarios: boolean;
+  /** Divisor do mês para o desconto de falta. 30 para o mensalista. */
+  diasBaseMes?: number;
+  /** Falta injustificada faz perder o DSR da semana (Lei 605/1949). */
+  descontarDsrPorFalta?: boolean;
   /** Tipo do vendedor no PDV ("V", "G"…) → cargo daqui, na criação. */
   cargosPorTipoPdv: Record<string, string>;
   /** Nome de loja do arquivo de metas → id da loja daqui. */

@@ -32,7 +32,8 @@ import {
   normalizarNome,
   parseCsvMetas,
 } from "./comissoes/importacao";
-import { codigosPdv } from "./comissoes/motor";
+import { codigosPdv, pisoEfetivo } from "./comissoes/motor";
+import { calcularDescontoFalta, descricaoDesconto, diasValidos } from "./comissoes/faltas";
 import type { Funcionario } from "./comissoes/tipos";
 import {
   alterarStatusFechamento,
@@ -4337,7 +4338,7 @@ export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
   const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
   const competencia = competenciaValida(req.data?.competencia);
   const funcionarioId = texto(req.data?.funcionarioId, 80);
-  const motivo = texto(req.data?.motivo, 300);
+  let motivo = texto(req.data?.motivo, 300);
   // Desconto de folha (retirada de produto, falta, suspensão): sai depois do
   // piso, então o sinal é o TIPO — o valor entra sempre positivo.
   const ehDesconto = String(req.data?.tipo) === "desconto";
@@ -4345,8 +4346,57 @@ export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
   const categoria = categorias.includes(String(req.data?.categoria))
     ? String(req.data.categoria)
     : "outro";
-  const valor = ehDesconto ? Math.abs(num(req.data?.valor)) : num(req.data?.valor);
+  let valor = ehDesconto ? Math.abs(num(req.data?.valor)) : num(req.data?.valor);
   if (!funcionarioId) throw new HttpsError("invalid-argument", "Informe o funcionário.");
+
+  // Falta e suspensão: o valor NÃO é digitado — sai dos dias não trabalhados,
+  // pela regra do mensalista (salário ÷ 30, mais o DSR da semana). Digitar o
+  // valor à mão nesse caso é onde a folha erra.
+  const ehFalta = ehDesconto && (categoria === "falta" || categoria === "suspensao");
+  let dias: string[] = [];
+  let dsr: number | null = null;
+  let valorDia: number | null = null;
+  if (ehFalta && Array.isArray(req.data?.dias)) {
+    dias = diasValidos(req.data.dias.map((d: unknown) => texto(d, 10)));
+    const fora = dias.filter((d) => !d.startsWith(competencia));
+    if (fora.length > 0) {
+      throw new HttpsError(
+        "invalid-argument",
+        `Dia fora da competência ${competencia}: ${fora.join(", ")}.`,
+      );
+    }
+    if (dias.length > 0) {
+      const cfg = await carregarConfigComissoes();
+      const f = (await db.collection("com_funcionarios").doc(funcionarioId).get()).data() as
+        | Funcionario
+        | undefined;
+      if (!f) throw new HttpsError("not-found", "Funcionário não encontrado.");
+      const cargosSnap = await db.collection("com_cargos").get();
+      const pisoPorCargo = new Map<string, number | null>(
+        cargosSnap.docs.map((d) => [d.id, (d.data().pisoGarantido as number | null) ?? null]),
+      );
+      const piso = pisoEfetivo(f, pisoPorCargo);
+      if (piso.valor == null) {
+        throw new HttpsError(
+          "failed-precondition",
+          `${f.nome} está sem piso — o desconto de falta sai do piso do cargo. Defina o piso antes.`,
+        );
+      }
+      const calc = calcularDescontoFalta({
+        dias,
+        base: piso.valor,
+        diasBaseMes: cfg.diasBaseMes,
+        descontarDsr: cfg.descontarDsrPorFalta,
+      });
+      valor = calc.valor;
+      dsr = calc.dsr;
+      valorDia = calc.valorDia;
+      if (!motivo) {
+        motivo = descricaoDesconto(calc, categoria === "falta" ? "falta" : "suspensão");
+      }
+    }
+  }
+
   if (!motivo) throw new HttpsError("invalid-argument", "Ajuste exige motivo.");
   if (!valor) throw new HttpsError("invalid-argument", "Informe um valor diferente de zero.");
 
@@ -4367,6 +4417,9 @@ export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
       motivo,
       tipo: ehDesconto ? "desconto" : "manual",
       categoria: ehDesconto ? categoria : null,
+      dias: ehFalta ? dias : null,
+      dsr,
+      valorDia,
       criadoPor: uid,
       criadoEm: agoraISO(),
     },
@@ -4482,7 +4535,12 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
   // parte da configuração não pode apagar a outra. Foi assim que amarrar a
   // loja desfazia as pessoas e a tela entrava em looping.
   const atual = (await db.collection("com_config").doc("geral").get()).data() as
-    | { lojasImport?: Record<string, number>; vendedoresImport?: Record<string, string> }
+    | {
+        lojasImport?: Record<string, number>;
+        vendedoresImport?: Record<string, string>;
+        diasBaseMes?: number;
+        descontarDsrPorFalta?: boolean;
+      }
     | undefined;
 
   let vendedoresImport = atual?.vendedoresImport ?? {};
@@ -4514,6 +4572,15 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
     const c = texto(cargo, 80);
     if (t && c) cargosPorTipoPdv[t] = c;
   }
+  // Desconto de falta: divisor do mês e DSR. Ausente = mantém o que está lá.
+  const diasBrutos = Math.floor(num(req.data?.diasBaseMes, 0));
+  const diasBaseMes =
+    diasBrutos >= 1 && diasBrutos <= 31 ? diasBrutos : (atual?.diasBaseMes ?? 30);
+  const descontarDsrPorFalta =
+    req.data?.descontarDsrPorFalta == null
+      ? (atual?.descontarDsrPorFalta ?? true)
+      : req.data.descontarDsrPorFalta === true;
+
   const dados = {
     regraPiso,
     cargoPadraoId,
@@ -4524,6 +4591,8 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
     cargosPorTipoPdv,
     lojasImport,
     vendedoresImport,
+    diasBaseMes,
+    descontarDsrPorFalta,
   };
   await db
     .collection("com_config")

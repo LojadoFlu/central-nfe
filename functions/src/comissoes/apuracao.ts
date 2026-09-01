@@ -77,6 +77,10 @@ export interface ConfigComissoes {
   sincronizarFuncionarios: boolean;
   /** Tipo do vendedor no PDV ("V", "G"…) → cargo daqui, na criação. */
   cargosPorTipoPdv: Record<string, string>;
+  /** Divisor do mês no desconto de falta. 30 para o mensalista. */
+  diasBaseMes: number;
+  /** Falta injustificada faz perder o DSR da semana (Lei 605/1949). */
+  descontarDsrPorFalta: boolean;
 }
 
 export async function carregarConfig(): Promise<ConfigComissoes> {
@@ -92,6 +96,8 @@ export async function carregarConfig(): Promise<ConfigComissoes> {
     provisaoNoFluxo: d?.provisaoNoFluxo === true,
     sincronizarFuncionarios: d?.sincronizarFuncionarios !== false, // nasce ligado
     cargosPorTipoPdv: d?.cargosPorTipoPdv ?? {},
+    diasBaseMes: Number(d?.diasBaseMes) > 0 ? Number(d?.diasBaseMes) : 30,
+    descontarDsrPorFalta: d?.descontarDsrPorFalta !== false, // nasce ligado
   };
 }
 
@@ -128,6 +134,8 @@ export interface LinhaApuracao extends ResultadoApuracao {
   cargoNome: string | null;
   /** Cargo que não comissiona: recebe só o piso. */
   semComissao?: boolean;
+  /** Dias não trabalhados no mês (falta + suspensão) e quanto custaram. */
+  faltas?: { dias: number; valor: number };
   lojaId: number | null;
   lojaNome: string | null;
   empresaId: string | null;
@@ -590,8 +598,19 @@ export async function calcularCompetencia(
     acumCargo.funcionarios += 1;
     porCargoMap.set(chaveCargo, acumCargo);
 
+    // Faltas e suspensões da pessoa no mês — o relatório da loja mostra os
+    // dias, não só o valor.
+    const faltasDela = ctx.descontosDaComp.filter(
+      (d) => d.funcionarioId === f.id && (d.categoria === "falta" || d.categoria === "suspensao"),
+    );
+    const faltas = {
+      dias: faltasDela.reduce((n, d) => n + (d.dias?.length ?? 0), 0),
+      valor: cent(faltasDela.reduce((v, d) => v + Math.abs(Number(d.valor) || 0), 0)),
+    };
+
     linhas.push({
       ...res,
+      faltas,
       funcionarioNome: f.nome,
       cargoId: f.cargoId,
       cargoNome: f.cargoId ? (nomeCargo.get(f.cargoId) ?? null) : null,
