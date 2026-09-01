@@ -6,6 +6,13 @@ import { db } from "../lib/base";
 import { PdvnetClient } from "./client";
 import type { PdvVenda, PdvLoja } from "./types";
 
+/** O que a venda valeu de fato: o total do PDVnet menos os descontos do caixa. */
+function liquidoDaVenda(v: { ValorTotal?: number; ValorDesconto?: number; ValorDescontoPromocional?: number }): number {
+  const total = Number(v.ValorTotal) || 0;
+  const desconto = (Number(v.ValorDesconto) || 0) + (Number(v.ValorDescontoPromocional) || 0);
+  return Math.round((total - desconto) * 100) / 100;
+}
+
 /** Heurística de "loja de varejo ativa": FLU física, sem matriz/estoque/escritório/inativa. */
 export function ehVarejo(l: PdvLoja): boolean {
   const nome = (l.NomeFantasia || l.RazaoSocial || "").toUpperCase();
@@ -120,7 +127,14 @@ export async function sincronizarVendas(
           empresaId: loja.empresaId,
           dataHora: v.DataHora ?? null,
           dia,
-          valorTotal: v.ValorTotal ?? 0,
+          // `ValorTotal` do PDVnet vem SEM o desconto do caixa descontado:
+          // venda de 549,98 com 55,00 de desconto chega 549,98, e o cliente
+          // pagou 494,98. Aqui ele é normalizado para o que a loja recebeu —
+          // é esse o número que o resto do app espera de "valor da venda".
+          // O cru fica em `valorTotalPdv`, que também marca a venda como já
+          // normalizada (venda antiga, sem esse campo, ainda é bruta).
+          valorTotal: liquidoDaVenda(v),
+          valorTotalPdv: v.ValorTotal ?? 0,
           valorProdutos: v.ValorProdutos ?? null,
           valorDesconto: v.ValorDesconto ?? null,
           valorDescontoPromocional: v.ValorDescontoPromocional ?? null,

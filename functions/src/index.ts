@@ -2103,8 +2103,9 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
   const cnpjPorId = new Map<string, string>();
   for (const e of emps.docs) cnpjPorId.set(e.id, somenteDigitos(String((e.data() as { cnpj?: string }).cnpj ?? "")));
 
-  // RECEITA LÍQUIDA — vendas PDV (competência = dia da venda). ValorTotal do PDVnet é o
-  // valor CHEIO (antes do desconto); a receita real = ValorTotal − descontos.
+  // RECEITA LÍQUIDA — vendas PDV (competência = dia da venda). `valorTotal` já
+  // chega líquido da sync (o bruto do PDVnet fica em `valorTotalPdv`); venda
+  // antiga, gravada antes disso, ainda precisa do desconto subtraído aqui.
   let receitaVendas = 0, descontos = 0, cmvRealAquisicao = 0, cmvRealGerencial = 0, itensTot = 0, itensComCusto = 0;
   const salesSnap = await db.collection("sales").where("dia", ">=", de).where("dia", "<=", ate).get();
   for (const doc of salesSnap.docs) {
@@ -2112,7 +2113,7 @@ async function calcularDRE(de: string, ate: string, empresaId: string, cmvPct: n
     if (s.cancelada || !daEmpresa(s.empresaId)) continue;
     const desc = n0(s.valorDesconto) + n0(s.valorDescontoPromocional);
     descontos += desc;
-    receitaVendas += n0(s.valorTotal) - desc; // líquido
+    receitaVendas += s.valorTotalPdv == null ? n0(s.valorTotal) - desc : n0(s.valorTotal);
     cmvRealAquisicao += n0(s.custoAquisicao);
     cmvRealGerencial += n0(s.custoGerencial);
     itensTot += n0(s.qtdItens);

@@ -111,6 +111,7 @@ export async function lerVendas(competencia: string): Promise<VendaBruta[]> {
       vendedorId: (s.vendedorId as string | null) ?? null,
       valorTotal: Number(s.valorTotal) || 0,
       valorProdutos: s.valorProdutos == null ? null : Number(s.valorProdutos),
+      valorTotalPdv: s.valorTotalPdv == null ? null : Number(s.valorTotalPdv),
       valorDesconto: s.valorDesconto == null ? null : Number(s.valorDesconto),
       valorDescontoPromocional:
         s.valorDescontoPromocional == null ? null : Number(s.valorDescontoPromocional),
@@ -964,6 +965,7 @@ export async function detectarEstornos(competenciaAlvo: string): Promise<{
       const v = s.data() as {
         vendedorId?: string;
         valorTotal?: number;
+        valorTotalPdv?: number | null;
         valorDesconto?: number | null;
         valorDescontoPromocional?: number | null;
         dia?: string;
@@ -977,6 +979,7 @@ export async function detectarEstornos(competenciaAlvo: string): Promise<{
         dia: v.dia ?? "",
         vendedorId: v.vendedorId ?? null,
         valorTotal: Number(v.valorTotal) || 0,
+        valorTotalPdv: v.valorTotalPdv ?? null,
         valorDesconto: v.valorDesconto ?? null,
         valorDescontoPromocional: v.valorDescontoPromocional ?? null,
       });

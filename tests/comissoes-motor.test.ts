@@ -1546,3 +1546,32 @@ describe("desconto do caixa não comissiona", () => {
     expect(c.semVendedor.valor).toBe(494.98);
   });
 });
+
+describe("venda já normalizada pela sync", () => {
+  // Depois que a sync passou a gravar o líquido, o desconto não pode sair de
+  // novo aqui — seria descontado duas vezes.
+  const normalizada: VendaBruta = {
+    id: "v1",
+    lojaId: 335,
+    dia: "2026-08-01",
+    vendedorId: "03350034",
+    valorTotal: 494.98,
+    valorTotalPdv: 549.98,
+    valorProdutos: 549.98,
+    valorDesconto: 55,
+  };
+
+  it("usa o valorTotal como está", () => {
+    expect(consolidar([normalizada]).porVendedor.get("03350034")?.liquida).toBe(494.98);
+  });
+
+  it("venda antiga, sem a marca, ainda tem o desconto subtraído aqui", () => {
+    const antiga = { ...normalizada, valorTotal: 549.98, valorTotalPdv: undefined };
+    expect(consolidar([antiga]).porVendedor.get("03350034")?.liquida).toBe(494.98);
+  });
+
+  it("as duas convivem no mesmo mês sem uma contaminar a outra", () => {
+    const antiga = { ...normalizada, id: "v2", valorTotal: 549.98, valorTotalPdv: undefined };
+    expect(consolidar([normalizada, antiga]).porLoja.get(335)?.liquida).toBe(989.96);
+  });
+});

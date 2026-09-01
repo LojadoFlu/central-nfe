@@ -14,14 +14,21 @@ export interface VendaBruta {
    */
   valorTotal: number;
   valorProdutos?: number | null; // bruto (antes dos descontos)
+  /** `ValorTotal` cru do PDVnet. Presente = `valorTotal` já está líquido. */
+  valorTotalPdv?: number | null;
   valorDesconto?: number | null;
   valorDescontoPromocional?: number | null;
   cancelada?: boolean;
 }
 
-/** O que a venda de fato valeu: o que o PDV chama de total, menos os descontos. */
+/**
+ * O que a venda de fato valeu. A sync já grava `valorTotal` líquido e marca a
+ * venda com `valorTotalPdv`; venda gravada antes disso ainda vem bruta, e o
+ * desconto sai aqui. Sem essa marca, uma das duas seria descontada duas vezes.
+ */
 export function liquidaDaVenda(v: VendaBruta): number {
   const total = Number(v.valorTotal) || 0;
+  if (v.valorTotalPdv != null) return Math.round(total * 100) / 100;
   const desconto = (Number(v.valorDesconto) || 0) + (Number(v.valorDescontoPromocional) || 0);
   return Math.round((total - desconto) * 100) / 100;
 }
