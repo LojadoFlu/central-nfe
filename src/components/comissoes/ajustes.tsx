@@ -14,9 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
 import { Plus, Trash2 } from "lucide-react";
-import type { Ajuste, Cargo, ConfigComissoes, Funcionario } from "@/lib/comissoes/tipos";
-import { calcularDescontoFalta } from "@/lib/comissoes/faltas";
-import { pisoEfetivo } from "@/lib/comissoes/piso";
+import type { Ajuste, Funcionario } from "@/lib/comissoes/tipos";
 import { excluirAjuste, salvarAjuste } from "@/lib/comissoes/repo";
 import { Aviso, Campo, InputNumero, Select, mesLabel } from "./comum";
 
@@ -31,23 +29,19 @@ export function Ajustes({
   competencia,
   ajustes,
   funcionarios,
-  cargos,
-  config,
   podeGerir,
   onRecarregar,
 }: {
   competencia: string;
   ajustes: Ajuste[];
   funcionarios: Funcionario[];
-  cargos: Cargo[];
-  config: ConfigComissoes;
   podeGerir: boolean;
   onRecarregar: () => Promise<void>;
 }) {
   const [funcionarioId, setFuncionarioId] = useState("");
   const [valor, setValor] = useState<number | null>(null);
   const [motivo, setMotivo] = useState("");
-  const [tipo, setTipo] = useState<"manual" | "desconto">("desconto");
+  const [tipo, setTipo] = useState<"manual" | "desconto" | "falta">("desconto");
   const [categoria, setCategoria] = useState<string>("retirada");
   // Falta e suspensão não têm valor digitado: ele sai dos dias.
   const [dias, setDias] = useState<string[]>([]);
@@ -58,31 +52,20 @@ export function Ajustes({
 
   const nome = useMemo(() => new Map(funcionarios.map((f) => [f.id, f.nome])), [funcionarios]);
 
-  const ehFalta = tipo === "desconto" && (categoria === "falta" || categoria === "suspensao");
-  /**
-   * Prévia do desconto — mesma conta do servidor, que é quem grava. Serve para
-   * a pessoa ver o número antes de lançar, e conferir depois.
-   */
-  const previa = useMemo(() => {
-    const f = funcionarios.find((x) => x.id === funcionarioId);
-    if (!ehFalta || !f) return null;
-    const piso = pisoEfetivo(f, cargos);
-    if (piso.valor == null) return { semPiso: true, calc: null };
-    return {
-      semPiso: false,
-      calc: calcularDescontoFalta({
-        dias,
-        base: piso.valor,
-        diasBaseMes: config.diasBaseMes,
-        descontarDsr: config.descontarDsrPorFalta,
-      }),
-      piso: piso.valor,
-    };
-  }, [ehFalta, funcionarioId, funcionarios, cargos, dias, config]);
-  const lancamentos = useMemo(() => ajustes.filter((a) => a.tipo !== "desconto"), [ajustes]);
+  const ehFalta = tipo === "falta";
+
+  const lancamentos = useMemo(
+    () => ajustes.filter((a) => a.tipo === "manual" || a.tipo === "estorno"),
+    [ajustes],
+  );
   const descontos = useMemo(() => ajustes.filter((a) => a.tipo === "desconto"), [ajustes]);
+  const faltas = useMemo(() => ajustes.filter((a) => a.tipo === "falta"), [ajustes]);
   const total = useMemo(() => lancamentos.reduce((s, a) => s + a.valor, 0), [lancamentos]);
   const totalDescontos = useMemo(() => descontos.reduce((s, a) => s + a.valor, 0), [descontos]);
+  const totalDiasFalta = useMemo(
+    () => faltas.reduce((n, a) => n + (a.dias?.length ?? 0), 0),
+    [faltas],
+  );
 
   async function executar(fn: () => Promise<unknown>, mensagem: string) {
     setOcupado(true);
@@ -116,14 +99,17 @@ export function Ajustes({
                 hint={
                   tipo === "desconto"
                     ? "Sai depois do piso: desconta mesmo de quem está no piso."
-                    : "Entra na comissão — o piso pode absorvê-lo."
+                    : ehFalta
+                      ? "Só registra os dias — quem calcula o desconto é a contabilidade."
+                      : "Entra na comissão — o piso pode absorvê-lo."
                 }
               >
                 <Select
                   value={tipo}
-                  onChange={(e) => setTipo(e.target.value as "manual" | "desconto")}
+                  onChange={(e) => setTipo(e.target.value as typeof tipo)}
                 >
                   <option value="desconto">Desconto de folha</option>
+                  <option value="falta">Falta / suspensão (informativo)</option>
                   <option value="manual">Ajuste de comissão</option>
                 </Select>
               </Campo>
@@ -131,9 +117,15 @@ export function Ajustes({
                 <Campo label="Motivo do desconto">
                   <Select value={categoria} onChange={(e) => setCategoria(e.target.value)}>
                     <option value="retirada">Retirada de produto</option>
+                    <option value="outro">Outro</option>
+                  </Select>
+                </Campo>
+              ) : null}
+              {ehFalta ? (
+                <Campo label="O que foi">
+                  <Select value={categoria} onChange={(e) => setCategoria(e.target.value)}>
                     <option value="falta">Falta</option>
                     <option value="suspensao">Suspensão</option>
-                    <option value="outro">Outro</option>
                   </Select>
                 </Campo>
               ) : null}
@@ -220,31 +212,13 @@ export function Ajustes({
                     ))}
                   </div>
                 ) : null}
-                {previa?.semPiso ? (
-                  <p className="text-xs text-destructive">
-                    Esta pessoa está sem piso — o desconto sai do piso do cargo. Defina o piso em
-                    Funcionários antes de lançar.
-                  </p>
-                ) : previa?.calc && previa.calc.dias > 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    {previa.calc.dias} dia{previa.calc.dias === 1 ? "" : "s"}
-                    {previa.calc.dsr > 0
-                      ? ` + ${previa.calc.dsr} DSR (descanso semanal)`
-                      : ""} × {formatBRL(previa.calc.valorDia)} ={" "}
-                    <strong className="text-destructive">{formatBRL(previa.calc.valor)}</strong>
-                    <span className="ml-1">
-                      · piso {formatBRL(previa.piso ?? 0)} ÷ {config.diasBaseMes} dias
-                    </span>
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Inclua os dias não trabalhados — o valor sai deles: salário ÷{" "}
-                    {config.diasBaseMes}
-                    {config.descontarDsrPorFalta
-                      ? ", mais o descanso semanal da semana em que faltou."
-                      : "."}
-                  </p>
-                )}
+                <p className="text-xs text-muted-foreground">
+                  {dias.length > 0
+                    ? `${dias.length} dia${dias.length === 1 ? "" : "s"} lançado${
+                        dias.length === 1 ? "" : "s"
+                      } — o valor do desconto é calculado pela contabilidade.`
+                    : "Inclua os dias não trabalhados. Aqui é só o registro: o desconto sai na folha da contabilidade, com o salário de carteira."}
+                </p>
               </div>
             ) : null}
 
@@ -253,9 +227,7 @@ export function Ajustes({
               disabled={
                 ocupado ||
                 !funcionarioId ||
-                (ehFalta
-                  ? dias.length === 0 || !previa?.calc?.valor
-                  : !motivo.trim() || !valor)
+                (ehFalta ? dias.length === 0 : !motivo.trim() || !valor)
               }
               onClick={() =>
                 executar(async () => {
@@ -271,13 +243,69 @@ export function Ajustes({
                   setValor(null);
                   setMotivo("");
                   setDias([]);
-                }, tipo === "desconto" ? "Desconto lançado." : "Ajuste lançado.")
+                }, ehFalta ? "Falta registrada." : tipo === "desconto" ? "Desconto lançado." : "Ajuste lançado.")
               }
             >
-              <Plus /> {tipo === "desconto" ? "Lançar desconto" : "Lançar ajuste"}
+              <Plus />{" "}
+              {ehFalta ? "Registrar falta" : tipo === "desconto" ? "Lançar desconto" : "Lançar ajuste"}
             </Button>
           </CardContent>
         </Card>
+      ) : null}
+
+      {faltas.length > 0 ? (
+        <>
+          <div className="flex items-baseline justify-between">
+            <h2 className="text-[0.95rem] font-semibold tracking-tight">
+              Faltas e suspensões em {mesLabel(competencia)}
+            </h2>
+            <span className="text-sm font-semibold tnum">
+              {totalDiasFalta} dia{totalDiasFalta === 1 ? "" : "s"}
+            </span>
+          </div>
+          <p className="-mt-1 text-xs text-muted-foreground">
+            Registro para a contabilidade — não desconta nada na apuração daqui.
+          </p>
+          <div className="space-y-2">
+            {faltas.map((a) => (
+              <Card key={a.id}>
+                <CardContent className="flex items-start justify-between gap-3 py-3">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-2 truncate text-sm font-medium">
+                      {nome.get(a.funcionarioId) ?? a.funcionarioId}
+                      <Badge variant="neutral">
+                        {a.categoria === "suspensao" ? "suspensão" : "falta"}
+                      </Badge>
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {(a.dias ?? []).map((d) => formatarData(d)).join(" · ")}
+                    </p>
+                    {a.criadoEm ? (
+                      <p className="text-[11px] text-muted-foreground">
+                        {formatarDataHora(a.criadoEm)}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="font-semibold tnum">
+                      {a.dias?.length ?? 0} dia{(a.dias?.length ?? 0) === 1 ? "" : "s"}
+                    </p>
+                    {podeGerir ? (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={ocupado}
+                        onClick={() => executar(() => excluirAjuste(a.id), "Registro excluído.")}
+                      >
+                        <Trash2 className="text-destructive" />
+                      </Button>
+                    ) : null}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </>
       ) : null}
 
       {descontos.length > 0 ? (
@@ -300,13 +328,6 @@ export function Ajustes({
                       <Badge variant="neutral">{CATEGORIA_LABEL[a.categoria ?? "outro"] ?? a.categoria}</Badge>
                     </p>
                     <p className="text-xs text-muted-foreground">{a.motivo}</p>
-                    {a.dias && a.dias.length > 0 ? (
-                      <p className="text-[11px] text-muted-foreground">
-                        {a.dias.map((d) => formatarData(d)).join(" · ")}
-                        {a.dsr ? ` · ${a.dsr} DSR` : ""}
-                        {a.valorDia ? ` · dia ${formatBRL(a.valorDia)}` : ""}
-                      </p>
-                    ) : null}
                     {a.criadoEm ? (
                       <p className="text-[11px] text-muted-foreground">{formatarDataHora(a.criadoEm)}</p>
                     ) : null}

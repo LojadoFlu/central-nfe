@@ -159,8 +159,6 @@ export async function obterConfig(): Promise<ConfigComissoes> {
     diaPagamentoFolha: Number.isFinite(dia) && dia >= 1 && dia <= 28 ? Math.floor(dia) : 5,
     mesPagamento: d?.mesPagamento === "mesmo" ? "mesmo" : "seguinte",
     provisaoNoFluxo: d?.provisaoNoFluxo === true,
-    diasBaseMes: Number(d?.diasBaseMes) > 0 ? Number(d?.diasBaseMes) : 30,
-    descontarDsrPorFalta: d?.descontarDsrPorFalta !== false,
   };
 }
 
@@ -192,10 +190,13 @@ export const salvarAjuste = (i: {
   competencia: string;
   valor: number;
   motivo: string;
-  /** "desconto" sai depois do piso; sem isso, é ajuste de comissão. */
-  tipo?: "manual" | "desconto";
+  /**
+   * "desconto" sai depois do piso; "falta" é informativo (não desconta nada);
+   * sem isso, é ajuste de comissão.
+   */
+  tipo?: "manual" | "desconto" | "falta";
   categoria?: string;
-  /** Falta e suspensão: os dias não trabalhados. O valor sai deles. */
+  /** Falta e suspensão: os dias não trabalhados. */
   dias?: string[];
 }) =>
   chamar<{ ok: boolean; id: string }>("comissoesSalvarAjuste", i);

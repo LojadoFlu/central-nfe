@@ -33,7 +33,6 @@ import {
   parseCsvMetas,
 } from "./comissoes/importacao";
 import { codigosPdv, pisoEfetivo } from "./comissoes/motor";
-import { calcularDescontoFalta, descricaoDesconto, diasValidos } from "./comissoes/faltas";
 import type { Funcionario } from "./comissoes/tipos";
 import {
   alterarStatusFechamento,
@@ -4334,6 +4333,13 @@ export const comissoesExcluirBonus = onCall(opcoes, async (req) => {
 });
 
 /** Ajuste manual (bônus, desconto, correção) — exige motivo (§29). */
+/** "2026-13-40" passa no formato e não é dia nenhum: a data tem de voltar igual. */
+function diaValido(d: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return false;
+  const [a, m, dd] = d.split("-").map(Number);
+  return new Date(Date.UTC(a, m - 1, dd)).toISOString().slice(0, 10) === d;
+}
+
 export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
   const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
   const competencia = competenciaValida(req.data?.competencia);
@@ -4349,15 +4355,17 @@ export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
   let valor = ehDesconto ? Math.abs(num(req.data?.valor)) : num(req.data?.valor);
   if (!funcionarioId) throw new HttpsError("invalid-argument", "Informe o funcionário.");
 
-  // Falta e suspensão: o valor NÃO é digitado — sai dos dias não trabalhados,
-  // pela regra do mensalista (salário ÷ 30, mais o DSR da semana). Digitar o
-  // valor à mão nesse caso é onde a folha erra.
-  const ehFalta = ehDesconto && (categoria === "falta" || categoria === "suspensao");
+  // Falta e suspensão são INFORMATIVAS: registram os dias não trabalhados e
+  // não descontam nada. O desconto é calculado pela contabilidade, com o
+  // salário de carteira e as regras que ela aplica — o que sai daqui é a
+  // contagem de dias para o relatório da loja.
+  const ehFalta = String(req.data?.tipo) === "falta";
   let dias: string[] = [];
-  let dsr: number | null = null;
-  let valorDia: number | null = null;
-  if (ehFalta && Array.isArray(req.data?.dias)) {
-    dias = diasValidos(req.data.dias.map((d: unknown) => texto(d, 10)));
+  if (ehFalta) {
+    const cru: string[] = Array.isArray(req.data?.dias)
+      ? req.data.dias.map((d: unknown) => texto(d, 10))
+      : [];
+    dias = [...new Set(cru.filter(diaValido))].sort();
     const fora = dias.filter((d) => !d.startsWith(competencia));
     if (fora.length > 0) {
       throw new HttpsError(
@@ -4365,40 +4373,21 @@ export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
         `Dia fora da competência ${competencia}: ${fora.join(", ")}.`,
       );
     }
-    if (dias.length > 0) {
-      const cfg = await carregarConfigComissoes();
-      const f = (await db.collection("com_funcionarios").doc(funcionarioId).get()).data() as
-        | Funcionario
-        | undefined;
-      if (!f) throw new HttpsError("not-found", "Funcionário não encontrado.");
-      const cargosSnap = await db.collection("com_cargos").get();
-      const pisoPorCargo = new Map<string, number | null>(
-        cargosSnap.docs.map((d) => [d.id, (d.data().pisoGarantido as number | null) ?? null]),
-      );
-      const piso = pisoEfetivo(f, pisoPorCargo);
-      if (piso.valor == null) {
-        throw new HttpsError(
-          "failed-precondition",
-          `${f.nome} está sem piso — o desconto de falta sai do piso do cargo. Defina o piso antes.`,
-        );
-      }
-      const calc = calcularDescontoFalta({
-        dias,
-        base: piso.valor,
-        diasBaseMes: cfg.diasBaseMes,
-        descontarDsr: cfg.descontarDsrPorFalta,
-      });
-      valor = calc.valor;
-      dsr = calc.dsr;
-      valorDia = calc.valorDia;
-      if (!motivo) {
-        motivo = descricaoDesconto(calc, categoria === "falta" ? "falta" : "suspensão");
-      }
+    if (dias.length === 0) {
+      throw new HttpsError("invalid-argument", "Informe pelo menos um dia não trabalhado.");
+    }
+    valor = 0;
+    if (!motivo) {
+      motivo = `${dias.length} dia${dias.length === 1 ? "" : "s"} de ${
+        categoria === "suspensao" ? "suspensão" : "falta"
+      }`;
     }
   }
 
   if (!motivo) throw new HttpsError("invalid-argument", "Ajuste exige motivo.");
-  if (!valor) throw new HttpsError("invalid-argument", "Informe um valor diferente de zero.");
+  if (!ehFalta && !valor) {
+    throw new HttpsError("invalid-argument", "Informe um valor diferente de zero.");
+  }
 
   const fech = (await db.collection("com_fechamentos").doc(competencia).get()).data();
   if (fech?.status === "fechado") {
@@ -4415,11 +4404,9 @@ export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
       competencia,
       valor,
       motivo,
-      tipo: ehDesconto ? "desconto" : "manual",
-      categoria: ehDesconto ? categoria : null,
+      tipo: ehFalta ? "falta" : ehDesconto ? "desconto" : "manual",
+      categoria: ehFalta || ehDesconto ? categoria : null,
       dias: ehFalta ? dias : null,
-      dsr,
-      valorDia,
       criadoPor: uid,
       criadoEm: agoraISO(),
     },
@@ -4538,8 +4525,6 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
     | {
         lojasImport?: Record<string, number>;
         vendedoresImport?: Record<string, string>;
-        diasBaseMes?: number;
-        descontarDsrPorFalta?: boolean;
       }
     | undefined;
 
@@ -4572,15 +4557,6 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
     const c = texto(cargo, 80);
     if (t && c) cargosPorTipoPdv[t] = c;
   }
-  // Desconto de falta: divisor do mês e DSR. Ausente = mantém o que está lá.
-  const diasBrutos = Math.floor(num(req.data?.diasBaseMes, 0));
-  const diasBaseMes =
-    diasBrutos >= 1 && diasBrutos <= 31 ? diasBrutos : (atual?.diasBaseMes ?? 30);
-  const descontarDsrPorFalta =
-    req.data?.descontarDsrPorFalta == null
-      ? (atual?.descontarDsrPorFalta ?? true)
-      : req.data.descontarDsrPorFalta === true;
-
   const dados = {
     regraPiso,
     cargoPadraoId,
@@ -4591,8 +4567,6 @@ export const comissoesSalvarConfig = onCall(opcoes, async (req) => {
     cargosPorTipoPdv,
     lojasImport,
     vendedoresImport,
-    diasBaseMes,
-    descontarDsrPorFalta,
   };
   await db
     .collection("com_config")

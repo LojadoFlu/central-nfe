@@ -130,9 +130,9 @@ describe("folha por loja com descontos", () => {
 describe("faltas no relatório da loja", () => {
   it("soma os dias de cada pessoa e da loja", () => {
     const [loja] = folhaPorLoja([
-      linha({ funcionarioNome: "A", faltas: { dias: 2, valor: 171.21 }, descontosTotal: 171.21, valorDevido: 1540.79 }),
+      linha({ funcionarioNome: "A", faltas: { dias: 2 }, descontosTotal: 171.21, valorDevido: 1540.79 }),
       linha({ funcionarioNome: "B" }),
-      linha({ funcionarioNome: "C", faltas: { dias: 1, valor: 114.14 }, descontosTotal: 114.14, valorDevido: 1597.86 }),
+      linha({ funcionarioNome: "C", faltas: { dias: 1 }, descontosTotal: 114.14, valorDevido: 1597.86 }),
     ]);
     expect(loja.faltas).toBe(3);
     expect(loja.pessoas.map((p) => p.faltas)).toEqual([2, 0, 1]);

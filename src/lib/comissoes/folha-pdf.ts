@@ -233,10 +233,10 @@ export function montarPdfPorLoja(
       apuracao.congelado
         ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. ${
             comDesconto ? "Total = piso + gratificação - descontos." : "Gratificação = total - piso."
-          }${comFaltas ? " Falta desconta o dia e o descanso semanal da semana." : ""}`
+          }${comFaltas ? " Faltas em dias, informativas — o desconto é da contabilidade." : ""}`
         : `Competência ainda aberta — os valores podem mudar até o fechamento. ${
             comDesconto ? "Total = piso + gratificação - descontos." : "Gratificação = total - piso."
-          }${comFaltas ? " Falta desconta o dia e o descanso semanal da semana." : ""}`,
+          }${comFaltas ? " Faltas em dias, informativas — o desconto é da contabilidade." : ""}`,
       M,
       Math.min(depois + 6, 285),
     );

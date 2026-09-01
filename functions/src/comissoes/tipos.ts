@@ -134,15 +134,15 @@ export interface Ajuste {
    * "desconto" sai DEPOIS do piso: retirada de produto e falta se descontam do
    * que a pessoa recebe, não da comissão que ela gerou.
    */
-  tipo: "manual" | "estorno" | "desconto";
+  tipo: "manual" | "estorno" | "desconto" | "falta";
   /** Só para desconto: "retirada", "falta", "suspensao", "outro". */
   categoria?: string | null;
-  /** Falta e suspensão: os dias não trabalhados, em "YYYY-MM-DD". */
+  /**
+   * Falta e suspensão: os dias não trabalhados. São INFORMATIVOS — o desconto
+   * é calculado pela contabilidade, não aqui.
+   */
   dias?: string[] | null;
-  /** DSRs perdidos no cálculo — um por semana com falta. */
-  dsr?: number | null;
-  /** Valor do dia usado (salário ÷ divisor), guardado para o histórico. */
-  valorDia?: number | null;
+
   criadoPor?: string | null;
   criadoEm?: string | null;
 }
