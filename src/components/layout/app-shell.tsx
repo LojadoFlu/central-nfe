@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { BottomNav } from "./bottom-nav";
+import { AvisoVersao } from "./aviso-versao";
 
 /** Estrutura da área logada: sidebar (desktop) + topbar + conteúdo + bottom-nav (mobile). */
 export function AppShell({ children }: { children: ReactNode }) {
@@ -16,6 +17,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
       <BottomNav />
+      <AvisoVersao />
     </div>
   );
 }
