@@ -155,7 +155,6 @@ export function Acompanhamento({
         {/* Os mesmos três números do dashboard: a folha se divide em piso e
             variável, e é assim que ela é decidida e conferida. */}
         <CardsDaFolha apuracao={apuracao} />
-        <StatCard label="Comissão calculada" value={formatBRL(t.comissaoTotal)} hint={`Base ${formatBRL(t.comissaoBase)} + bônus ${formatBRL(t.bonus)}`} />
         <StatCard
           label="Folha projetada"
           value={proj ? formatBRL(proj.valorDevido) : "—"}
