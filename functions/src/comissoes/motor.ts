@@ -570,6 +570,18 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
     }
   }
 
+  // Bônus que existe para esta pessoa mas não vale nesta competência. Sem
+  // isso ele simplesmente não aparecia, e a ausência do prêmio não tinha
+  // explicação em lugar nenhum — parecia o motor ignorando a regra.
+  for (const i of e.bonusForaDeVigencia ?? []) {
+    memoria.push({
+      rotulo: `Bônus: ${i.nome}`,
+      detalhe: `Não pago — ${i.motivo}`,
+      valor: 0,
+      informativa: true,
+    });
+  }
+
   let bonusTotal = 0;
   for (const b of lista) {
     const d = decisao.get(b.id)!;

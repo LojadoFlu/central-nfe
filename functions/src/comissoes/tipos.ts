@@ -272,6 +272,11 @@ export interface EntradaApuracao {
   semComissao?: boolean;
   bonus: Bonus[];
   ajustes: Ajuste[];
+  /**
+   * Bônus que alcançam esta pessoa mas não valem nesta competência — só para
+   * a memória de cálculo dizer por que o prêmio não saiu.
+   */
+  bonusForaDeVigencia?: { nome: string; motivo: string }[];
   /** Descontos de folha da competência. */
   descontos?: Ajuste[];
   /** Metas secundárias e se a pessoa bateu cada uma nesta competência. */

@@ -25,7 +25,9 @@ import {
   escolherMeta,
   escolherMetaLoja,
   escolherRegra,
+  especificidade,
   pisoEfetivo,
+  vigente,
 } from "./motor";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./grupos";
 import type {
@@ -469,6 +471,16 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
     regra,
     semComissao,
     bonus: semComissao ? [] : bonusAplicaveis(ctx.bonus, f, competencia),
+    bonusForaDeVigencia: semComissao
+      ? []
+      : ctx.bonus
+          .filter((b) => b.ativo && especificidade(b, f) >= 0 && !vigente(b, competencia))
+          .map((b) => ({
+            nome: b.nome,
+            motivo: `fora de vigência nesta competência (vale de ${b.vigenciaDe}${
+              b.vigenciaAte ? ` a ${b.vigenciaAte}` : " em diante"
+            })`,
+          })),
     ajustes: ctx.ajustesDaComp.filter((a) => a.funcionarioId === f.id),
     descontos: ctx.descontosDaComp.filter((a) => a.funcionarioId === f.id),
     indicadores: ctx.indicadores.map((i) => ({

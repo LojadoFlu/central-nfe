@@ -1575,3 +1575,19 @@ describe("venda já normalizada pela sync", () => {
     expect(consolidar([normalizada, antiga]).porLoja.get(335)?.liquida).toBe(989.96);
   });
 });
+
+describe("bônus fora de vigência aparece na memória", () => {
+  it("diz que existe e por que não pagou", () => {
+    const r = apurar(
+      entrada({
+        bonusForaDeVigencia: [
+          { nome: "Supermeta Vendedor", motivo: "fora de vigência nesta competência (vale de 2026-09 em diante)" },
+        ],
+      }),
+    );
+    const linha = r.memoria.find((m) => m.rotulo === "Bônus: Supermeta Vendedor");
+    expect(linha?.detalhe).toContain("vale de 2026-09");
+    expect(linha?.informativa).toBe(true);
+    expect(r.bonusTotal).toBe(0);
+  });
+});
