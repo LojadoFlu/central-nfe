@@ -1489,3 +1489,60 @@ describe("bônus preso a outro bônus", () => {
     expect(apurar(cenario(125, ["va"], [supermeta, PA, vaDoPa])).bonusTotal).toBe(300);
   });
 });
+
+describe("desconto do caixa não comissiona", () => {
+  // O PDVnet manda ValorTotal SEM tirar o desconto: numa venda de 549,98 com
+  // 55,00 de desconto, o cliente pagou 494,98. Comissionar sobre 549,98 paga
+  // sobre dinheiro que a loja não recebeu.
+  const venda = (over: Partial<VendaBruta> = {}): VendaBruta => ({
+    id: "v1",
+    lojaId: 335,
+    dia: "2026-08-01",
+    vendedorId: "03350034",
+    valorTotal: 549.98,
+    valorProdutos: 549.98,
+    valorDesconto: 55,
+    ...over,
+  });
+
+  it("a base é o total menos o desconto", () => {
+    const c = consolidar([venda()]);
+    expect(c.porVendedor.get("03350034")?.liquida).toBe(494.98);
+    expect(c.porLoja.get(335)?.liquida).toBe(494.98);
+  });
+
+  it("desconto promocional também sai", () => {
+    const c = consolidar([venda({ valorDesconto: 10, valorDescontoPromocional: 5 })]);
+    expect(c.porVendedor.get("03350034")?.liquida).toBe(534.98);
+  });
+
+  it("sem desconto, nada muda", () => {
+    const c = consolidar([venda({ valorDesconto: 0, valorDescontoPromocional: null })]);
+    expect(c.porVendedor.get("03350034")?.liquida).toBe(549.98);
+  });
+
+  it("o bruto continua sendo o valor dos produtos", () => {
+    const c = consolidar([venda({ valorProdutos: 600 })]);
+    expect(c.porVendedor.get("03350034")?.bruta).toBe(600);
+    expect(c.porVendedor.get("03350034")?.liquida).toBe(494.98);
+  });
+
+  it("melhor vendedor da loja é decidido pelo líquido", () => {
+    // O outro vende mais no papel, mas deu um desconto que derruba o líquido.
+    const c = consolidar([
+      venda({ id: "a", vendedorId: "A", valorTotal: 1000, valorDesconto: 0 }),
+      venda({ id: "b", vendedorId: "B", valorTotal: 1100, valorDesconto: 200 }),
+    ]);
+    expect(c.melhorVendedorPorLoja.get(335)).toBe("A");
+  });
+
+  it("venda cancelada é contabilizada pelo líquido", () => {
+    const c = consolidar([venda({ cancelada: true })]);
+    expect(c.canceladas.valor).toBe(494.98);
+  });
+
+  it("venda sem vendedor entra pelo líquido", () => {
+    const c = consolidar([venda({ vendedorId: null })]);
+    expect(c.semVendedor.valor).toBe(494.98);
+  });
+});

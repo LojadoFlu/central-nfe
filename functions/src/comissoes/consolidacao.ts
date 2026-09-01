@@ -7,9 +7,23 @@ export interface VendaBruta {
   lojaId: number | null;
   dia: string; // YYYY-MM-DD
   vendedorId: string | null;
-  valorTotal: number; // líquido da venda (já com descontos)
+  /**
+   * `ValorTotal` do PDVnet. Apesar do nome, ele NÃO tem o desconto do caixa
+   * descontado: numa venda de 549,98 com 55,00 de desconto, ele vem 549,98 e o
+   * cliente pagou 494,98. Quem comissiona é o valor pago.
+   */
+  valorTotal: number;
   valorProdutos?: number | null; // bruto (antes dos descontos)
+  valorDesconto?: number | null;
+  valorDescontoPromocional?: number | null;
   cancelada?: boolean;
+}
+
+/** O que a venda de fato valeu: o que o PDV chama de total, menos os descontos. */
+export function liquidaDaVenda(v: VendaBruta): number {
+  const total = Number(v.valorTotal) || 0;
+  const desconto = (Number(v.valorDesconto) || 0) + (Number(v.valorDescontoPromocional) || 0);
+  return Math.round((total - desconto) * 100) / 100;
 }
 
 export interface Totais {
@@ -32,7 +46,7 @@ function zero(): Totais {
   return { liquida: 0, bruta: 0, qtd: 0 };
 }
 function soma(t: Totais, v: VendaBruta): void {
-  t.liquida += Number(v.valorTotal) || 0;
+  t.liquida += liquidaDaVenda(v);
   t.bruta += Number(v.valorProdutos ?? v.valorTotal) || 0;
   t.qtd += 1;
 }
@@ -55,7 +69,7 @@ export function consolidar(vendas: VendaBruta[]): Consolidado {
   for (const v of vendas) {
     if (v.cancelada) {
       canceladas.qtd += 1;
-      canceladas.valor += Number(v.valorTotal) || 0;
+      canceladas.valor += liquidaDaVenda(v);
       continue;
     }
     if (v.lojaId != null) {
@@ -66,7 +80,7 @@ export function consolidar(vendas: VendaBruta[]): Consolidado {
     const vid = (v.vendedorId ?? "").trim();
     if (!vid) {
       semVendedor.qtd += 1;
-      semVendedor.valor += Number(v.valorTotal) || 0;
+      semVendedor.valor += liquidaDaVenda(v);
       if (semVendedor.ids.length < 200) semVendedor.ids.push(v.id);
       continue;
     }
@@ -75,7 +89,7 @@ export function consolidar(vendas: VendaBruta[]): Consolidado {
     porVendedor.set(vid, t);
     if (v.lojaId != null) {
       const m = porLojaVendedor.get(v.lojaId) ?? new Map<string, number>();
-      m.set(vid, (m.get(vid) ?? 0) + (Number(v.valorTotal) || 0));
+      m.set(vid, (m.get(vid) ?? 0) + liquidaDaVenda(v));
       porLojaVendedor.set(v.lojaId, m);
     }
   }

@@ -14,6 +14,7 @@ import {
   limitesDaCompetencia,
   somarLojas,
   estornoDeVendaCancelada,
+  liquidaDaVenda,
   type Totais,
   type VendaBruta,
 } from "./consolidacao";
@@ -110,6 +111,9 @@ export async function lerVendas(competencia: string): Promise<VendaBruta[]> {
       vendedorId: (s.vendedorId as string | null) ?? null,
       valorTotal: Number(s.valorTotal) || 0,
       valorProdutos: s.valorProdutos == null ? null : Number(s.valorProdutos),
+      valorDesconto: s.valorDesconto == null ? null : Number(s.valorDesconto),
+      valorDescontoPromocional:
+        s.valorDescontoPromocional == null ? null : Number(s.valorDescontoPromocional),
       cancelada: !!s.cancelada,
     } satisfies VendaBruta;
   });
@@ -957,10 +961,26 @@ export async function detectarEstornos(competenciaAlvo: string): Promise<{
     for (const s of canceladas.docs) {
       const jaEstornada = await db.collection("com_estornos").doc(s.id).get();
       if (jaEstornada.exists) continue;
-      const v = s.data() as { vendedorId?: string; valorTotal?: number; dia?: string };
+      const v = s.data() as {
+        vendedorId?: string;
+        valorTotal?: number;
+        valorDesconto?: number | null;
+        valorDescontoPromocional?: number | null;
+        dia?: string;
+      };
       const alvo = v.vendedorId ? pctPorVendedor.get(v.vendedorId) : undefined;
       if (!alvo) continue; // venda cancelada de quem não recebeu comissão naquele mês
-      const ajuste = estornoDeVendaCancelada(Number(v.valorTotal) || 0, alvo.pct);
+      // Estorna sobre o mesmo valor que comissionou: o líquido, sem o desconto.
+      const valorLiquido = liquidaDaVenda({
+        id: s.id,
+        lojaId: null,
+        dia: v.dia ?? "",
+        vendedorId: v.vendedorId ?? null,
+        valorTotal: Number(v.valorTotal) || 0,
+        valorDesconto: v.valorDesconto ?? null,
+        valorDescontoPromocional: v.valorDescontoPromocional ?? null,
+      });
+      const ajuste = estornoDeVendaCancelada(valorLiquido, alvo.pct);
       if (!ajuste) continue;
       const ajusteId = `${competenciaAlvo}_${s.id}`;
       await db.collection("com_ajustes").doc(ajusteId).set({
@@ -978,7 +998,7 @@ export async function detectarEstornos(competenciaAlvo: string): Promise<{
         competenciaOriginal: comp,
         competenciaAjuste: competenciaAlvo,
         funcionarioId: alvo.funcionarioId,
-        valorVenda: Number(v.valorTotal) || 0,
+        valorVenda: valorLiquido,
         percentualEfetivo: alvo.pct,
         ajuste,
         criadoEm: new Date().toISOString(),
