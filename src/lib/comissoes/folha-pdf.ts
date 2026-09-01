@@ -184,7 +184,6 @@ export function montarPdfPorLoja(
           { content: "Piso", styles: direita },
           { content: "Gratificação", styles: direita },
           { content: "Desconto", styles: direita },
-          { content: "Total", styles: direita },
           { content: "Faltas / Suspensões", styles: direita },
         ],
       ],
@@ -194,7 +193,6 @@ export function montarPdfPorLoja(
         formatBRL(p.piso),
         formatBRL(p.gratificacao),
         p.desconto ? `-${formatBRL(p.desconto)}` : "—",
-        formatBRL(p.total),
         p.faltas ? String(p.faltas) : "—",
       ]),
       styles: { fontSize: 8.5, cellPadding: 1.6 },
@@ -205,22 +203,24 @@ export function montarPdfPorLoja(
       // As colunas de dinheiro têm largura fixa: sem isso, o autoTable aperta
       // a do desconto e o "-R$ 1.234,56" quebra em duas linhas.
       columnStyles: {
-        0: { cellWidth: 38 },
-        1: { cellWidth: 26 },
-        2: { halign: "right", cellWidth: 22 },
-        3: { halign: "right", cellWidth: 24 },
-        4: { halign: "right", cellWidth: 24 },
-        5: { halign: "right", cellWidth: 24, fontStyle: "bold" },
-        6: { halign: "right", cellWidth: 24 },
+        0: { cellWidth: 48 },
+        1: { cellWidth: 32 },
+        2: { halign: "right", cellWidth: 24 },
+        3: { halign: "right", cellWidth: 26 },
+        4: { halign: "right", cellWidth: 26 },
+        5: { halign: "right", cellWidth: 26 },
       },
     });
 
     const depois = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y;
     doc.setFontSize(7.5).setTextColor(110).setCharSpace(0);
+    const nota = apuracao.congelado
+      ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. O que a pessoa recebe é piso + gratificação - desconto. Faltas e suspensões em dias, sem desconto aqui.`
+      : "Competência ainda aberta — os valores podem mudar até o fechamento. O que a pessoa recebe é piso + gratificação - desconto. Faltas e suspensões em dias, sem desconto aqui.";
+    // Quebra na largura útil: escrita de uma vez só, a nota saía cortada na
+    // margem direita.
     doc.text(
-      apuracao.congelado
-        ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. Total = piso + gratificação - desconto. Faltas e suspensões em dias, sem desconto aqui.`
-        : "Competência ainda aberta — os valores podem mudar até o fechamento. Total = piso + gratificação - desconto. Faltas e suspensões em dias, sem desconto aqui.",
+      doc.splitTextToSize(nota, doc.internal.pageSize.getWidth() - M * 2),
       M,
       Math.min(depois + 6, 285),
     );
