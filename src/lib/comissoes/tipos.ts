@@ -77,6 +77,11 @@ export interface Bonus {
    * quem bateu a supermeta: gatilho = indicador PA, condição = 125% da meta.
    */
   condicao?: Condicao | null;
+  /**
+   * Só paga se ESTE outro bônus tiver pago. É como o VA se prende à supermeta
+   * sem repetir o degrau dela: mudou a supermeta, o VA acompanha.
+   */
+  dependeDe?: string | null;
   premio: Premio;
   vigenciaDe: Competencia;
   vigenciaAte?: Competencia | null;

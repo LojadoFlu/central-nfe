@@ -4297,6 +4297,8 @@ export const comissoesSalvarBonus = onCall(opcoes, async (req) => {
       minimoPct: num(g.minimoPct, 100),
       indicadorId: texto(g.indicadorId, 80) || null,
     },
+    // Preso a outro bônus: o VA só paga se a supermeta pagou.
+    dependeDe: texto(req.data?.dependeDe, 120) || null,
     // Exigência extra: é o que prende o prêmio de PA/VA à supermeta.
     condicao:
       c && tiposCondicao.includes(String(c.tipo))

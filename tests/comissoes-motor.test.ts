@@ -1399,3 +1399,93 @@ describe("metas secundárias (PA, VA) como gatilho de bônus", () => {
     expect(linha?.detalhe).toContain("não cadastrada");
   });
 });
+
+describe("bônus preso a outro bônus", () => {
+  const supermeta: Bonus = {
+    id: "super",
+    nome: "Supermeta Vendedor",
+    ativo: true,
+    gatilho: { tipo: "atingimentoIndividual", minimoPct: 125 },
+    premio: { tipo: "percentual", valor: 0.3, escopoVenda: "individual" },
+    vigenciaDe: "2026-01",
+  };
+  const preso = (id: string, nome: string, indicadorId: string): Bonus => ({
+    id,
+    nome,
+    ativo: true,
+    gatilho: { tipo: "indicador", indicadorId },
+    dependeDe: "super",
+    premio: { tipo: "percentual", valor: 0.1, escopoVenda: "individual" },
+    vigenciaDe: "2026-01",
+  });
+  const PA = preso("pa", "PA", "i-pa");
+  const VA = preso("va", "VA", "i-va");
+
+  const cenario = (atingimentoPct: number, marcados: string[], bonus = [supermeta, PA, VA]) =>
+    entrada({
+      vendas: {
+        individual: { liquida: 100_000, bruta: 100_000 },
+        loja: { liquida: 0, bruta: 0 },
+        grupo: { liquida: 0, bruta: 0 },
+      },
+      metas: { individual: 100_000 / (atingimentoPct / 100), loja: null, grupo: null },
+      bonus,
+      indicadores: [
+        { id: "i-pa", nome: "PA", atingido: marcados.includes("pa") },
+        { id: "i-va", nome: "VA", atingido: marcados.includes("va") },
+      ],
+    });
+
+  it("com a supermeta paga, PA e VA somam a ela", () => {
+    const r = apurar(cenario(125, ["pa", "va"]));
+    expect(r.bonusTotal).toBe(500); // 0,3 + 0,1 + 0,1 sobre 100.000
+  });
+
+  it("sem a supermeta, nada do que depende dela paga", () => {
+    const r = apurar(cenario(110, ["pa", "va"]));
+    expect(r.bonusTotal).toBe(0);
+    const linha = r.memoria.find((m) => m.rotulo === "Bônus: VA");
+    expect(linha?.detalhe).toContain('"Supermeta Vendedor" não pagou');
+  });
+
+  it("a supermeta paga, mas o indicador não marcado não", () => {
+    const r = apurar(cenario(125, ["pa"]));
+    expect(r.bonusTotal).toBe(400);
+    expect(r.memoria.find((m) => m.rotulo === "Bônus: VA")?.detalhe).toContain("VA não batido");
+  });
+
+  it("mudou o degrau da supermeta, o preso acompanha sem ser editado", () => {
+    const super130 = { ...supermeta, gatilho: { tipo: "atingimentoIndividual" as const, minimoPct: 130 } };
+    const r = apurar(cenario(127, ["pa", "va"], [super130, PA, VA]));
+    expect(r.bonusTotal).toBe(0);
+  });
+
+  it("o preso não disputa o degrau da escada de que depende", () => {
+    // Sem isso, o VA (gatilho de indicador) poderia substituir a supermeta.
+    const r = apurar(cenario(125, ["va"]));
+    expect(r.memoria.find((m) => m.rotulo === "Bônus: Supermeta Vendedor")?.valor).toBe(300);
+    expect(r.memoria.find((m) => m.rotulo === "Bônus: VA")?.valor).toBe(100);
+  });
+
+  it("bônus exigido fora do alcance da pessoa não paga o dependente", () => {
+    const r = apurar(cenario(125, ["pa"], [PA]));
+    expect(r.bonusTotal).toBe(0);
+    expect(r.memoria.find((m) => m.rotulo === "Bônus: PA")?.detalhe).toContain(
+      "não se aplica a esta pessoa",
+    );
+  });
+
+  it("dependência circular não paga e não trava", () => {
+    const a: Bonus = { ...PA, id: "a", nome: "A", dependeDe: "b" };
+    const b: Bonus = { ...VA, id: "b", nome: "B", dependeDe: "a" };
+    const r = apurar(cenario(125, ["pa", "va"], [a, b]));
+    expect(r.bonusTotal).toBe(0);
+    expect(r.memoria.find((m) => m.rotulo === "Bônus: A")?.detalhe).toContain("circular");
+  });
+
+  it("corrente de três: VA depende do PA, que depende da supermeta", () => {
+    const vaDoPa = { ...VA, dependeDe: "pa" };
+    expect(apurar(cenario(125, ["pa", "va"], [supermeta, PA, vaDoPa])).bonusTotal).toBe(500);
+    expect(apurar(cenario(125, ["va"], [supermeta, PA, vaDoPa])).bonusTotal).toBe(300);
+  });
+});

@@ -38,6 +38,8 @@ function bonusNovo(): BonusTipo {
     cargoId: null,
     lojaId: null,
     gatilho: { tipo: "atingimentoIndividual", minimoPct: 100 },
+    dependeDe: null,
+    condicao: null,
     premio: { tipo: "percentual", valor: 0, escopoVenda: "individual", baseCalculo: "liquida" },
     vigenciaDe: competenciaAtual(),
     vigenciaAte: null,
@@ -72,6 +74,7 @@ export function Bonus({
     [lojas],
   );
   const gatilhoAtual = GATILHOS.find((g) => g.valor === edicao?.gatilho.tipo);
+  const nomeBonus = useMemo(() => new Map(bonus.map((b) => [b.id, b.nome])), [bonus]);
   const nomeIndicador = useMemo(
     () => new Map(indicadores.map((i) => [i.id, i.nome])),
     [indicadores],
@@ -90,6 +93,20 @@ export function Bonus({
       if (!b.ativo) continue;
       if (b.premio.tipo === "percentual" && !b.premio.valor) {
         avisos.push(`"${b.nome}" está com percentual zerado — não paga nada.`);
+      }
+      // Preso a um bônus que não alcança a mesma pessoa: nunca paga, e em
+      // silêncio — é o erro mais caro de perceber neste cadastro.
+      if (b.dependeDe) {
+        const dono = bonus.find((x) => x.id === b.dependeDe);
+        if (!dono) {
+          avisos.push(`"${b.nome}" depende de um bônus que não existe mais — não paga nunca.`);
+        } else if (!dono.ativo) {
+          avisos.push(`"${b.nome}" depende de "${dono.nome}", que está inativo — não paga nunca.`);
+        } else if (dono.cargoId && b.cargoId !== dono.cargoId) {
+          avisos.push(
+            `"${b.nome}" depende de "${dono.nome}", que é só de ${nomeCargo.get(dono.cargoId) ?? "outro cargo"}. Fora desse cargo o prêmio não sai.`,
+          );
+        }
       }
       if (!b.gatilho.tipo.startsWith("atingimento")) continue;
       const chave = b.cargoId ? (nomeCargo.get(b.cargoId) ?? b.cargoId) : "todos os cargos";
@@ -293,30 +310,63 @@ export function Bonus({
               ) : null}
             </div>
 
-            {/* Exigência extra: é o que prende o PA/VA à supermeta — sem os
-                125%, o indicador marcado não paga nada. */}
+            {/* Exigência extra num campo só. Apontar para OUTRO BÔNUS é o
+                jeito certo de prender o VA à supermeta: não se repete o
+                degrau dela, e se ele mudar amanhã o VA acompanha sozinho. */}
             <div className="grid gap-3 sm:grid-cols-3">
-              <Campo label="Só paga se também bater">
+              <Campo
+                label="Só paga se"
+                hint={
+                  edicao.dependeDe
+                    ? "O prêmio acompanha aquele bônus: mudou o degrau dele, este acompanha."
+                    : undefined
+                }
+              >
                 <Select
-                  value={edicao.condicao?.tipo ?? ""}
-                  onChange={(e) =>
-                    setEdicao({
-                      ...edicao,
-                      condicao: e.target.value
-                        ? {
-                            tipo: e.target.value as NonNullable<BonusTipo["condicao"]>["tipo"],
-                            minimoPct: edicao.condicao?.minimoPct ?? 125,
-                          }
-                        : null,
-                    })
+                  value={
+                    edicao.dependeDe
+                      ? `bonus:${edicao.dependeDe}`
+                      : edicao.condicao
+                        ? `atingimento:${edicao.condicao.tipo}`
+                        : ""
                   }
+                  onChange={(ev) => {
+                    const v = ev.target.value;
+                    if (!v) return setEdicao({ ...edicao, dependeDe: null, condicao: null });
+                    if (v.startsWith("bonus:")) {
+                      return setEdicao({
+                        ...edicao,
+                        dependeDe: v.slice(6),
+                        condicao: null,
+                      });
+                    }
+                    return setEdicao({
+                      ...edicao,
+                      dependeDe: null,
+                      condicao: {
+                        tipo: v.slice(12) as NonNullable<BonusTipo["condicao"]>["tipo"],
+                        minimoPct: edicao.condicao?.minimoPct ?? 125,
+                      },
+                    });
+                  }}
                 >
                   <option value="">— nada além do gatilho —</option>
-                  {CONDICOES.map((c) => (
-                    <option key={c.valor} value={c.valor}>
-                      {c.label}
-                    </option>
-                  ))}
+                  <optgroup label="Outro bônus pagar">
+                    {bonus
+                      .filter((b) => b.id !== edicao.id && b.ativo)
+                      .map((b) => (
+                        <option key={b.id} value={`bonus:${b.id}`}>
+                          {b.nome}
+                        </option>
+                      ))}
+                  </optgroup>
+                  <optgroup label="A pessoa também bater">
+                    {CONDICOES.map((c) => (
+                      <option key={c.valor} value={`atingimento:${c.valor}`}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </optgroup>
                 </Select>
               </Campo>
               {edicao.condicao ? (
@@ -474,11 +524,13 @@ export function Bonus({
                   {b.gatilho.tipo.startsWith("atingimento")
                     ? ` (${pctFmt(b.gatilho.minimoPct ?? 100)})`
                     : ""}
-                  {b.condicao
-                    ? ` + ${
-                        CONDICOES.find((c) => c.valor === b.condicao?.tipo)?.label ?? "condição"
-                      } em ${pctFmt(b.condicao.minimoPct)}`
-                    : ""}{" "}
+                  {b.dependeDe
+                    ? ` + só com "${nomeBonus.get(b.dependeDe) ?? "outro bônus"}" pago`
+                    : b.condicao
+                      ? ` + ${
+                          CONDICOES.find((c) => c.valor === b.condicao?.tipo)?.label ?? "condição"
+                        } em ${pctFmt(b.condicao.minimoPct)}`
+                      : ""}{" "}
                   ·{" "}
                   {b.cargoId ? (nomeCargo.get(b.cargoId) ?? "cargo") : "todos os cargos"}
                   {b.lojaId != null ? ` · ${nomeLoja.get(b.lojaId) ?? b.lojaId}` : ""}

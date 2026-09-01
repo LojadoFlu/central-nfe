@@ -302,6 +302,10 @@ function calcularComponente(
  * "sempre" — que continuam somando normalmente.
  */
 function escopoDoDegrau(b: Bonus): EscopoVenda | null {
+  // Preso a outro bônus, ele é prêmio somado — não degrau concorrente da
+  // mesma escada. Senão o VA disputaria o lugar da supermeta de quem ele
+  // depende, e um anularia o outro.
+  if (b.dependeDe) return null;
   switch (b.gatilho.tipo) {
     case "atingimentoIndividual":
       return "individual";
@@ -475,10 +479,13 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
   // atingimento do MESMO escopo, paga só o degrau mais alto que a pessoa
   // alcançou — quem faz 125% recebe o percentual da supermeta sobre a venda,
   // e não a supermeta somada à meta.
-  // Bônus que não são degrau de meta ("melhor vendedor", "sempre") continuam
-  // somando: são prêmios à parte, não faixas concorrentes.
+  // Bônus que não são degrau de meta ("melhor vendedor", "sempre", os presos a
+  // outro bônus) continuam somando: são prêmios à parte, não faixas
+  // concorrentes.
+  const lista = e.bonus ?? [];
+  const porId = new Map(lista.map((b) => [b.id, b]));
   const vencedorDoDegrau = new Map<EscopoVenda, Bonus>();
-  for (const b of e.bonus ?? []) {
+  for (const b of lista) {
     const escopo = escopoDoDegrau(b);
     if (!escopo) continue;
     if (!gatilhoAtendido(b, e, atingimentos).ok) continue;
@@ -492,50 +499,97 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
     }
   }
 
-  let bonusTotal = 0;
-  for (const b of e.bonus ?? []) {
+  // Um bônus pode depender de OUTRO ter pago — é assim que o VA se prende à
+  // supermeta: não se repete o "125%" no VA, aponta-se para o bônus da
+  // supermeta. Se o degrau dela mudar amanhã, o VA acompanha sozinho.
+  // Por isso a decisão vem em rodadas: quem depende só é decidido depois de
+  // quem ele espera.
+  interface Decisao {
+    pago: boolean;
+    valor: number;
+    detalhe: string;
+  }
+  const decisao = new Map<string, Decisao>();
+  const decidir = (b: Bonus): Decisao | null => {
+    if (b.dependeDe) {
+      const dono = porId.get(b.dependeDe);
+      if (!dono) {
+        return {
+          pago: false,
+          valor: 0,
+          detalhe: "o bônus exigido não se aplica a esta pessoa",
+        };
+      }
+      const d = decisao.get(dono.id);
+      if (!d) return null; // ainda não sabemos: fica para a próxima rodada
+      if (!d.pago) {
+        return { pago: false, valor: 0, detalhe: `"${dono.nome}" não pagou` };
+      }
+    }
     const cond = condicaoAtendida(b, atingimentos);
-    if (!cond.ok) {
-      memoria.push({
-        rotulo: `Bônus: ${b.nome}`,
-        detalhe: `Não pago — ${cond.motivo}`,
-        valor: 0,
-        informativa: true,
-      });
-      continue;
-    }
+    if (!cond.ok) return { pago: false, valor: 0, detalhe: cond.motivo };
     const g = gatilhoAtendido(b, e, atingimentos);
-    if (!g.ok) {
-      memoria.push({
-        rotulo: `Bônus: ${b.nome}`,
-        detalhe: `Não pago — ${g.motivo}`,
-        valor: 0,
-        informativa: true,
-      });
-      continue;
-    }
+    if (!g.ok) return { pago: false, valor: 0, detalhe: g.motivo };
     const escopo = escopoDoDegrau(b);
     const vencedor = escopo ? vencedorDoDegrau.get(escopo) : undefined;
     if (escopo && vencedor && vencedor.id !== b.id) {
+      return {
+        pago: false,
+        valor: 0,
+        detalhe: `substituído por "${vencedor.nome}", degrau mais alto atingido (não acumulam)`,
+      };
+    }
+    const dono = b.dependeDe ? porId.get(b.dependeDe) : null;
+    const porQue = [
+      g.motivo,
+      b.condicao ? cond.motivo : null,
+      dono ? `com "${dono.nome}" pago` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return { pago: true, valor: calcularBonus(b, e), detalhe: porQue };
+  };
+
+  let mudou = true;
+  while (mudou) {
+    mudou = false;
+    for (const b of lista) {
+      if (decisao.has(b.id)) continue;
+      const d = decidir(b);
+      if (d) {
+        decisao.set(b.id, d);
+        mudou = true;
+      }
+    }
+  }
+  // Sobrou alguém sem decisão: só acontece se dois bônus dependerem um do
+  // outro. Não paga, e diz o motivo em vez de sumir da memória.
+  for (const b of lista) {
+    if (!decisao.has(b.id)) {
+      decisao.set(b.id, { pago: false, valor: 0, detalhe: "dependência circular entre bônus" });
+    }
+  }
+
+  let bonusTotal = 0;
+  for (const b of lista) {
+    const d = decisao.get(b.id)!;
+    if (!d.pago) {
       memoria.push({
         rotulo: `Bônus: ${b.nome}`,
-        detalhe: `Não pago — substituído por "${vencedor.nome}", degrau mais alto atingido (não acumulam)`,
+        detalhe: `Não pago — ${d.detalhe}`,
         valor: 0,
         informativa: true,
       });
       continue;
     }
-    const v = calcularBonus(b, e);
-    bonusTotal += v;
+    bonusTotal += d.valor;
     memoria.push({
       rotulo: `Bônus: ${b.nome}`,
       detalhe:
         b.premio.tipo === "fixo"
-          ? `Valor fixo — ${g.motivo}`
-          : `${pct(b.premio.valor)} sobre a venda ${b.premio.escopoVenda ?? "individual"} — ${g.motivo}${
-              b.condicao ? ` · ${cond.motivo}` : ""
-            }`,
-      valor: v,
+          ? `Valor fixo — ${d.detalhe}`
+          : `${pct(b.premio.valor)} sobre a venda ${b.premio.escopoVenda ?? "individual"} — ${d.detalhe}`,
+      valor: d.valor,
     });
   }
   bonusTotal = centavos(bonusTotal);
