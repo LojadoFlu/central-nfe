@@ -173,10 +173,6 @@ export function montarPdfPorLoja(
 
     // A coluna de desconto só aparece onde houve desconto: numa loja sem
     // retirada nem falta ela seria uma fila de zeros.
-    const comDesconto = loja.desconto > 0;
-    // Dias de falta só ganham coluna onde houve falta — numa loja sem
-    // nenhuma, seria uma fila de traços.
-    const comFaltas = loja.faltas > 0;
     const direita = { halign: "right" as const };
     autoTable(doc, {
       startY: y + 8,
@@ -185,58 +181,53 @@ export function montarPdfPorLoja(
         [
           "Funcionário",
           "Cargo",
-          ...(comFaltas ? [{ content: "Faltas", styles: direita }] : []),
           { content: "Piso", styles: direita },
           { content: "Gratificação", styles: direita },
-          ...(comDesconto ? [{ content: "Descontos", styles: direita }] : []),
+          { content: "Desconto", styles: direita },
           { content: "Total", styles: direita },
+          { content: "Faltas/Suspensões", styles: direita },
         ],
       ],
       body: loja.pessoas.map((p) => [
         p.nome,
         p.cargo,
-        ...(comFaltas ? [p.faltas ? `${p.faltas} dia${p.faltas === 1 ? "" : "s"}` : "—"] : []),
         formatBRL(p.piso),
         formatBRL(p.gratificacao),
-        ...(comDesconto ? [p.desconto ? `- ${formatBRL(p.desconto)}` : "—"] : []),
+        p.desconto ? `- ${formatBRL(p.desconto)}` : "—",
         formatBRL(p.total),
+        p.faltas ? String(p.faltas) : "—",
       ]),
       foot: [
         [
           `TOTAL — ${loja.pessoas.length} pessoa${loja.pessoas.length === 1 ? "" : "s"}`,
           "",
-          ...(comFaltas ? [`${loja.faltas} dia${loja.faltas === 1 ? "" : "s"}`] : []),
           formatBRL(loja.piso),
           formatBRL(loja.gratificacao),
-          ...(comDesconto ? [`- ${formatBRL(loja.desconto)}`] : []),
+          loja.desconto ? `- ${formatBRL(loja.desconto)}` : "—",
           formatBRL(loja.total),
+          loja.faltas ? String(loja.faltas) : "—",
         ],
       ],
       styles: { fontSize: 9, cellPadding: 1.8 },
       headStyles: { fillColor: VERDE, fontSize: 9 },
       alternateRowStyles: { fillColor: CINZA_CLARO },
       footStyles: { fillColor: CINZA_CLARO, textColor: GRENA, fontStyle: "bold" },
-      // Nome e cargo à esquerda; tudo o que é número, à direita — e a última
-      // coluna (o total) em negrito, seja qual for a posição dela.
-      columnStyles: (() => {
-        const colunas = 4 + (comFaltas ? 1 : 0) + (comDesconto ? 1 : 0);
-        const estilos: Record<number, { halign: "right"; fontStyle?: "bold" }> = {};
-        for (let i = 2; i < colunas; i++) estilos[i] = { halign: "right" };
-        estilos[colunas - 1] = { halign: "right", fontStyle: "bold" };
-        return estilos;
-      })(),
+      // Nome e cargo à esquerda, números à direita; o total em negrito.
+      columnStyles: {
+        2: { halign: "right" },
+        3: { halign: "right" },
+        4: { halign: "right" },
+        5: { halign: "right", fontStyle: "bold" },
+        6: { halign: "right" },
+      },
     });
 
     const depois = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y;
     doc.setFontSize(7.5).setTextColor(110).setCharSpace(0);
     doc.text(
       apuracao.congelado
-        ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. ${
-            comDesconto ? "Total = piso + gratificação - descontos." : "Gratificação = total - piso."
-          }${comFaltas ? " Faltas em dias, informativas — o desconto é da contabilidade." : ""}`
-        : `Competência ainda aberta — os valores podem mudar até o fechamento. ${
-            comDesconto ? "Total = piso + gratificação - descontos." : "Gratificação = total - piso."
-          }${comFaltas ? " Faltas em dias, informativas — o desconto é da contabilidade." : ""}`,
+        ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. Total = piso + gratificação - desconto. Faltas e suspensões em dias, sem desconto aqui.`
+        : "Competência ainda aberta — os valores podem mudar até o fechamento. Total = piso + gratificação - desconto. Faltas e suspensões em dias, sem desconto aqui.",
       M,
       Math.min(depois + 6, 285),
     );
@@ -244,8 +235,7 @@ export function montarPdfPorLoja(
   });
 
   if (lojas.length > 1) {
-    const temDesconto = lojas.some((l) => l.desconto > 0);
-    const temFaltas = lojas.some((l) => l.faltas > 0);
+    const direita = { halign: "right" as const };
     doc.addPage();
     const y = cabecalhoFlu(doc, {
       titulo: "Resumo da rede",
@@ -260,47 +250,46 @@ export function montarPdfPorLoja(
       head: [
         [
           "Loja",
-          { content: "Pessoas", styles: { halign: "right" as const } },
-          ...(temFaltas ? [{ content: "Faltas", styles: { halign: "right" as const } }] : []),
-          { content: "Piso", styles: { halign: "right" as const } },
-          { content: "Gratificação", styles: { halign: "right" as const } },
-          ...(temDesconto ? [{ content: "Descontos", styles: { halign: "right" as const } }] : []),
-          { content: "Total", styles: { halign: "right" as const } },
+          { content: "Pessoas", styles: direita },
+          { content: "Piso", styles: direita },
+          { content: "Gratificação", styles: direita },
+          { content: "Desconto", styles: direita },
+          { content: "Total", styles: direita },
+          { content: "Faltas/Suspensões", styles: direita },
         ],
       ],
       body: lojas.map((l) => [
         l.lojaNome,
         String(l.pessoas.length),
-        ...(temFaltas ? [l.faltas ? `${l.faltas} dia${l.faltas === 1 ? "" : "s"}` : "—"] : []),
         formatBRL(l.piso),
         formatBRL(l.gratificacao),
-        ...(temDesconto ? [l.desconto ? `- ${formatBRL(l.desconto)}` : "—"] : []),
+        l.desconto ? `- ${formatBRL(l.desconto)}` : "—",
         formatBRL(l.total),
+        l.faltas ? String(l.faltas) : "—",
       ]),
       foot: [
         [
           "TOTAL",
           String(lojas.reduce((s, l) => s + l.pessoas.length, 0)),
-          ...(temFaltas
-            ? [`${lojas.reduce((s, l) => s + l.faltas, 0)} dias`]
-            : []),
           formatBRL(cent(lojas.reduce((s, l) => s + l.piso, 0))),
           formatBRL(cent(lojas.reduce((s, l) => s + l.gratificacao, 0))),
-          ...(temDesconto ? [`- ${formatBRL(cent(lojas.reduce((s, l) => s + l.desconto, 0)))}`] : []),
+          formatBRL(cent(lojas.reduce((s, l) => s + l.desconto, 0))),
           formatBRL(apuracao.totais.valorDevido),
+          String(lojas.reduce((s, l) => s + l.faltas, 0)),
         ],
       ],
       styles: { fontSize: 9, cellPadding: 1.8 },
       headStyles: { fillColor: VERDE, fontSize: 9 },
       alternateRowStyles: { fillColor: CINZA_CLARO },
       footStyles: { fillColor: CINZA_CLARO, textColor: GRENA, fontStyle: "bold" },
-      columnStyles: (() => {
-        const colunas = 5 + (temFaltas ? 1 : 0) + (temDesconto ? 1 : 0);
-        const estilos: Record<number, { halign: "right"; fontStyle?: "bold" }> = {};
-        for (let i = 1; i < colunas; i++) estilos[i] = { halign: "right" };
-        estilos[colunas - 1] = { halign: "right", fontStyle: "bold" };
-        return estilos;
-      })(),
+      columnStyles: {
+        1: { halign: "right" },
+        2: { halign: "right" },
+        3: { halign: "right" },
+        4: { halign: "right" },
+        5: { halign: "right", fontStyle: "bold" },
+        6: { halign: "right" },
+      },
     });
   }
 
