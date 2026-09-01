@@ -192,6 +192,11 @@ export interface Cargo {
    * Ausente = sim (o padrão é comissionar).
    */
   recebeComissao?: boolean;
+  /**
+   * O relatório da loja sai sem a gratificação deste cargo. Só afeta o PDF —
+   * o cálculo e a folha não mudam.
+   */
+  ocultaGratificacaoPdf?: boolean;
   ativo: boolean;
 }
 

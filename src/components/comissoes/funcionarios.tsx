@@ -314,7 +314,9 @@ export function Funcionarios({
               <strong>meta individual</strong> nos cargos que dividem a meta da loja entre si
               (vendedor, subgerente); gerente e supervisor são medidos pela loja ou pelo grupo. Desmarque{" "}
               <strong>comissiona</strong> no cargo que só recebe o piso (caixa): ele continua na
-              folha, mas fora da comissão e fora do piso garantido usado.
+              folha, mas fora da comissão e fora do piso garantido usado. Marque{" "}
+              <strong>sem gratificação no PDF</strong> para o relatório da loja sair sem esse
+              número — só o papel muda, o cálculo não.
             </p>
             <div className="divide-y divide-border">
               {cargos.map((c) => {
@@ -354,6 +356,7 @@ export function Funcionarios({
                                     pisoGarantido: c.pisoGarantido ?? null,
                                     recebeMetaIndividual: e.target.checked,
                                     recebeComissao: c.recebeComissao !== false,
+                                    ocultaGratificacaoPdf: c.ocultaGratificacaoPdf === true,
                                   }),
                                 "Cargo salvo.",
                               )
@@ -380,12 +383,39 @@ export function Funcionarios({
                                     pisoGarantido: c.pisoGarantido ?? null,
                                     recebeMetaIndividual: c.recebeMetaIndividual === true,
                                     recebeComissao: e.target.checked,
+                                    ocultaGratificacaoPdf: c.ocultaGratificacaoPdf === true,
                                   }),
                                 "Cargo salvo.",
                               )
                             }
                           />
                           comissiona
+                        </label>
+                        {/* Só mexe no papel que vai para a loja: o cálculo e a
+                            folha continuam iguais. */}
+                        <label className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+                          <input
+                            type="checkbox"
+                            className="size-3.5"
+                            checked={c.ocultaGratificacaoPdf === true}
+                            disabled={ocupado}
+                            onChange={(e) =>
+                              executar(
+                                () =>
+                                  salvarCargo({
+                                    id: c.id,
+                                    nome: c.nome,
+                                    ordem: c.ordem,
+                                    pisoGarantido: c.pisoGarantido ?? null,
+                                    recebeMetaIndividual: c.recebeMetaIndividual === true,
+                                    recebeComissao: c.recebeComissao !== false,
+                                    ocultaGratificacaoPdf: e.target.checked,
+                                  }),
+                                "Cargo salvo.",
+                              )
+                            }
+                          />
+                          sem gratificação no PDF
                         </label>
                         <Button
                           size="sm"
@@ -401,6 +431,7 @@ export function Funcionarios({
                                   pisoGarantido: piso,
                                   recebeMetaIndividual: c.recebeMetaIndividual === true,
                                   recebeComissao: c.recebeComissao !== false,
+                                  ocultaGratificacaoPdf: c.ocultaGratificacaoPdf === true,
                                 }),
                               "Cargo salvo.",
                             )

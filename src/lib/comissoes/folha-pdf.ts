@@ -82,6 +82,8 @@ export interface PessoaFolha {
   desconto: number;
   /** Dias não trabalhados no mês (falta + suspensão). */
   faltas: number;
+  /** O cargo pediu para não mostrar a gratificação no relatório da loja. */
+  ocultaGratificacao: boolean;
   total: number;
 }
 
@@ -99,7 +101,11 @@ export interface FolhaDaLoja {
 const cent = (n: number) => Math.round(n * 100) / 100;
 
 /** Agrupa a apuração por loja, já com piso e gratificação de cada pessoa. */
-export function folhaPorLoja(linhas: LinhaApuracao[]): FolhaDaLoja[] {
+export function folhaPorLoja(
+  linhas: LinhaApuracao[],
+  /** Cargos cuja gratificação não vai para o relatório da loja. */
+  cargosSemGratificacao: Set<string> = new Set(),
+): FolhaDaLoja[] {
   const porLoja = new Map<number | null, FolhaDaLoja>();
   for (const l of linhas) {
     const chave = l.lojaId ?? null;
@@ -123,6 +129,7 @@ export function folhaPorLoja(linhas: LinhaApuracao[]): FolhaDaLoja[] {
       gratificacao,
       desconto,
       faltas: l.faltas?.dias ?? 0,
+      ocultaGratificacao: !!l.cargoId && cargosSemGratificacao.has(l.cargoId),
       total: cent(l.valorDevido),
     });
     grupo.piso = cent(grupo.piso + piso);
@@ -146,20 +153,28 @@ export function folhaPorLoja(linhas: LinhaApuracao[]): FolhaDaLoja[] {
  * Uma página por loja, com piso e gratificação de cada funcionário — o papel
  * que vai para a loja depois do fechamento.
  */
-export async function gerarPdfPorLoja(apuracao: ResultadoCompetencia, empresa?: string): Promise<void> {
-  const doc = montarPdfPorLoja(apuracao, { empresa, escudo: await carregarEscudo() });
+export async function gerarPdfPorLoja(
+  apuracao: ResultadoCompetencia,
+  opts: { empresa?: string; cargosSemGratificacao?: Set<string> } = {},
+): Promise<void> {
+  const doc = montarPdfPorLoja(apuracao, { ...opts, escudo: await carregarEscudo() });
   doc.save(`folha-por-loja-${apuracao.competencia}.pdf`);
 }
 
 /** Monta o documento (sem salvar) — o script de conferência usa daqui. */
 export function montarPdfPorLoja(
   apuracao: ResultadoCompetencia,
-  opts: { empresa?: string; escudo?: string | null } = {},
+  opts: {
+    empresa?: string;
+    escudo?: string | null;
+    /** Cargos cuja gratificação não sai no relatório da loja. */
+    cargosSemGratificacao?: Set<string>;
+  } = {},
 ): jsPDF {
-  const { empresa, escudo } = opts;
+  const { empresa, escudo, cargosSemGratificacao } = opts;
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
   const M = 14;
-  const lojas = folhaPorLoja(apuracao.linhas);
+  const lojas = folhaPorLoja(apuracao.linhas, cargosSemGratificacao);
 
   lojas.forEach((loja, i) => {
     if (i > 0) doc.addPage();
@@ -191,7 +206,7 @@ export function montarPdfPorLoja(
         p.nome,
         p.cargo,
         formatBRL(p.piso),
-        formatBRL(p.gratificacao),
+        p.ocultaGratificacao ? "—" : formatBRL(p.gratificacao),
         p.desconto ? `-${formatBRL(p.desconto)}` : "—",
         p.faltas ? String(p.faltas) : "—",
       ]),

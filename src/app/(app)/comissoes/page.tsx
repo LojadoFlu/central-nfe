@@ -210,6 +210,7 @@ export default function ComissoesPage() {
         <Fechamento
           competencia={competencia}
           apuracao={apuracao}
+          cargos={cargos}
           podeFechar={podeFechar}
           isAdmin={isAdmin}
           onRecarregar={recarregarTudo}

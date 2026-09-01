@@ -143,3 +143,31 @@ describe("faltas no relatório da loja", () => {
     expect(folhaPorLoja([linha({})])[0].faltas).toBe(0);
   });
 });
+
+describe("cargo sem gratificação no relatório", () => {
+  it("esconde só a gratificação daquele cargo", () => {
+    const [loja] = folhaPorLoja(
+      [
+        linha({ funcionarioNome: "SUPERVISOR", cargoId: "sup", cargoNome: "Supervisor Rede", comissaoTotal: 16380, valorDevido: 16380, pisoAplicado: false }),
+        linha({ funcionarioNome: "VENDEDOR", comissaoTotal: 2500, valorDevido: 2500, pisoAplicado: false }),
+      ],
+      new Set(["sup"]),
+    );
+    expect(loja.pessoas.map((p) => p.ocultaGratificacao)).toEqual([true, false]);
+  });
+
+  it("o valor continua na conta da loja — só não é impresso", () => {
+    const [loja] = folhaPorLoja(
+      [linha({ cargoId: "sup", comissaoTotal: 16380, valorDevido: 16380, pisoAplicado: false })],
+      new Set(["sup"]),
+    );
+    expect(loja.pessoas[0].gratificacao).toBe(14668);
+    expect(loja.gratificacao).toBe(14668);
+    expect(loja.total).toBe(16380);
+  });
+
+  it("sem cargos marcados, ninguém esconde nada", () => {
+    const [loja] = folhaPorLoja([linha({ cargoId: "sup" })]);
+    expect(loja.pessoas[0].ocultaGratificacao).toBe(false);
+  });
+});

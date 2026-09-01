@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatBRL, formatarData, formatarDataHora } from "@/lib/utils";
 import { Check, Download, FileText, Lock, LockOpen, TriangleAlert } from "lucide-react";
-import type { ResultadoCompetencia, StatusFechamento } from "@/lib/comissoes/tipos";
+import type { Cargo, ResultadoCompetencia, StatusFechamento } from "@/lib/comissoes/tipos";
 import { STATUS_LABEL } from "@/lib/comissoes/tipos";
 import { alterarStatusFechamento, fecharComissoes } from "@/lib/comissoes/repo";
 import { gerarPdfPorLoja } from "@/lib/comissoes/folha-pdf";
@@ -41,12 +41,14 @@ function br(n: number | null | undefined): string {
 export function Fechamento({
   competencia,
   apuracao,
+  cargos,
   podeFechar,
   isAdmin,
   onRecarregar,
 }: {
   competencia: string;
   apuracao: ResultadoCompetencia | null;
+  cargos: Cargo[];
   podeFechar: boolean;
   isAdmin: boolean;
   onRecarregar: () => Promise<void>;
@@ -192,7 +194,13 @@ export function Fechamento({
               </Button>
               {/* O que vai para a loja: uma página por loja, piso e o que veio
                   além dele. */}
-              <Button size="sm" variant="outline" onClick={() => void gerarPdfPorLoja(apuracao)}>
+              <Button size="sm" variant="outline" onClick={() =>
+                  void gerarPdfPorLoja(apuracao, {
+                    cargosSemGratificacao: new Set(
+                      cargos.filter((c) => c.ocultaGratificacaoPdf).map((c) => c.id),
+                    ),
+                  })
+                }>
                 <FileText /> PDF por loja
               </Button>
             </div>
