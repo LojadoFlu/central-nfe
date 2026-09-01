@@ -134,6 +134,7 @@ export function Fechamento({
         "Ajustes",
         "Comissão total",
         "Piso garantido",
+        "Descontos",
         "Valor devido",
         "Regra aplicada",
       ],
@@ -150,6 +151,7 @@ export function Fechamento({
         br(l.ajustesTotal),
         br(l.comissaoTotal),
         br(l.piso),
+        br(l.descontosTotal ?? 0),
         br(l.valorDevido),
         l.regraNome ?? "",
       ]),
@@ -214,6 +216,13 @@ export function Fechamento({
                 </p>
               ) : null}
             </div>
+            {t.descontos > 0 ? (
+              <div>
+                <p className="text-muted-foreground">Descontos</p>
+                <p className="font-semibold tnum text-destructive">− {formatBRL(t.descontos)}</p>
+                <p className="text-[10px] text-muted-foreground">retirada, falta, suspensão</p>
+              </div>
+            ) : null}
             <div>
               <p className="text-muted-foreground">Folha variável</p>
               <p className="font-bold tnum text-warning">{formatBRL(t.valorDevido)}</p>

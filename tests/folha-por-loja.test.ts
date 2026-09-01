@@ -29,6 +29,7 @@ function linha(p: Partial<LinhaApuracao>): LinhaApuracao {
     ajustesTotal: 0,
     comissaoTotal: 0,
     piso: 1712,
+    descontosTotal: 0,
     valorDevido: 1712,
     pisoAplicado: true,
     memoria: [],
@@ -85,5 +86,43 @@ describe("folha por loja", () => {
       linha({ funcionarioNome: "LIA", cargoNome: "Gerente" }),
     ]);
     expect(loja.pessoas.map((p) => p.nome)).toEqual(["LIA", "ANA", "ZE"]);
+  });
+});
+
+describe("folha por loja com descontos", () => {
+  it("piso + gratificação − desconto fecha no total pago", () => {
+    const [loja] = folhaPorLoja([
+      linha({
+        funcionarioNome: "QUEM RETIROU",
+        comissaoTotal: 2500,
+        valorDevido: 2300,
+        descontosTotal: 200,
+        pisoAplicado: false,
+      }),
+    ]);
+    expect(loja.pessoas[0]).toMatchObject({
+      piso: 1712,
+      gratificacao: 788,
+      desconto: 200,
+      total: 2300,
+    });
+    expect(loja.piso + loja.gratificacao - loja.desconto).toBeCloseTo(loja.total, 2);
+  });
+
+  it("quem está no piso e levou produto não vira gratificação negativa", () => {
+    const [loja] = folhaPorLoja([
+      linha({ comissaoTotal: 900, valorDevido: 1612, descontosTotal: 100 }),
+    ]);
+    expect(loja.pessoas[0]).toMatchObject({
+      piso: 1712,
+      gratificacao: 0,
+      desconto: 100,
+      total: 1612,
+    });
+  });
+
+  it("sem desconto nenhum, a loja segue com desconto zero", () => {
+    const [loja] = folhaPorLoja([linha({})]);
+    expect(loja.desconto).toBe(0);
   });
 });

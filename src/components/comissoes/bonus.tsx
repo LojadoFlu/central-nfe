@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { formatBRL } from "@/lib/utils";
 import { Plus, Trash2 } from "lucide-react";
-import type { Bonus as BonusTipo, Cargo, Funcionario } from "@/lib/comissoes/tipos";
+import type { Bonus as BonusTipo, Cargo, Funcionario, Indicador } from "@/lib/comissoes/tipos";
 import type { StorePdv } from "@/lib/nfe/repo";
 import { excluirBonus, salvarBonus } from "@/lib/comissoes/repo";
 import { Aviso, Campo, InputNumero, Select, competenciaAtual, mesLabel, pctFmt } from "./comum";
@@ -19,7 +19,14 @@ const GATILHOS: { valor: BonusTipo["gatilho"]["tipo"]; label: string; usaMinimo:
   { valor: "atingimentoLoja", label: "A loja bateu a meta", usaMinimo: true },
   { valor: "atingimentoGrupo", label: "O grupo de lojas bateu a meta", usaMinimo: true },
   { valor: "melhorVendedorLoja", label: "Melhor vendedor da loja", usaMinimo: false },
+  { valor: "indicador", label: "Bateu uma meta secundária (PA, VA…)", usaMinimo: false },
   { valor: "sempre", label: "Sempre (sem condição)", usaMinimo: false },
+];
+
+const CONDICOES: { valor: NonNullable<BonusTipo["condicao"]>["tipo"]; label: string }[] = [
+  { valor: "atingimentoIndividual", label: "a meta individual" },
+  { valor: "atingimentoLoja", label: "a meta da loja" },
+  { valor: "atingimentoGrupo", label: "a meta do grupo" },
 ];
 
 function bonusNovo(): BonusTipo {
@@ -41,6 +48,7 @@ export function Bonus({
   bonus,
   cargos,
   funcionarios,
+  indicadores,
   lojas,
   podeGerir,
   onRecarregar,
@@ -48,6 +56,7 @@ export function Bonus({
   bonus: BonusTipo[];
   cargos: Cargo[];
   funcionarios: Funcionario[];
+  indicadores: Indicador[];
   lojas: StorePdv[];
   podeGerir: boolean;
   onRecarregar: () => Promise<void>;
@@ -63,6 +72,10 @@ export function Bonus({
     [lojas],
   );
   const gatilhoAtual = GATILHOS.find((g) => g.valor === edicao?.gatilho.tipo);
+  const nomeIndicador = useMemo(
+    () => new Map(indicadores.map((i) => [i.id, i.nome])),
+    [indicadores],
+  );
 
   /**
    * Cadastros que quase certamente são engano. O mais traiçoeiro: meta e
@@ -251,6 +264,74 @@ export function Bonus({
                   />
                 </Campo>
               ) : null}
+              {edicao.gatilho.tipo === "indicador" ? (
+                <Campo
+                  label="Qual meta secundária"
+                  hint={
+                    indicadores.length
+                      ? "Marcada mês a mês, por pessoa, na aba Metas secundárias."
+                      : "Cadastre as metas secundárias na aba Metas secundárias."
+                  }
+                >
+                  <Select
+                    value={edicao.gatilho.indicadorId ?? ""}
+                    onChange={(e) =>
+                      setEdicao({
+                        ...edicao,
+                        gatilho: { ...edicao.gatilho, indicadorId: e.target.value || null },
+                      })
+                    }
+                  >
+                    <option value="">— selecione —</option>
+                    {indicadores.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.nome}
+                      </option>
+                    ))}
+                  </Select>
+                </Campo>
+              ) : null}
+            </div>
+
+            {/* Exigência extra: é o que prende o PA/VA à supermeta — sem os
+                125%, o indicador marcado não paga nada. */}
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Campo label="Só paga se também bater">
+                <Select
+                  value={edicao.condicao?.tipo ?? ""}
+                  onChange={(e) =>
+                    setEdicao({
+                      ...edicao,
+                      condicao: e.target.value
+                        ? {
+                            tipo: e.target.value as NonNullable<BonusTipo["condicao"]>["tipo"],
+                            minimoPct: edicao.condicao?.minimoPct ?? 125,
+                          }
+                        : null,
+                    })
+                  }
+                >
+                  <option value="">— nada além do gatilho —</option>
+                  {CONDICOES.map((c) => (
+                    <option key={c.valor} value={c.valor}>
+                      {c.label}
+                    </option>
+                  ))}
+                </Select>
+              </Campo>
+              {edicao.condicao ? (
+                <Campo label="Nesse mínimo (%)">
+                  <InputNumero
+                    value={edicao.condicao.minimoPct}
+                    onChange={(n) =>
+                      setEdicao({
+                        ...edicao,
+                        condicao: { ...edicao.condicao!, minimoPct: n ?? 0 },
+                      })
+                    }
+                  />
+                </Campo>
+              ) : null}
             </div>
 
             <div className="grid gap-3 sm:grid-cols-3">
@@ -387,9 +468,16 @@ export function Bonus({
                   {!b.ativo ? <Badge variant="neutral">inativo</Badge> : null}
                 </p>
                 <p className="text-xs text-muted-foreground">
-                  {GATILHOS.find((g) => g.valor === b.gatilho.tipo)?.label ?? b.gatilho.tipo}
+                  {b.gatilho.tipo === "indicador"
+                    ? `Bateu ${nomeIndicador.get(b.gatilho.indicadorId ?? "") ?? "meta secundária"}`
+                    : (GATILHOS.find((g) => g.valor === b.gatilho.tipo)?.label ?? b.gatilho.tipo)}
                   {b.gatilho.tipo.startsWith("atingimento")
                     ? ` (${pctFmt(b.gatilho.minimoPct ?? 100)})`
+                    : ""}
+                  {b.condicao
+                    ? ` + ${
+                        CONDICOES.find((c) => c.valor === b.condicao?.tipo)?.label ?? "condição"
+                      } em ${pctFmt(b.condicao.minimoPct)}`
                     : ""}{" "}
                   ·{" "}
                   {b.cargoId ? (nomeCargo.get(b.cargoId) ?? "cargo") : "todos os cargos"}

@@ -263,6 +263,14 @@ service cloud.firestore {
       allow read: if podeComissoes();
       allow write: if false;
     }
+    match /com_indicadores/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
+    match /com_indicadores_atingidos/{id} {
+      allow read: if podeComissoes();
+      allow write: if false;
+    }
     match /com_ajustes/{id} {
       allow read: if podeComissoes();
       allow write: if false;

@@ -177,6 +177,14 @@ export function Acompanhamento({
           hint={proj ? "se o ritmo do mês se mantiver" : "mês encerrado"}
         />
         <StatCard label="Ajustes" value={formatBRL(t.ajustes)} tone={t.ajustes < 0 ? "destructive" : "default"} />
+        {t.descontos > 0 ? (
+          <StatCard
+            label="Descontos de folha"
+            value={`− ${formatBRL(t.descontos)}`}
+            tone="destructive"
+            hint="Retirada de produto, falta, suspensão — saem depois do piso"
+          />
+        ) : null}
         <StatCard label="Acima da meta" value={`${t.acimaDaMeta} de ${t.funcionarios}`} tone="success" />
         <StatCard label="Pendências" value={String(pendencias)} tone={pendencias > 0 ? "destructive" : "success"} />
       </div>

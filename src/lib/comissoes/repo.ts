@@ -14,6 +14,8 @@ import type {
   CustoMes,
   EscopoVenda,
   Funcionario,
+  Indicador,
+  IndicadoresAtingidos,
   LogAuditoria,
   Meta,
   Regra,
@@ -79,6 +81,27 @@ export async function listarAjustes(competencia?: string): Promise<Ajuste[]> {
   return (snap.docs.map((d) => ({ id: d.id, ...(d.data() as object) })) as Ajuste[]).sort((a, b) =>
     (b.criadoEm ?? "").localeCompare(a.criadoEm ?? ""),
   );
+}
+
+export async function listarIndicadores(): Promise<Indicador[]> {
+  const arr = await ler<Indicador>("com_indicadores");
+  return arr.sort((a, b) => (a.ordem ?? 99) - (b.ordem ?? 99) || a.nome.localeCompare(b.nome));
+}
+
+/** Marcações da competência, já indexadas por funcionário. */
+export async function listarIndicadoresAtingidos(
+  competencia: string,
+): Promise<Map<string, string[]>> {
+  const { db } = fb();
+  const snap = await getDocs(
+    query(collection(db, "com_indicadores_atingidos"), where("competencia", "==", competencia)),
+  );
+  const m = new Map<string, string[]>();
+  for (const d of snap.docs) {
+    const a = d.data() as IndicadoresAtingidos;
+    m.set(a.funcionarioId, a.indicadores ?? []);
+  }
+  return m;
 }
 
 export interface PreviaImportMetas {
@@ -162,9 +185,27 @@ export const excluirMeta = (id: string) => chamar<{ ok: boolean }>("comissoesExc
 export const salvarBonus = (i: Partial<Bonus>) => chamar<{ ok: boolean; id: string }>("comissoesSalvarBonus", i);
 export const excluirBonus = (id: string) => chamar<{ ok: boolean }>("comissoesExcluirBonus", { id });
 
-export const salvarAjuste = (i: { funcionarioId: string; competencia: string; valor: number; motivo: string }) =>
+export const salvarAjuste = (i: {
+  funcionarioId: string;
+  competencia: string;
+  valor: number;
+  motivo: string;
+  /** "desconto" sai depois do piso; sem isso, é ajuste de comissão. */
+  tipo?: "manual" | "desconto";
+  categoria?: string;
+}) =>
   chamar<{ ok: boolean; id: string }>("comissoesSalvarAjuste", i);
 export const excluirAjuste = (id: string) => chamar<{ ok: boolean }>("comissoesExcluirAjuste", { id });
+
+export const salvarIndicador = (i: Partial<Indicador>) =>
+  chamar<{ ok: boolean; id: string }>("comissoesSalvarIndicador", i);
+export const excluirIndicador = (id: string) =>
+  chamar<{ ok: boolean }>("comissoesExcluirIndicador", { id });
+export const marcarIndicadores = (i: {
+  competencia: string;
+  funcionarioId: string;
+  indicadores: string[];
+}) => chamar<{ ok: boolean; id: string }>("comissoesMarcarIndicadores", i);
 
 export const salvarConfig = (i: Partial<ConfigComissoes>) =>
   chamar<{ ok: boolean } & ConfigComissoes>("comissoesSalvarConfig", i);

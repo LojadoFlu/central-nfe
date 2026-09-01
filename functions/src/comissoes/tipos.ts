@@ -79,9 +79,12 @@ export interface Gatilho {
     | "atingimentoIndividual"
     | "atingimentoLoja"
     | "atingimentoGrupo"
-    | "melhorVendedorLoja";
+    | "melhorVendedorLoja"
+    | "indicador";
   /** Atingimento mínimo em % (para os gatilhos de atingimento). */
   minimoPct?: number;
+  /** Gatilho "indicador": qual meta secundária precisa estar marcada. */
+  indicadorId?: string | null;
 }
 
 /** Prêmio do bônus: percentual sobre uma base, ou valor fixo. */
@@ -103,6 +106,11 @@ export interface Bonus {
   cargoId?: string | null;
   lojaId?: number | null;
   gatilho: Gatilho;
+  /**
+   * Exigência extra, além do gatilho. É o que faz o bônus de PA valer só para
+   * quem bateu a supermeta: gatilho = indicador PA, condição = 125% da meta.
+   */
+  condicao?: Condicao | null;
   premio: Premio;
   vigenciaDe: Competencia;
   vigenciaAte?: Competencia | null;
@@ -113,11 +121,41 @@ export interface Ajuste {
   id: string;
   funcionarioId: string;
   competencia: Competencia;
-  valor: number; // pode ser negativo
+  /** Ajuste pode ser negativo. Desconto é sempre positivo — o sinal é o tipo. */
+  valor: number;
   motivo: string;
-  tipo: "manual" | "estorno";
+  /**
+   * "manual"/"estorno" entram na comissão (e o piso pode absorvê-los).
+   * "desconto" sai DEPOIS do piso: retirada de produto e falta se descontam do
+   * que a pessoa recebe, não da comissão que ela gerou.
+   */
+  tipo: "manual" | "estorno" | "desconto";
+  /** Só para desconto: "retirada", "falta", "suspensao", "outro". */
+  categoria?: string | null;
   criadoPor?: string | null;
   criadoEm?: string | null;
+}
+
+/**
+ * Meta secundária (PA, VA…) — indicador que não sai de venda, e por isso é
+ * MARCADO a cada competência. Serve de gatilho de bônus.
+ */
+export interface Indicador {
+  id: string;
+  nome: string;
+  descricao?: string | null;
+  ordem?: number;
+  ativo: boolean;
+}
+
+/** Quem bateu quais metas secundárias numa competência. */
+export interface IndicadoresAtingidos {
+  id: string; // `${competencia}_${funcionarioId}`
+  competencia: Competencia;
+  funcionarioId: string;
+  indicadores: string[];
+  atualizadoPor?: string | null;
+  atualizadoEm?: string | null;
 }
 
 /** Cargo — criado pelo admin, não fixo no código (§4). */
@@ -229,6 +267,10 @@ export interface EntradaApuracao {
   semComissao?: boolean;
   bonus: Bonus[];
   ajustes: Ajuste[];
+  /** Descontos de folha da competência. */
+  descontos?: Ajuste[];
+  /** Metas secundárias e se a pessoa bateu cada uma nesta competência. */
+  indicadores?: { id: string; nome: string; atingido: boolean }[];
   /** Sinais extras vindos da consolidação. */
   extras?: { melhorVendedorLoja?: boolean };
   regraPiso: RegraPiso;
@@ -250,6 +292,8 @@ export interface ResultadoApuracao {
   ajustesTotal: number;
   comissaoTotal: number;
   piso: number;
+  /** Descontos de folha (retirada, falta, suspensão) — saem depois do piso. */
+  descontosTotal: number;
   valorDevido: number;
   /** true quando o piso “segurou” o pagamento (comissão < piso). */
   pisoAplicado: boolean;

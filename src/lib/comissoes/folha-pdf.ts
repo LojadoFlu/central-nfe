@@ -77,6 +77,8 @@ export interface PessoaFolha {
   cargo: string;
   piso: number;
   gratificacao: number;
+  /** Retirada de produto, falta, suspensão — já saiu do total. */
+  desconto: number;
   total: number;
 }
 
@@ -86,6 +88,7 @@ export interface FolhaDaLoja {
   pessoas: PessoaFolha[];
   piso: number;
   gratificacao: number;
+  desconto: number;
   total: number;
 }
 
@@ -103,19 +106,27 @@ export function folhaPorLoja(linhas: LinhaApuracao[]): FolhaDaLoja[] {
       pessoas: [],
       piso: 0,
       gratificacao: 0,
+      desconto: 0,
       total: 0,
     };
-    const piso = cent(Math.min(l.piso ?? 0, l.valorDevido));
-    const gratificacao = cent(l.valorDevido - piso);
+    // O desconto já saiu do valor devido; para a folha fechar (piso +
+    // gratificação − desconto = total), ele é somado de volta antes de separar
+    // o piso da gratificação.
+    const desconto = cent(l.descontosTotal ?? 0);
+    const bruto = cent(l.valorDevido + desconto);
+    const piso = cent(Math.min(l.piso ?? 0, bruto));
+    const gratificacao = cent(bruto - piso);
     grupo.pessoas.push({
       nome: l.funcionarioNome,
       cargo: l.cargoNome ?? "sem cargo",
       piso,
       gratificacao,
+      desconto,
       total: cent(l.valorDevido),
     });
     grupo.piso = cent(grupo.piso + piso);
     grupo.gratificacao = cent(grupo.gratificacao + gratificacao);
+    grupo.desconto = cent(grupo.desconto + desconto);
     grupo.total = cent(grupo.total + l.valorDevido);
     porLoja.set(chave, grupo);
   }
@@ -158,6 +169,10 @@ export function montarPdfPorLoja(
       escudo,
     });
 
+    // A coluna de desconto só aparece onde houve desconto: numa loja sem
+    // retirada nem falta ela seria uma fila de zeros.
+    const comDesconto = loja.desconto > 0;
+    const direita = { halign: "right" as const };
     autoTable(doc, {
       startY: y + 8,
       margin: { left: M, right: M },
@@ -165,9 +180,10 @@ export function montarPdfPorLoja(
         [
           "Funcionário",
           "Cargo",
-          { content: "Piso", styles: { halign: "right" as const } },
-          { content: "Gratificação", styles: { halign: "right" as const } },
-          { content: "Total", styles: { halign: "right" as const } },
+          { content: "Piso", styles: direita },
+          { content: "Gratificação", styles: direita },
+          ...(comDesconto ? [{ content: "Descontos", styles: direita }] : []),
+          { content: "Total", styles: direita },
         ],
       ],
       body: loja.pessoas.map((p) => [
@@ -175,6 +191,7 @@ export function montarPdfPorLoja(
         p.cargo,
         formatBRL(p.piso),
         formatBRL(p.gratificacao),
+        ...(comDesconto ? [p.desconto ? `- ${formatBRL(p.desconto)}` : "—"] : []),
         formatBRL(p.total),
       ]),
       foot: [
@@ -183,6 +200,7 @@ export function montarPdfPorLoja(
           "",
           formatBRL(loja.piso),
           formatBRL(loja.gratificacao),
+          ...(comDesconto ? [`- ${formatBRL(loja.desconto)}`] : []),
           formatBRL(loja.total),
         ],
       ],
@@ -190,19 +208,30 @@ export function montarPdfPorLoja(
       headStyles: { fillColor: VERDE, fontSize: 9 },
       alternateRowStyles: { fillColor: CINZA_CLARO },
       footStyles: { fillColor: CINZA_CLARO, textColor: GRENA, fontStyle: "bold" },
-      columnStyles: {
-        2: { halign: "right" },
-        3: { halign: "right" },
-        4: { halign: "right", fontStyle: "bold" },
-      },
+      columnStyles: comDesconto
+        ? {
+            2: { halign: "right" },
+            3: { halign: "right" },
+            4: { halign: "right" },
+            5: { halign: "right", fontStyle: "bold" },
+          }
+        : {
+            2: { halign: "right" },
+            3: { halign: "right" },
+            4: { halign: "right", fontStyle: "bold" },
+          },
     });
 
     const depois = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y;
     doc.setFontSize(7.5).setTextColor(110).setCharSpace(0);
     doc.text(
       apuracao.congelado
-        ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. Gratificação = total - piso.`
-        : "Competência ainda aberta — os valores podem mudar até o fechamento. Gratificação = total - piso.",
+        ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. ${
+            comDesconto ? "Total = piso + gratificação - descontos." : "Gratificação = total - piso."
+          }`
+        : `Competência ainda aberta — os valores podem mudar até o fechamento. ${
+            comDesconto ? "Total = piso + gratificação - descontos." : "Gratificação = total - piso."
+          }`,
       M,
       Math.min(depois + 6, 285),
     );
@@ -210,6 +239,7 @@ export function montarPdfPorLoja(
   });
 
   if (lojas.length > 1) {
+    const temDesconto = lojas.some((l) => l.desconto > 0);
     doc.addPage();
     const y = cabecalhoFlu(doc, {
       titulo: "Resumo da rede",
@@ -227,6 +257,7 @@ export function montarPdfPorLoja(
           { content: "Pessoas", styles: { halign: "right" as const } },
           { content: "Piso", styles: { halign: "right" as const } },
           { content: "Gratificação", styles: { halign: "right" as const } },
+          ...(temDesconto ? [{ content: "Descontos", styles: { halign: "right" as const } }] : []),
           { content: "Total", styles: { halign: "right" as const } },
         ],
       ],
@@ -235,6 +266,7 @@ export function montarPdfPorLoja(
         String(l.pessoas.length),
         formatBRL(l.piso),
         formatBRL(l.gratificacao),
+        ...(temDesconto ? [l.desconto ? `- ${formatBRL(l.desconto)}` : "—"] : []),
         formatBRL(l.total),
       ]),
       foot: [
@@ -243,6 +275,7 @@ export function montarPdfPorLoja(
           String(lojas.reduce((s, l) => s + l.pessoas.length, 0)),
           formatBRL(cent(lojas.reduce((s, l) => s + l.piso, 0))),
           formatBRL(cent(lojas.reduce((s, l) => s + l.gratificacao, 0))),
+          ...(temDesconto ? [`- ${formatBRL(cent(lojas.reduce((s, l) => s + l.desconto, 0)))}`] : []),
           formatBRL(apuracao.totais.valorDevido),
         ],
       ],
@@ -250,12 +283,20 @@ export function montarPdfPorLoja(
       headStyles: { fillColor: VERDE, fontSize: 9 },
       alternateRowStyles: { fillColor: CINZA_CLARO },
       footStyles: { fillColor: CINZA_CLARO, textColor: GRENA, fontStyle: "bold" },
-      columnStyles: {
-        1: { halign: "right" },
-        2: { halign: "right" },
-        3: { halign: "right" },
-        4: { halign: "right", fontStyle: "bold" },
-      },
+      columnStyles: temDesconto
+        ? {
+            1: { halign: "right" },
+            2: { halign: "right" },
+            3: { halign: "right" },
+            4: { halign: "right" },
+            5: { halign: "right", fontStyle: "bold" },
+          }
+        : {
+            1: { halign: "right" },
+            2: { halign: "right" },
+            3: { halign: "right" },
+            4: { halign: "right", fontStyle: "bold" },
+          },
     });
   }
 

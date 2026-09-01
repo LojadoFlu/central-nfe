@@ -29,6 +29,8 @@ import {
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./grupos";
 import type {
   Ajuste,
+  Indicador,
+  IndicadoresAtingidos,
   EscopoVenda,
   Bonus,
   Cargo,
@@ -146,6 +148,8 @@ export interface ResultadoCompetencia {
     bonus: number;
     ajustes: number;
     comissaoTotal: number;
+    /** Descontos de folha da competência (retirada, falta, suspensão). */
+    descontos: number;
     valorDevido: number;
     pisoUtilizado: number;
     /** Piso de quem não comissiona (caixa): salário, não complemento. */
@@ -247,6 +251,10 @@ interface ContextoCalculo {
   bonus: Bonus[];
   metasDaComp: Meta[];
   ajustesDaComp: Ajuste[];
+  descontosDaComp: Ajuste[];
+  /** Metas secundárias ativas e quem bateu cada uma nesta competência. */
+  indicadores: Indicador[];
+  atingidosPorFuncionario: Map<string, Set<string>>;
   grupos: ReturnType<typeof construirGrupos>;
   consolidado: ReturnType<typeof consolidar>;
   nomeLoja: Map<number, string>;
@@ -271,7 +279,20 @@ function recebeMetaIndividual(f: Funcionario, cargosComMeta: Set<string>): boole
 }
 
 async function montarContexto(competencia: string): Promise<ContextoCalculo> {
-  const [cfg, funcionarios, cargos, regras, metas, bonus, ajustes, vendas, lojasSnap, sellersSnap] =
+  const [
+    cfg,
+    funcionarios,
+    cargos,
+    regras,
+    metas,
+    bonus,
+    ajustes,
+    indicadoresTodos,
+    atingidos,
+    vendas,
+    lojasSnap,
+    sellersSnap,
+  ] =
     await Promise.all([
       carregarConfig(),
       lerColecao<Funcionario>("com_funcionarios"),
@@ -280,6 +301,8 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
       lerColecao<Meta>("com_metas"),
       lerColecao<Bonus>("com_bonus"),
       lerColecao<Ajuste>("com_ajustes"),
+      lerColecao<Indicador>("com_indicadores"),
+      lerColecao<IndicadoresAtingidos>("com_indicadores_atingidos"),
       lerVendas(competencia),
       db.collection("pdv_stores").get(),
       db.collection("pdv_sellers").get(),
@@ -334,7 +357,18 @@ async function montarContexto(competencia: string): Promise<ContextoCalculo> {
     metasDaComp: metas
       .filter((m) => m.competencia === competencia)
       .map((m) => ({ ...m, lojaId: canonizar(grupos, m.lojaId) })),
-    ajustesDaComp: ajustes.filter((a) => a.competencia === competencia),
+    // Ajuste e desconto viajam na mesma coleção, mas entram em lugares
+    // diferentes da conta: o ajuste na comissão, o desconto depois do piso.
+    ajustesDaComp: ajustes.filter((a) => a.competencia === competencia && a.tipo !== "desconto"),
+    descontosDaComp: ajustes.filter((a) => a.competencia === competencia && a.tipo === "desconto"),
+    indicadores: indicadoresTodos
+      .filter((i) => i.ativo !== false)
+      .sort((a, b) => (a.ordem ?? 99) - (b.ordem ?? 99) || a.nome.localeCompare(b.nome)),
+    atingidosPorFuncionario: new Map(
+      atingidos
+        .filter((a) => a.competencia === competencia)
+        .map((a) => [a.funcionarioId, new Set(a.indicadores ?? [])]),
+    ),
     grupos,
     consolidado,
     nomeLoja: grupos.nomeDoGrupo,
@@ -431,6 +465,12 @@ function montarEntrada(bruto: Funcionario, ctx: ContextoCalculo): EntradaMontada
     semComissao,
     bonus: semComissao ? [] : bonusAplicaveis(ctx.bonus, f, competencia),
     ajustes: ctx.ajustesDaComp.filter((a) => a.funcionarioId === f.id),
+    descontos: ctx.descontosDaComp.filter((a) => a.funcionarioId === f.id),
+    indicadores: ctx.indicadores.map((i) => ({
+      id: i.id,
+      nome: i.nome,
+      atingido: ctx.atingidosPorFuncionario.get(f.id)?.has(i.id) === true,
+    })),
     extras: {
       // Melhor vendedor é por PESSOA, não por código: quem tem dois códigos na
       // Barra perderia para si mesmo se a conta fosse por código.
@@ -579,6 +619,7 @@ export async function calcularCompetencia(
       bonus: cent(linhas.reduce((s, l) => s + l.bonusTotal, 0)),
       ajustes: cent(linhas.reduce((s, l) => s + l.ajustesTotal, 0)),
       comissaoTotal: cent(linhas.reduce((s, l) => s + l.comissaoTotal, 0)),
+      descontos: cent(linhas.reduce((s, l) => s + (l.descontosTotal ?? 0), 0)),
       valorDevido,
       // Piso garantido é o que a empresa paga ALÉM do que a comissão gerou —
       // conta só de quem comissiona. O piso da caixa não é complemento de
@@ -691,6 +732,7 @@ async function lerFechamentoCongelado(
         ajustes: 0,
         comissaoTotal: 0,
         valorDevido: 0,
+        descontos: 0,
         pisoUtilizado: 0,
         pisoSemComissao: 0,
         acimaDaMeta: 0,

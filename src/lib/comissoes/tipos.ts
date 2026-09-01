@@ -50,8 +50,11 @@ export interface Gatilho {
     | "atingimentoIndividual"
     | "atingimentoLoja"
     | "atingimentoGrupo"
-    | "melhorVendedorLoja";
+    | "melhorVendedorLoja"
+    | "indicador";
   minimoPct?: number;
+  /** Gatilho "indicador": qual meta secundária precisa estar marcada. */
+  indicadorId?: string | null;
 }
 
 export interface Premio {
@@ -69,6 +72,11 @@ export interface Bonus {
   cargoId?: string | null;
   lojaId?: number | null;
   gatilho: Gatilho;
+  /**
+   * Exigência extra, além do gatilho. É o que faz o bônus de PA valer só para
+   * quem bateu a supermeta: gatilho = indicador PA, condição = 125% da meta.
+   */
+  condicao?: Condicao | null;
   premio: Premio;
   vigenciaDe: Competencia;
   vigenciaAte?: Competencia | null;
@@ -78,11 +86,37 @@ export interface Ajuste {
   id: string;
   funcionarioId: string;
   competencia: Competencia;
+  /** Ajuste pode ser negativo. Desconto é sempre positivo — o sinal é o tipo. */
   valor: number;
   motivo: string;
-  tipo: "manual" | "estorno";
+  /**
+   * "manual"/"estorno" entram na comissão (e o piso pode absorvê-los).
+   * "desconto" sai DEPOIS do piso: retirada de produto e falta se descontam do
+   * que a pessoa recebe, não da comissão que ela gerou.
+   */
+  tipo: "manual" | "estorno" | "desconto";
+  categoria?: string | null;
   criadoPor?: string | null;
   criadoEm?: string | null;
+}
+
+/** Meta secundária (PA, VA…): não sai de venda, é marcada a cada competência. */
+export interface Indicador {
+  id: string;
+  nome: string;
+  descricao?: string | null;
+  ordem?: number;
+  ativo: boolean;
+}
+
+/** Quem bateu quais metas secundárias numa competência. */
+export interface IndicadoresAtingidos {
+  id: string;
+  competencia: Competencia;
+  funcionarioId: string;
+  indicadores: string[];
+  atualizadoPor?: string | null;
+  atualizadoEm?: string | null;
 }
 
 export interface Cargo {
@@ -187,6 +221,8 @@ export interface ResultadoApuracao {
   ajustesTotal: number;
   comissaoTotal: number;
   piso: number;
+  /** Descontos de folha (retirada, falta, suspensão) — saem depois do piso. */
+  descontosTotal: number;
   valorDevido: number;
   pisoAplicado: boolean;
   memoria: LinhaMemoria[];
@@ -221,6 +257,7 @@ export interface LinhaApuracao {
   ajustesTotal: number;
   comissaoTotal: number;
   piso: number;
+  descontosTotal: number;
   valorDevido: number;
   pisoAplicado: boolean;
   memoria: LinhaMemoria[];
@@ -240,6 +277,8 @@ export interface ResultadoCompetencia {
     bonus: number;
     ajustes: number;
     comissaoTotal: number;
+    /** Descontos de folha da competência (retirada, falta, suspensão). */
+    descontos: number;
     valorDevido: number;
     pisoUtilizado: number;
     /** Piso de quem não comissiona (caixa): salário, não complemento. */

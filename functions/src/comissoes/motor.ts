@@ -314,6 +314,17 @@ function escopoDoDegrau(b: Bonus): EscopoVenda | null {
   }
 }
 
+/** Nome de tela da categoria do desconto. Categoria nova sai como veio. */
+function rotuloDesconto(categoria: string): string {
+  const mapa: Record<string, string> = {
+    retirada: "retirada de produto",
+    falta: "falta",
+    suspensao: "suspensão",
+    outro: "outro",
+  };
+  return mapa[categoria] ?? categoria;
+}
+
 /** Prêmio de um bônus, já resolvido em R$. */
 function calcularBonus(b: Bonus, e: EntradaApuracao): number {
   if (b.premio.tipo === "fixo") return centavos(b.premio.valor);
@@ -353,9 +364,38 @@ function gatilhoAtendido(
         motivo: `atingimento ${pct(at)} (exige ${pct(min)})`,
       };
     }
+    // Meta secundária (PA, VA): não sai de venda, vem marcada a cada mês.
+    case "indicador": {
+      const ind = (e.indicadores ?? []).find((i) => i.id === g.indicadorId);
+      if (!ind) return { ok: false, motivo: "meta secundária não cadastrada" };
+      return {
+        ok: ind.atingido,
+        motivo: ind.atingido ? `${ind.nome} batido` : `${ind.nome} não batido`,
+      };
+    }
     default:
       return { ok: false, motivo: "gatilho desconhecido" };
   }
+}
+
+/**
+ * Exigência extra do bônus, além do gatilho — é o que prende o prêmio de PA à
+ * supermeta: sem bater os 125%, o PA não paga nada.
+ */
+function condicaoAtendida(
+  b: Bonus,
+  atingimentos: Record<EscopoVenda, number | null>,
+): { ok: boolean; motivo: string } {
+  const c = b.condicao;
+  if (!c) return { ok: true, motivo: "" };
+  const escopo: EscopoVenda =
+    c.tipo === "atingimentoLoja" ? "loja" : c.tipo === "atingimentoGrupo" ? "grupo" : "individual";
+  const at = atingimentos[escopo];
+  if (at == null) return { ok: false, motivo: `meta (${escopo}) não cadastrada` };
+  return {
+    ok: at >= c.minimoPct,
+    motivo: `atingimento ${escopo} ${pct(at)} (exige ${pct(c.minimoPct)})`,
+  };
 }
 
 /**
@@ -442,6 +482,7 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
     const escopo = escopoDoDegrau(b);
     if (!escopo) continue;
     if (!gatilhoAtendido(b, e, atingimentos).ok) continue;
+    if (!condicaoAtendida(b, atingimentos).ok) continue;
     const atual = vencedorDoDegrau.get(escopo);
     const degrau = b.gatilho.minimoPct ?? 100;
     const degrauAtual = atual ? (atual.gatilho.minimoPct ?? 100) : -Infinity;
@@ -453,6 +494,16 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
 
   let bonusTotal = 0;
   for (const b of e.bonus ?? []) {
+    const cond = condicaoAtendida(b, atingimentos);
+    if (!cond.ok) {
+      memoria.push({
+        rotulo: `Bônus: ${b.nome}`,
+        detalhe: `Não pago — ${cond.motivo}`,
+        valor: 0,
+        informativa: true,
+      });
+      continue;
+    }
     const g = gatilhoAtendido(b, e, atingimentos);
     if (!g.ok) {
       memoria.push({
@@ -481,7 +532,9 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
       detalhe:
         b.premio.tipo === "fixo"
           ? `Valor fixo — ${g.motivo}`
-          : `${pct(b.premio.valor)} sobre a venda ${b.premio.escopoVenda ?? "individual"} — ${g.motivo}`,
+          : `${pct(b.premio.valor)} sobre a venda ${b.premio.escopoVenda ?? "individual"} — ${g.motivo}${
+              b.condicao ? ` · ${cond.motivo}` : ""
+            }`,
       valor: v,
     });
   }
@@ -501,9 +554,36 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
 
   const comissaoTotal = centavos(comissaoBase + bonusTotal + ajustesTotal);
   const piso = centavos(f.pisoGarantido ?? 0);
-  const valorDevido =
+  const aPagar =
     e.regraPiso === "soma" ? centavos(piso + comissaoTotal) : centavos(Math.max(piso, comissaoTotal));
   const pisoAplicado = e.regraPiso === "maior" && piso > comissaoTotal;
+
+  // 4) Descontos de folha (retirada de produto, falta, suspensão).
+  //
+  // Saem DEPOIS do piso, ao contrário do ajuste: quem está no piso e levou
+  // mercadoria tem de pagar por ela — se o desconto entrasse na comissão, o
+  // piso o absorveria e a retirada sairia de graça. Pelo mesmo motivo a caixa,
+  // que só tem fixo, também pode ser descontada.
+  let descontosTotal = 0;
+  for (const d of e.descontos ?? []) {
+    const v = centavos(Math.abs(Number(d.valor) || 0));
+    if (!v) continue;
+    descontosTotal += v;
+    memoria.push({
+      rotulo: `Desconto${d.categoria ? `: ${rotuloDesconto(d.categoria)}` : ""}`,
+      detalhe: d.motivo,
+      valor: -v,
+    });
+  }
+  descontosTotal = centavos(descontosTotal);
+  const valorDevido = centavos(Math.max(0, aPagar - descontosTotal));
+  if (descontosTotal > aPagar) {
+    divergencias.push(
+      `Descontos de ${brl(descontosTotal)} passam do que a pessoa tem a receber (${brl(
+        aPagar,
+      )}) — sobra ${brl(centavos(descontosTotal - aPagar))} sem desconto.`,
+    );
+  }
 
   if (e.semComissao) {
     memoria.push({
@@ -550,6 +630,7 @@ export function apurar(e: EntradaApuracao): ResultadoApuracao {
     ajustesTotal,
     comissaoTotal,
     piso,
+    descontosTotal,
     valorDevido,
     pisoAplicado,
     memoria,

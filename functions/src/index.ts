@@ -4279,7 +4279,10 @@ export const comissoesSalvarBonus = onCall(opcoes, async (req) => {
     "atingimentoLoja",
     "atingimentoGrupo",
     "melhorVendedorLoja",
+    "indicador",
   ];
+  const c = (req.data?.condicao ?? null) as Record<string, unknown> | null;
+  const tiposCondicao = ["atingimentoIndividual", "atingimentoLoja", "atingimentoGrupo"];
   const id = novoId("com_bonus", req.data?.id);
   const anterior = (await db.collection("com_bonus").doc(id).get()).data() ?? null;
   const dados = {
@@ -4292,7 +4295,13 @@ export const comissoesSalvarBonus = onCall(opcoes, async (req) => {
     gatilho: {
       tipo: tiposGatilho.includes(String(g.tipo)) ? String(g.tipo) : "sempre",
       minimoPct: num(g.minimoPct, 100),
+      indicadorId: texto(g.indicadorId, 80) || null,
     },
+    // Exigência extra: é o que prende o prêmio de PA/VA à supermeta.
+    condicao:
+      c && tiposCondicao.includes(String(c.tipo))
+        ? { tipo: String(c.tipo), minimoPct: num(c.minimoPct, 100) }
+        : null,
     premio: {
       tipo: String(p.tipo) === "fixo" ? "fixo" : "percentual",
       valor: num(p.valor),
@@ -4326,7 +4335,14 @@ export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
   const competencia = competenciaValida(req.data?.competencia);
   const funcionarioId = texto(req.data?.funcionarioId, 80);
   const motivo = texto(req.data?.motivo, 300);
-  const valor = num(req.data?.valor);
+  // Desconto de folha (retirada de produto, falta, suspensão): sai depois do
+  // piso, então o sinal é o TIPO — o valor entra sempre positivo.
+  const ehDesconto = String(req.data?.tipo) === "desconto";
+  const categorias = ["retirada", "falta", "suspensao", "outro"];
+  const categoria = categorias.includes(String(req.data?.categoria))
+    ? String(req.data.categoria)
+    : "outro";
+  const valor = ehDesconto ? Math.abs(num(req.data?.valor)) : num(req.data?.valor);
   if (!funcionarioId) throw new HttpsError("invalid-argument", "Informe o funcionário.");
   if (!motivo) throw new HttpsError("invalid-argument", "Ajuste exige motivo.");
   if (!valor) throw new HttpsError("invalid-argument", "Informe um valor diferente de zero.");
@@ -4346,7 +4362,8 @@ export const comissoesSalvarAjuste = onCall(opcoes, async (req) => {
       competencia,
       valor,
       motivo,
-      tipo: "manual",
+      tipo: ehDesconto ? "desconto" : "manual",
+      categoria: ehDesconto ? categoria : null,
       criadoPor: uid,
       criadoEm: agoraISO(),
     },
@@ -4373,6 +4390,80 @@ export const comissoesExcluirAjuste = onCall(opcoes, async (req) => {
   await db.collection("com_ajustes").doc(id).delete();
   await auditar(uid, "comissoes.excluirAjuste", { id, anterior: a });
   return { ok: true };
+});
+
+// ── Metas secundárias (PA, VA…) ───────────────────────────────────────────
+// Indicador que não sai de venda: é MARCADO a cada competência, e serve de
+// gatilho de bônus. O nome e a existência de cada um são do admin.
+
+export const comissoesSalvarIndicador = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const nome = texto(req.data?.nome, 60);
+  if (!nome) throw new HttpsError("invalid-argument", "Informe o nome da meta secundária.");
+  const id = novoId("com_indicadores", req.data?.id);
+  const anterior = (await db.collection("com_indicadores").doc(id).get()).data() ?? null;
+  const dados = {
+    id,
+    nome,
+    descricao: texto(req.data?.descricao, 200) || null,
+    ordem: num(req.data?.ordem, 99),
+    ativo: req.data?.ativo !== false,
+    atualizadoEm: agoraISO(),
+  };
+  await db.collection("com_indicadores").doc(id).set(dados, { merge: true });
+  await auditar(uid, "comissoes.salvarIndicador", { id, nome, anterior, novo: dados });
+  return { ok: true, id };
+});
+
+export const comissoesExcluirIndicador = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const id = texto(req.data?.id, 120);
+  if (!id) throw new HttpsError("invalid-argument", "Id obrigatório.");
+  // Bônus apontando para ela ficaria sem gatilho e pagaria para ninguém, em
+  // silêncio. Melhor barrar aqui.
+  const usos = await db.collection("com_bonus").where("gatilho.indicadorId", "==", id).get();
+  if (!usos.empty) {
+    const nomes = usos.docs.map((d) => d.data().nome).join(", ");
+    throw new HttpsError(
+      "failed-precondition",
+      `Meta secundária usada em: ${nomes}. Desative-a ou tire dos bônus antes de excluir.`,
+    );
+  }
+  const anterior = (await db.collection("com_indicadores").doc(id).get()).data() ?? null;
+  await db.collection("com_indicadores").doc(id).delete();
+  await auditar(uid, "comissoes.excluirIndicador", { id, anterior });
+  return { ok: true };
+});
+
+/** Marca quais metas secundárias a pessoa bateu na competência. */
+export const comissoesMarcarIndicadores = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "comissoes.gerir", ["admin", "financeiro"]);
+  const competencia = competenciaValida(req.data?.competencia);
+  const funcionarioId = texto(req.data?.funcionarioId, 80);
+  if (!funcionarioId) throw new HttpsError("invalid-argument", "Informe o funcionário.");
+  const fech = (await db.collection("com_fechamentos").doc(competencia).get()).data();
+  if (fech?.status === "fechado") {
+    throw new HttpsError(
+      "failed-precondition",
+      "Competência fechada — reabra o fechamento para mexer nas metas secundárias.",
+    );
+  }
+  const indicadores = Array.isArray(req.data?.indicadores)
+    ? [...new Set(req.data.indicadores.map((i: unknown) => texto(i, 80)).filter(Boolean))]
+    : [];
+  const id = `${competencia}_${funcionarioId}`;
+  const anterior = (await db.collection("com_indicadores_atingidos").doc(id).get()).data() ?? null;
+  const dados = {
+    id,
+    competencia,
+    funcionarioId,
+    indicadores,
+    atualizadoPor: uid,
+    atualizadoEm: agoraISO(),
+  };
+  await db.collection("com_indicadores_atingidos").doc(id).set(dados, { merge: true });
+  await auditar(uid, "comissoes.marcarIndicadores", { id, anterior, novo: dados });
+  return { ok: true, id };
 });
 
 /** Configuração geral do módulo (regra do piso, cargo padrão) (§5). */

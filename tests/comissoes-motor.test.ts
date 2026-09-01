@@ -1227,3 +1227,175 @@ describe("cargo que não comissiona (caixa)", () => {
     expect(r.valorDevido).toBe(1712);
   });
 });
+
+describe("descontos de folha (retirada de produto, falta, suspensão)", () => {
+  const desconto = (valor: number, categoria = "retirada", motivo = "camisa retirada") => ({
+    id: `d-${categoria}-${valor}`,
+    funcionarioId: "joao",
+    competencia: "2026-08",
+    valor,
+    motivo,
+    tipo: "desconto" as const,
+    categoria,
+  });
+
+  it("sai depois do piso: quem está no piso paga a retirada", () => {
+    // Comissão de 900 < piso de 1.800 → recebia 1.800; com 200 de retirada, 1.600.
+    const r = apurar(
+      entrada({
+        regra: regraSimples(2),
+        vendas: {
+          individual: { liquida: 45_000, bruta: 45_000 },
+          loja: { liquida: 45_000, bruta: 45_000 },
+          grupo: { liquida: 45_000, bruta: 45_000 },
+        },
+        descontos: [desconto(200)],
+      }),
+    );
+    expect(r.comissaoTotal).toBe(900);
+    expect(r.piso).toBe(1800);
+    expect(r.descontosTotal).toBe(200);
+    expect(r.valorDevido).toBe(1600);
+  });
+
+  it("ajuste negativo continua sendo absorvido pelo piso — desconto não", () => {
+    const base = {
+      regra: regraSimples(2),
+      vendas: {
+        individual: { liquida: 45_000, bruta: 45_000 },
+        loja: { liquida: 45_000, bruta: 45_000 },
+        grupo: { liquida: 45_000, bruta: 45_000 },
+      },
+    };
+    const comAjuste = apurar(
+      entrada({
+        ...base,
+        ajustes: [
+          { id: "a1", funcionarioId: "joao", competencia: "2026-08", valor: -200, motivo: "x", tipo: "manual" },
+        ],
+      }),
+    );
+    expect(comAjuste.valorDevido).toBe(1800);
+    const comDesconto = apurar(entrada({ ...base, descontos: [desconto(200)] }));
+    expect(comDesconto.valorDevido).toBe(1600);
+  });
+
+  it("soma vários descontos e registra cada um na memória", () => {
+    const r = apurar(
+      entrada({
+        regra: regraSimples(4),
+        vendas: {
+          individual: { liquida: 100_000, bruta: 100_000 },
+          loja: { liquida: 100_000, bruta: 100_000 },
+          grupo: { liquida: 100_000, bruta: 100_000 },
+        },
+        descontos: [desconto(150), desconto(89.9, "falta", "1 falta"), desconto(300, "suspensao", "2 dias")],
+      }),
+    );
+    expect(r.descontosTotal).toBe(539.9);
+    expect(r.valorDevido).toBe(4000 - 539.9);
+    const linhas = r.memoria.filter((m) => m.rotulo.startsWith("Desconto"));
+    expect(linhas).toHaveLength(3);
+    expect(linhas.map((l) => l.valor)).toEqual([-150, -89.9, -300]);
+    expect(linhas[1].rotulo).toBe("Desconto: falta");
+  });
+
+  it("valor lançado com sinal invertido ainda desconta", () => {
+    const r = apurar(entrada({ regra: regraSimples(4), vendas: { individual: { liquida: 100_000, bruta: 100_000 }, loja: { liquida: 0, bruta: 0 }, grupo: { liquida: 0, bruta: 0 } }, descontos: [desconto(-100)] }));
+    expect(r.valorDevido).toBe(3900);
+  });
+
+  it("desconto maior que a folha zera o pagamento e avisa da sobra", () => {
+    const r = apurar(entrada({ descontos: [desconto(2500)] }));
+    expect(r.valorDevido).toBe(0);
+    expect(r.divergencias.join(" ")).toContain("passam do que a pessoa tem a receber");
+  });
+
+  it("caixa que só tem fixo também pode ser descontada", () => {
+    const r = apurar(
+      entrada({
+        funcionario: { ...JOAO, semPdv: true, pisoGarantido: 1712 },
+        semComissao: true,
+        descontos: [desconto(112)],
+      }),
+    );
+    expect(r.valorDevido).toBe(1600);
+  });
+});
+
+describe("metas secundárias (PA, VA) como gatilho de bônus", () => {
+  const supermeta: Bonus = {
+    id: "b-super",
+    nome: "Supermeta",
+    ativo: true,
+    gatilho: { tipo: "atingimentoIndividual", minimoPct: 125 },
+    premio: { tipo: "percentual", valor: 0.3, escopoVenda: "individual" },
+    vigenciaDe: "2026-01",
+  };
+  const porIndicador = (id: string, nome: string): Bonus => ({
+    id: `b-${id}`,
+    nome,
+    ativo: true,
+    gatilho: { tipo: "indicador", indicadorId: id },
+    condicao: { tipo: "atingimentoIndividual", minimoPct: 125 },
+    premio: { tipo: "percentual", valor: 0.1, escopoVenda: "individual" },
+    vigenciaDe: "2026-01",
+  });
+  const PA = porIndicador("pa", "PA");
+  const VA = porIndicador("va", "VA");
+
+  const cenario = (atingimento: number, atingidos: string[]) =>
+    entrada({
+      vendas: {
+        individual: { liquida: 100_000 * (atingimento / 125), bruta: 0 },
+        loja: { liquida: 0, bruta: 0 },
+        grupo: { liquida: 0, bruta: 0 },
+      },
+      metas: { individual: 100_000 * (100 / 125), loja: null, grupo: null },
+      bonus: [supermeta, PA, VA],
+      indicadores: [
+        { id: "pa", nome: "PA", atingido: atingidos.includes("pa") },
+        { id: "va", nome: "VA", atingido: atingidos.includes("va") },
+      ],
+    });
+
+  it("supermeta com PA e VA: 0,3 + 0,1 + 0,1 sobre a venda", () => {
+    const r = apurar(cenario(125, ["pa", "va"]));
+    expect(r.vendaConsiderada).toBe(100_000);
+    expect(r.atingimentoPct).toBe(125);
+    expect(r.bonusTotal).toBe(500); // 0,5% de 100.000
+  });
+
+  it("as secundárias somam ao degrau da supermeta, não o substituem", () => {
+    const so = apurar(cenario(125, []));
+    const comPa = apurar(cenario(125, ["pa"]));
+    expect(so.bonusTotal).toBe(300);
+    expect(comPa.bonusTotal).toBe(400);
+  });
+
+  it("sem a supermeta, PA e VA não pagam mesmo marcados", () => {
+    const r = apurar(cenario(110, ["pa", "va"]));
+    expect(r.bonusTotal).toBe(0);
+    expect(r.memoria.filter((m) => m.rotulo === "Bônus: PA")[0].detalhe).toContain("exige");
+  });
+
+  it("indicador não marcado não paga", () => {
+    const r = apurar(cenario(125, ["va"]));
+    expect(r.bonusTotal).toBe(400);
+    expect(r.memoria.filter((m) => m.rotulo === "Bônus: PA")[0].detalhe).toContain("PA não batido");
+  });
+
+  it("indicador que nem existe mais não paga e diz por quê", () => {
+    const r = apurar(
+      entrada({
+        vendas: { individual: { liquida: 100_000, bruta: 0 }, loja: { liquida: 0, bruta: 0 }, grupo: { liquida: 0, bruta: 0 } },
+        metas: { individual: 80_000, loja: null, grupo: null },
+        bonus: [porIndicador("sumiu", "Fantasma")],
+        indicadores: [],
+      }),
+    );
+    expect(r.bonusTotal).toBe(0);
+    const linha = r.memoria.find((m) => m.rotulo === "Bônus: Fantasma");
+    expect(linha?.detalhe).toContain("não cadastrada");
+  });
+});

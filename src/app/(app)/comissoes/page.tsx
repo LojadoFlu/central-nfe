@@ -12,6 +12,8 @@ import { agruparLojas } from "@/lib/comissoes/grupos";
 import {
   apurarComissoes,
   listarAjustes,
+  listarIndicadores,
+  listarIndicadoresAtingidos,
   listarBonus,
   listarCargos,
   listarFuncionarios,
@@ -26,6 +28,7 @@ import type {
   Cargo,
   ConfigComissoes,
   Funcionario,
+  Indicador,
   Meta,
   Regra,
   ResultadoCompetencia,
@@ -33,6 +36,7 @@ import type {
 } from "@/lib/comissoes/tipos";
 import { Acompanhamento } from "@/components/comissoes/acompanhamento";
 import { Ajustes } from "@/components/comissoes/ajustes";
+import { Indicadores } from "@/components/comissoes/indicadores";
 import { Auditoria } from "@/components/comissoes/auditoria";
 import { Bonus } from "@/components/comissoes/bonus";
 import { Configuracoes } from "@/components/comissoes/configuracoes";
@@ -53,6 +57,7 @@ const ABAS = [
   "Regras",
   "Metas",
   "Bônus",
+  "Metas secundárias",
   "Ajustes",
   "Auditoria",
   "Configurações",
@@ -84,6 +89,8 @@ export default function ComissoesPage() {
   });
   const [metas, setMetas] = useState<Meta[]>([]);
   const [ajustes, setAjustes] = useState<Ajuste[]>([]);
+  const [indicadores, setIndicadores] = useState<Indicador[]>([]);
+  const [atingidos, setAtingidos] = useState<Map<string, string[]>>(new Map());
   const [apuracao, setApuracao] = useState<ResultadoCompetencia | null>(null);
 
   const [carregando, setCarregando] = useState(true);
@@ -93,7 +100,7 @@ export default function ComissoesPage() {
   /** Cadastros — não dependem da competência. */
   const carregarCadastros = useCallback(async () => {
     try {
-      const [c, f, r, b, v, l, cfg] = await Promise.all([
+      const [c, f, r, b, v, l, cfg, ind] = await Promise.all([
         listarCargos(),
         listarFuncionarios(),
         listarRegras(),
@@ -101,7 +108,9 @@ export default function ComissoesPage() {
         listarVendedoresPdv(),
         listarStores(),
         obterConfig(),
+        listarIndicadores(),
       ]);
+      setIndicadores(ind);
       setCargos(c);
       setFuncionarios(f);
       setRegras(r);
@@ -121,9 +130,14 @@ export default function ComissoesPage() {
   const carregarCompetencia = useCallback(async () => {
     setApurando(true);
     try {
-      const [m, a] = await Promise.all([listarMetas(competencia), listarAjustes(competencia)]);
+      const [m, a, at] = await Promise.all([
+        listarMetas(competencia),
+        listarAjustes(competencia),
+        listarIndicadoresAtingidos(competencia),
+      ]);
       setMetas(m);
       setAjustes(a);
+      setAtingidos(at);
       setApuracao(await apurarComissoes(competencia));
       setErro(null);
     } catch (e) {
@@ -239,7 +253,19 @@ export default function ComissoesPage() {
           bonus={bonus}
           cargos={cargos}
           funcionarios={funcionarios}
+          indicadores={indicadores}
           lojas={lojas}
+          podeGerir={podeGerir}
+          onRecarregar={recarregarTudo}
+        />
+      ) : aba === "Metas secundárias" ? (
+        <Indicadores
+          competencia={competencia}
+          indicadores={indicadores}
+          atingidos={atingidos}
+          funcionarios={funcionarios}
+          cargos={cargos}
+          bonus={bonus}
           podeGerir={podeGerir}
           onRecarregar={recarregarTudo}
         />
