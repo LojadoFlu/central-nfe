@@ -12,6 +12,7 @@ import { formatBRL } from "@/lib/utils";
 import { ChevronDown, TriangleAlert } from "lucide-react";
 import type { LinhaApuracao, ResultadoCompetencia } from "@/lib/comissoes/tipos";
 import { BarraMeta, Select, mesLabel, pctFmt } from "./comum";
+import { CardsDaFolha, ComposicaoDaFolha } from "./composicao";
 
 function Memoria({ linha }: { linha: LinhaApuracao }) {
   return (
@@ -151,43 +152,21 @@ export function Acompanhamento({
               : `${mesLabel(apuracao.competencia)} encerrado`
           }
         />
-        <StatCard
-          label="Folha variável"
-          value={formatBRL(t.valorDevido)}
-          tone="warning"
-          hint={
-            t.faturamento > 0
-              ? `${pctFmt((t.valorDevido / t.faturamento) * 100)} do faturamento`
-              : undefined
-          }
-        />
+        {/* Os mesmos três números do dashboard: a folha se divide em piso e
+            variável, e é assim que ela é decidida e conferida. */}
+        <CardsDaFolha apuracao={apuracao} />
         <StatCard label="Comissão calculada" value={formatBRL(t.comissaoTotal)} hint={`Base ${formatBRL(t.comissaoBase)} + bônus ${formatBRL(t.bonus)}`} />
-        <StatCard
-          label="Piso garantido usado"
-          value={formatBRL(t.pisoUtilizado)}
-          hint={
-            t.pisoSemComissao > 0
-              ? `Além do que a comissão gerou · fora ${formatBRL(t.pisoSemComissao)} de quem não comissiona`
-              : "Quanto a empresa paga além do que a comissão gerou"
-          }
-        />
         <StatCard
           label="Folha projetada"
           value={proj ? formatBRL(proj.valorDevido) : "—"}
           hint={proj ? "se o ritmo do mês se mantiver" : "mês encerrado"}
         />
         <StatCard label="Ajustes" value={formatBRL(t.ajustes)} tone={t.ajustes < 0 ? "destructive" : "default"} />
-        {t.descontos > 0 ? (
-          <StatCard
-            label="Descontos de folha"
-            value={`− ${formatBRL(t.descontos)}`}
-            tone="destructive"
-            hint="Retirada de produto, falta, suspensão — saem depois do piso"
-          />
-        ) : null}
         <StatCard label="Acima da meta" value={`${t.acimaDaMeta} de ${t.funcionarios}`} tone="success" />
         <StatCard label="Pendências" value={String(pendencias)} tone={pendencias > 0 ? "destructive" : "success"} />
       </div>
+
+      <ComposicaoDaFolha apuracao={apuracao} />
 
       {pendencias > 0 ? (
         <Card className="border-warning/40 bg-warning/5">
