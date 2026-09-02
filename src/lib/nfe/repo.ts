@@ -646,6 +646,42 @@ export interface SyncEstado {
 }
 
 /** Estados de sincronização (por CNPJ). */
+// ── Stone (conciliação de cartão) ───────────────────────────────────────────
+
+export interface TesteStone {
+  ok: boolean;
+  httpStatus?: number;
+  dia?: string;
+  layout?: string;
+  bytes?: number;
+  tamanhoXml?: number;
+  estrutura?: { tag: string; qtd: number }[];
+  amostra?: string;
+  dica?: string;
+  detalhe?: string | null;
+}
+
+/** A chave vai daqui direto para o cofre no servidor — não fica no navegador. */
+export async function salvarCredenciaisStone(input: {
+  empresaId: string;
+  stoneCode: string;
+  chave: string;
+}): Promise<{ ok: boolean }> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "stoneSalvarCredenciais");
+  return (await fn(input)).data as { ok: boolean };
+}
+
+export async function testarStone(input: {
+  empresaId: string;
+  dia?: string;
+  layout?: string;
+}): Promise<TesteStone> {
+  const { functions } = fb();
+  const fn = httpsCallable(functions, "stoneTestar");
+  return (await fn(input)).data as TesteStone;
+}
+
 export async function listarSyncStates(): Promise<SyncEstado[]> {
   const { db } = fb();
   const snap = await getDocs(collection(db, "nfe_sync_state"));

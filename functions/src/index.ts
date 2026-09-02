@@ -18,10 +18,13 @@ import {
   gravarSegredoCertificado,
   lerSegredoCertificado,
   nomeSegredoCertificado,
+  gravarChaveStone,
   gravarSegredoPdvnet,
+  lerChaveStone,
   lerSegredoPdvnet,
 } from "./lib/secrets";
 import { PdvnetClient } from "./pdvnet/client";
+import { baixarArquivoConciliacao, estruturaDoXml } from "./stone/client";
 import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-vendas";
 import { sincronizarVendedores } from "./comissoes/vendedores";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./comissoes/grupos";
@@ -1521,6 +1524,116 @@ export const pdvnetSalvarCredenciais = onCall(opcoes, async (req) => {
   await auditar(uid, "pdvnet.salvarCredenciais", { baseUrl });
   return { ok: true };
 });
+
+// ── Stone: conciliação de cartão ────────────────────────────────────────────
+// Modo "cliente Stone": a chave do Stone Portal vai para o Secret Manager e o
+// StoneCode fica no cadastro da empresa. A chave nunca volta para o cliente,
+// nem em log, nem em mensagem de erro.
+
+export const stoneSalvarCredenciais = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin"]);
+  const d = req.data ?? {};
+  const empresaId = texto(d.empresaId, 80);
+  const stoneCode = texto(d.stoneCode, 40).replace(/\D/g, "");
+  const chave = String(d.chave ?? "").trim();
+  if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
+  if (!stoneCode) throw new HttpsError("invalid-argument", "Informe o StoneCode (só números).");
+  const emp = await db.collection("nfe_companies").doc(empresaId).get();
+  if (!emp.exists) throw new HttpsError("not-found", "Empresa não encontrada.");
+
+  // Chave em branco = manter a que já está guardada, só atualizando o
+  // StoneCode. Assim dá para corrigir o código sem redigitar o segredo.
+  if (chave) {
+    try {
+      await gravarChaveStone(empresaId, chave);
+    } catch (e) {
+      logger.error("stone: falha ao gravar a chave", { empresaId, erro: (e as Error).message });
+      throw new HttpsError("internal", "Falha ao guardar a chave com segurança.");
+    }
+  } else {
+    try {
+      await lerChaveStone(empresaId);
+    } catch {
+      throw new HttpsError("invalid-argument", "Informe a chave da API da Stone.");
+    }
+  }
+
+  await db.collection("nfe_companies").doc(empresaId).set(
+    { stoneCode, temChaveStone: true, stoneAtualizadoEm: agoraISO() },
+    { merge: true },
+  );
+  await auditar(uid, "stone.salvarCredenciais", { empresaId, stoneCode });
+  return { ok: true };
+});
+
+/**
+ * Teste de conexão: baixa o arquivo de UM dia e conta o que veio. Não grava
+ * nada — serve para provar a chave e para conhecer a estrutura real do XML,
+ * que a documentação pública não detalha.
+ *
+ * Atenção ao limite da Stone: 7 chamadas por hora para cada StoneCode + data.
+ */
+export const stoneTestar = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 120 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin"]);
+    const empresaId = texto(req.data?.empresaId, 80);
+    if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
+    const emp = (await db.collection("nfe_companies").doc(empresaId).get()).data() as
+      | { stoneCode?: string; nomeFantasia?: string; razaoSocial?: string }
+      | undefined;
+    if (!emp?.stoneCode) throw new HttpsError("failed-precondition", "Empresa sem StoneCode.");
+
+    // Padrão: ontem. O arquivo do dia corrente costuma não estar fechado.
+    const dia =
+      texto(req.data?.dia, 10) ||
+      new Date(Date.now() - 86_400_000).toLocaleDateString("en-CA", {
+        timeZone: "America/Sao_Paulo",
+      });
+
+    let chave: string;
+    try {
+      chave = await lerChaveStone(empresaId);
+    } catch {
+      throw new HttpsError("failed-precondition", "Chave da Stone não configurada para esta empresa.");
+    }
+
+    const layout = String(req.data?.layout) === "XML2_2" ? "XML2_2" : "XML2_4";
+    const r = await baixarArquivoConciliacao({ stoneCode: emp.stoneCode, data: dia, chave, layout });
+
+    await db.collection("stone_sync_logs").add({
+      empresaId, stoneCode: emp.stoneCode, dia, layout,
+      httpStatus: r.httpStatus, bytes: r.bytes, ok: !!r.xml, at: agoraISO(), uid,
+    });
+
+    if (!r.xml) {
+      const dica =
+        r.httpStatus === 401
+          ? "Chave recusada. Confira se ela é do Stone Portal e está ativa."
+          : r.httpStatus === 403
+            ? "A chave não está associada a este StoneCode."
+            : r.httpStatus === 429
+              ? "Limite da Stone atingido (7 chamadas por hora para o mesmo dia). Tente mais tarde."
+              : r.httpStatus === 404
+                ? "Sem arquivo para este dia neste StoneCode."
+                : "Falha na consulta.";
+      return { ok: false, httpStatus: r.httpStatus, dia, dica, detalhe: r.erro?.slice(0, 200) ?? null };
+    }
+
+    // Só o mapa da estrutura e uma amostra — nada do conteúdo é gravado ainda.
+    const estrutura = estruturaDoXml(r.xml).slice(0, 40);
+    return {
+      ok: true,
+      httpStatus: r.httpStatus,
+      dia,
+      layout,
+      bytes: r.bytes,
+      tamanhoXml: r.xml.length,
+      estrutura,
+      amostra: r.xml.slice(0, 1500),
+    };
+  },
+);
 
 /** Status da integração PDVnet (tem credenciais? qual baseUrl?). */
 export const pdvnetStatus = onCall(opcoes, async (req) => {

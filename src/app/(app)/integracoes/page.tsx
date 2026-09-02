@@ -10,18 +10,30 @@ import {
   listarEmpresas,
   testarConexao,
   sincronizarAgora,
+  salvarCredenciaisStone,
+  testarStone,
   type ResultadoConexao,
   type ResultadoSync,
+  type TesteStone,
 } from "@/lib/nfe/repo";
+import { Input } from "@/components/ui/input";
 import { formatCNPJ } from "@/lib/utils";
 import type { Company } from "@/lib/nfe/types";
-import { Plug, RefreshCw, DownloadCloud } from "lucide-react";
+import { Plug, RefreshCw, DownloadCloud, CreditCard, KeyRound } from "lucide-react";
 
 export default function IntegracoesPage() {
   const [empresas, setEmpresas] = useState<Company[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [conexao, setConexao] = useState<Record<string, ResultadoConexao>>({});
   const [sync, setSync] = useState<Record<string, ResultadoSync>>({});
+  // Stone: a chave é digitada aqui e vai direto para o cofre no servidor. Ela
+  // nunca é lida de volta — o campo fica em branco depois de salvar.
+  const [stoneAberto, setStoneAberto] = useState<string | null>(null);
+  const [stoneCode, setStoneCode] = useState("");
+  const [stoneChave, setStoneChave] = useState("");
+  const [stoneDia, setStoneDia] = useState("");
+  const [stoneMsg, setStoneMsg] = useState<Record<string, string>>({});
+  const [stoneTeste, setStoneTeste] = useState<Record<string, TesteStone>>({});
 
   const carregar = useCallback(async () => {
     try {
@@ -54,6 +66,34 @@ export default function IntegracoesPage() {
       setSync((m) => ({ ...m, [id]: r }));
     } catch (e) {
       setSync((m) => ({ ...m, [id]: { ok: false, erro: (e as Error).message } }));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function salvarStone(id: string) {
+    setBusy(id + ":stone");
+    setStoneMsg((m) => ({ ...m, [id]: "" }));
+    try {
+      await salvarCredenciaisStone({ empresaId: id, stoneCode, chave: stoneChave });
+      setStoneChave("");
+      setStoneMsg((m) => ({ ...m, [id]: "Chave guardada no cofre e StoneCode salvo." }));
+      await carregar();
+    } catch (e) {
+      setStoneMsg((m) => ({ ...m, [id]: (e as Error).message }));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function testarStoneEmpresa(id: string) {
+    setBusy(id + ":stoneTest");
+    setStoneMsg((m) => ({ ...m, [id]: "" }));
+    try {
+      const r = await testarStone({ empresaId: id, dia: stoneDia || undefined });
+      setStoneTeste((m) => ({ ...m, [id]: r }));
+    } catch (e) {
+      setStoneMsg((m) => ({ ...m, [id]: (e as Error).message }));
     } finally {
       setBusy(null);
     }
@@ -129,6 +169,109 @@ export default function IntegracoesPage() {
                       )}
                     </div>
                   ) : null}
+
+                  {/* Stone — conciliação de cartão pela adquirente. */}
+                  <div className="mt-3 border-t border-border pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={emp.temChaveStone ? "success" : "neutral"}>
+                        <CreditCard className="size-3" />
+                        Stone {emp.temChaveStone ? `· ${emp.stoneCode}` : "· não configurada"}
+                      </Badge>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          const abrindo = stoneAberto !== emp.id;
+                          setStoneAberto(abrindo ? emp.id : null);
+                          setStoneCode(abrindo ? (emp.stoneCode ?? "") : "");
+                          setStoneChave("");
+                        }}
+                      >
+                        <KeyRound /> {emp.temChaveStone ? "Trocar chave" : "Configurar"}
+                      </Button>
+                      {emp.temChaveStone ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={busy !== null}
+                          onClick={() => testarStoneEmpresa(emp.id)}
+                        >
+                          <RefreshCw className={busy === emp.id + ":stoneTest" ? "size-4 animate-spin" : "size-4"} />
+                          {busy === emp.id + ":stoneTest" ? "Consultando…" : "Testar Stone"}
+                        </Button>
+                      ) : null}
+                    </div>
+
+                    {stoneAberto === emp.id ? (
+                      <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                        <Input
+                          placeholder="StoneCode (só números)"
+                          value={stoneCode}
+                          onChange={(e) => setStoneCode(e.target.value)}
+                        />
+                        <Input
+                          type="password"
+                          placeholder={emp.temChaveStone ? "Chave (em branco = manter)" : "Chave da API (Stone Portal)"}
+                          value={stoneChave}
+                          onChange={(e) => setStoneChave(e.target.value)}
+                          autoComplete="off"
+                        />
+                        <Button
+                          size="sm"
+                          disabled={busy !== null || !stoneCode.trim()}
+                          onClick={() => salvarStone(emp.id)}
+                        >
+                          Salvar
+                        </Button>
+                        <p className="text-[11px] text-muted-foreground sm:col-span-3">
+                          A chave vai direto para o cofre de segredos do servidor. Ela não fica no
+                          navegador nem pode ser lida de volta — para trocar, digite outra.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {stoneMsg[emp.id] ? (
+                      <p className="mt-2 text-xs text-muted-foreground">{stoneMsg[emp.id]}</p>
+                    ) : null}
+
+                    {stoneTeste[emp.id] ? (
+                      <div className="mt-2 rounded-md border border-border bg-muted/40 p-3 text-sm">
+                        {stoneTeste[emp.id].ok ? (
+                          <div className="space-y-1">
+                            <Badge variant="success">
+                              Arquivo de {stoneTeste[emp.id].dia} · {stoneTeste[emp.id].tamanhoXml} caracteres
+                            </Badge>
+                            <p className="text-xs text-muted-foreground">
+                              {(stoneTeste[emp.id].estrutura ?? [])
+                                .slice(0, 12)
+                                .map((x) => `${x.tag}(${x.qtd})`)
+                                .join(" · ")}
+                            </p>
+                          </div>
+                        ) : (
+                          <>
+                            <Badge variant="destructive">
+                              HTTP {stoneTeste[emp.id].httpStatus} · {stoneTeste[emp.id].dia}
+                            </Badge>
+                            <p className="mt-1 text-xs text-destructive">{stoneTeste[emp.id].dica}</p>
+                          </>
+                        )}
+                      </div>
+                    ) : null}
+
+                    <div className="mt-2 flex items-center gap-2">
+                      <Input
+                        type="date"
+                        className="h-8 w-40"
+                        value={stoneDia}
+                        onChange={(e) => setStoneDia(e.target.value)}
+                      />
+                      <span className="text-[11px] text-muted-foreground">
+                        Dia do arquivo a testar (vazio = ontem). A Stone permite 7 consultas por
+                        hora para o mesmo dia.
+                      </span>
+                    </div>
+                  </div>
 
                   {s ? (
                     <div className="mt-2 rounded-md border border-border bg-muted/40 p-3 text-sm">

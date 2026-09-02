@@ -14,6 +14,10 @@ export interface Company extends Auditoria {
   id: string;
   razaoSocial: string;
   nomeFantasia?: string;
+  /** Código de afiliação na Stone (não é segredo). */
+  stoneCode?: string | null;
+  /** A chave da API da Stone está guardada no cofre. */
+  temChaveStone?: boolean;
   cnpj: string; // 14 dígitos
   inscricaoEstadual?: string;
   uf: string;

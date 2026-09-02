@@ -96,3 +96,37 @@ export async function lerSegredoPdvnet(): Promise<CredenciaisPdvnet> {
   if (!data) throw new Error("Credenciais do PDVnet não configuradas.");
   return JSON.parse(data);
 }
+
+// ---- Chave da API de Conciliação da Stone (por empresa) ----
+//
+// Uma chave por conta: cada loja tem seu StoneCode e sua chave no Stone Portal.
+// O StoneCode NÃO é segredo e fica no cadastro da empresa; a chave, sim, e só
+// existe aqui.
+
+function nomeSegredoStone(empresaId: string): string {
+  return `stone-conciliacao-${empresaId.replace(/[^A-Za-z0-9_-]/g, "")}`;
+}
+
+export async function gravarChaveStone(empresaId: string, chave: string): Promise<string> {
+  const parent = `projects/${projectId()}`;
+  const secretId = nomeSegredoStone(empresaId);
+  const secretName = `${parent}/secrets/${secretId}`;
+  try {
+    await client.getSecret({ name: secretName });
+  } catch {
+    await client.createSecret({ parent, secretId, secret: { replication: { automatic: {} } } });
+  }
+  await client.addSecretVersion({
+    parent: secretName,
+    payload: { data: Buffer.from(JSON.stringify({ chave }), "utf8") },
+  });
+  return secretId;
+}
+
+export async function lerChaveStone(empresaId: string): Promise<string> {
+  const name = `projects/${projectId()}/secrets/${nomeSegredoStone(empresaId)}/versions/latest`;
+  const [version] = await client.accessSecretVersion({ name });
+  const data = version.payload?.data?.toString();
+  if (!data) throw new Error("Chave da Stone não configurada para esta empresa.");
+  return (JSON.parse(data) as { chave: string }).chave;
+}
