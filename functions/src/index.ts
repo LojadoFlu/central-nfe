@@ -1,6 +1,7 @@
-import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { onCall, onRequest, HttpsError } from "firebase-functions/v2/https";
 import { onSchedule } from "firebase-functions/v2/scheduler";
 import { logger } from "firebase-functions/v2";
+import * as crypto from "node:crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import {
   REGIAO,
@@ -26,6 +27,7 @@ import {
 import { PdvnetClient } from "./pdvnet/client";
 import { amostraDeElemento, baixarArquivoConciliacao, estruturaDoXml } from "./stone/client";
 import { diasDoPeriodo, sincronizarStone } from "./stone/sincronizacao";
+import { cadastrarWebhook, parsePixCsv, solicitarArquivoPix } from "./stone/pix";
 import {
   adquirenteDoBanco,
   adquirenteDoPdv,
@@ -1776,6 +1778,170 @@ export const stoneSyncAgendado = onSchedule(
         });
       }
     }
+  },
+);
+
+// ── PIX da Stone ────────────────────────────────────────────────────────────
+// Fluxo assíncrono: pede-se o arquivo do dia, a Stone processa e avisa no
+// nosso webhook com uma URL assinada. Ver functions/src/stone/pix.ts.
+
+const URL_WEBHOOK_STONE = `https://${REGIAO}-${process.env.GCLOUD_PROJECT ?? "central-nfe-1c8d8"}.cloudfunctions.net/stoneWebhook`;
+
+/** Cadastra o webhook na Stone, com um segredo nosso nos headers. */
+export const stoneCadastrarWebhook = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin"]);
+  const empresaId = texto(req.data?.empresaId, 80);
+  if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
+  let chave: string;
+  try {
+    chave = await lerChaveStone(empresaId);
+  } catch {
+    throw new HttpsError("failed-precondition", "Chave da Stone não configurada.");
+  }
+  // A Stone não assina a notificação. O segredo vai nos headers que ela devolve
+  // em toda chamada — é o que separa a notificação dela de qualquer POST.
+  const atual = (await db.collection("configuracoes").doc("stone").get()).data() as
+    | { segredoWebhook?: string }
+    | undefined;
+  const segredo = atual?.segredoWebhook ?? crypto.randomUUID().replace(/-/g, "");
+  const r = await cadastrarWebhook({
+    chave,
+    url: URL_WEBHOOK_STONE,
+    headers: { "x-flu-webhook": segredo },
+    atualizar: req.data?.atualizar === true,
+  });
+  await db.collection("configuracoes").doc("stone").set(
+    {
+      segredoWebhook: segredo,
+      webhookUrl: URL_WEBHOOK_STONE,
+      webhookStatus: r.ok ? "cadastrado" : `falhou (${r.httpStatus})`,
+      webhookEm: agoraISO(),
+    },
+    { merge: true },
+  );
+  await auditar(uid, "stone.cadastrarWebhook", { httpStatus: r.httpStatus, ok: r.ok });
+  return { ok: r.ok, httpStatus: r.httpStatus, url: URL_WEBHOOK_STONE, detalhe: r.corpo };
+});
+
+/** Pede o arquivo de PIX de um dia (ou de ontem). Volta 202 — o arquivo chega depois. */
+export const stoneSolicitarPix = onCall(opcoes, async (req) => {
+  const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "financeiro"]);
+  const empresaId = texto(req.data?.empresaId, 80);
+  if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
+  const emp = (await db.collection("nfe_companies").doc(empresaId).get()).data() as
+    | { cnpj?: string }
+    | undefined;
+  const documento = somenteDigitos(String(emp?.cnpj ?? ""));
+  if (!documento) throw new HttpsError("failed-precondition", "Empresa sem CNPJ.");
+  const ontem = new Date(Date.now() - 86_400_000).toLocaleDateString("en-CA", {
+    timeZone: "America/Sao_Paulo",
+  });
+  const data = texto(req.data?.dia, 10) || ontem;
+  const chave = await lerChaveStone(empresaId);
+  const r = await solicitarArquivoPix({ documento, data, chave });
+  await db.collection("stone_pix_pedidos").doc(`${documento}_${data}`).set(
+    { empresaId, documento, data, httpStatus: r.httpStatus, aceito: r.aceito, pedidoEm: agoraISO(), uid },
+    { merge: true },
+  );
+  await auditar(uid, "stone.solicitarPix", { empresaId, data, httpStatus: r.httpStatus });
+  return { ok: r.aceito, httpStatus: r.httpStatus, data, detalhe: r.corpo };
+});
+
+/**
+ * Webhook da Stone. Precisa responder 200 em até 5 segundos, então aqui só
+ * valida e guarda — quem baixa e processa é o gatilho de `stone_pix_arquivos`.
+ */
+export const stoneWebhook = onRequest(
+  { region: REGIAO, memory: "256MiB", timeoutSeconds: 30, cors: false },
+  async (req, res) => {
+    const corpo = (req.body ?? {}) as { type?: string; url?: string; document?: string; referenceDate?: string };
+    // Validação da URL no cadastro: responder 2xx rápido, sem mais nada.
+    if (corpo.type === "validation_notification") {
+      res.status(200).send({ ok: true });
+      return;
+    }
+    const cfg = (await db.collection("configuracoes").doc("stone").get()).data() as
+      | { segredoWebhook?: string }
+      | undefined;
+    const enviado = String(req.header("x-flu-webhook") ?? "");
+    if (!cfg?.segredoWebhook || enviado !== cfg.segredoWebhook) {
+      logger.warn("stone webhook: segredo inválido", { temSegredo: !!enviado });
+      res.status(401).send({ ok: false });
+      return;
+    }
+    if (corpo.type !== "pix" || !corpo.url) {
+      res.status(200).send({ ok: true, ignorado: true });
+      return;
+    }
+    // A URL vem assinada e expira; guardá-la é o suficiente para o processamento
+    // logo em seguida.
+    await db.collection("stone_pix_arquivos").add({
+      documento: somenteDigitos(String(corpo.document ?? "")),
+      data: String(corpo.referenceDate ?? "").slice(0, 10),
+      url: corpo.url,
+      status: "pendente",
+      recebidoEm: agoraISO(),
+    });
+    res.status(200).send({ ok: true });
+  },
+);
+
+/** Baixa e materializa os arquivos de PIX que o webhook anunciou. */
+export const stonePixProcessar = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 300 },
+  async (req) => {
+    await exigirAcao(req, "integracoes.sincronizar", ["admin", "financeiro"]);
+    const pend = await db
+      .collection("stone_pix_arquivos")
+      .where("status", "==", "pendente")
+      .limit(20)
+      .get();
+    let arquivos = 0;
+    let linhas = 0;
+    for (const doc of pend.docs) {
+      const a = doc.data() as { url?: string; documento?: string; data?: string };
+      try {
+        const resp = await fetch(String(a.url));
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const csv = await resp.text();
+        await getStorage()
+          .bucket()
+          .file(`stone/pix/${a.documento}/${String(a.data).replace(/-/g, "")}.csv`)
+          .save(Buffer.from(csv, "utf8"), { contentType: "text/csv", resumable: false });
+
+        const empresa = (
+          await db.collection("nfe_companies").where("cnpj", "==", a.documento).limit(1).get()
+        ).docs[0]?.id ?? null;
+
+        let batch = db.batch();
+        let ops = 0;
+        for (const p of parsePixCsv(csv)) {
+          batch.set(
+            db.collection("stone_pix").doc(`${a.documento}_${p.id}`),
+            {
+              ...p,
+              empresaId: empresa,
+              documento: a.documento,
+              dia: String(a.data),
+              // Link de pagamento não passa pelo PDV como PIX: a venda entra
+              // como cartão e o dinheiro chega aqui.
+              porLink: /link/i.test(p.captura ?? ""),
+              atualizadoEm: agoraISO(),
+            },
+            { merge: true },
+          );
+          ops++;
+          linhas++;
+          if (ops >= 400) { await batch.commit(); batch = db.batch(); ops = 0; }
+        }
+        if (ops > 0) await batch.commit();
+        await doc.ref.set({ status: "processado", processadoEm: agoraISO(), linhas }, { merge: true });
+        arquivos++;
+      } catch (e) {
+        await doc.ref.set({ status: "erro", erro: (e as Error).message, processadoEm: agoraISO() }, { merge: true });
+      }
+    }
+    return { ok: true, arquivos, linhas, pendentes: pend.size };
   },
 );
 

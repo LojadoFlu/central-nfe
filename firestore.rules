@@ -228,6 +228,18 @@ service cloud.firestore {
       allow read: if ativo();
       allow write: if false;
     }
+    match /stone_pix/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+    match /stone_pix_pedidos/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+    match /stone_pix_arquivos/{id} {
+      allow read: if hasRole(['admin']);
+      allow write: if false;
+    }
 
     // Configurações gerais (inclui flag/baseUrl do PDVnet — sem segredos).
     match /configuracoes/{id} {
