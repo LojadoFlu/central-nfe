@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   dataDoArquivo,
   dataHoraDoArquivo,
+  diasDoPeriodo,
   idDaParcela,
   parseConciliacaoStone,
 } from "../functions/src/stone/parser";
@@ -100,8 +101,7 @@ describe("contra o arquivo real inteiro", () => {
 });
 
 describe("dias do período", () => {
-  it("inclui as duas pontas", async () => {
-    const { diasDoPeriodo } = await import("../functions/src/stone/sincronizacao");
+  it("inclui as duas pontas", () => {
     expect(diasDoPeriodo("2026-08-30", "2026-09-02")).toEqual([
       "2026-08-30",
       "2026-08-31",
@@ -110,13 +110,11 @@ describe("dias do período", () => {
     ]);
   });
 
-  it("um dia só devolve um dia", async () => {
-    const { diasDoPeriodo } = await import("../functions/src/stone/sincronizacao");
+  it("um dia só devolve um dia", () => {
     expect(diasDoPeriodo("2026-09-01", "2026-09-01")).toEqual(["2026-09-01"]);
   });
 
-  it("período invertido não devolve nada", async () => {
-    const { diasDoPeriodo } = await import("../functions/src/stone/sincronizacao");
+  it("período invertido não devolve nada", () => {
     expect(diasDoPeriodo("2026-09-05", "2026-09-01")).toEqual([]);
   });
 });

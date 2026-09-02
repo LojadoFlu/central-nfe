@@ -166,3 +166,20 @@ export function parseConciliacaoStone(xml: string): ConciliacaoStone {
 export function idDaParcela(stoneCode: string, p: ParcelaStone): string {
   return `${stoneCode}_${p.transacaoKey}_${p.parcela}`;
 }
+
+/**
+ * Dias de `de` até `ate`, inclusive. Mora aqui, no módulo puro, porque o teste
+ * precisa dela: qualquer import que chegue em `lib/base.ts` arrasta
+ * `firebase-functions`, que não existe na instalação da raiz e derruba o build
+ * do front na Netlify.
+ */
+export function diasDoPeriodo(de: string, ate: string): string[] {
+  const out: string[] = [];
+  const d = new Date(`${de}T12:00:00Z`);
+  const fim = new Date(`${ate}T12:00:00Z`);
+  while (d <= fim && out.length < 120) {
+    out.push(d.toISOString().slice(0, 10));
+    d.setUTCDate(d.getUTCDate() + 1);
+  }
+  return out;
+}

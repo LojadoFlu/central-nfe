@@ -10,6 +10,8 @@ import { db } from "../lib/base";
 import { baixarArquivoConciliacao } from "./client";
 import { idDaParcela, parseConciliacaoStone, type ParcelaStone } from "./parser";
 
+export { diasDoPeriodo } from "./parser";
+
 export interface ResultadoDiaStone {
   dia: string;
   httpStatus: number;
@@ -24,18 +26,6 @@ export interface ResultadoSyncStone {
   stoneCode: string;
   dias: ResultadoDiaStone[];
   parcelas: number;
-}
-
-/** Dias de `de` até `ate`, inclusive, em ordem. */
-export function diasDoPeriodo(de: string, ate: string): string[] {
-  const out: string[] = [];
-  const d = new Date(`${de}T12:00:00Z`);
-  const fim = new Date(`${ate}T12:00:00Z`);
-  while (d <= fim && out.length < 120) {
-    out.push(d.toISOString().slice(0, 10));
-    d.setUTCDate(d.getUTCDate() + 1);
-  }
-  return out;
 }
 
 function docDaParcela(
