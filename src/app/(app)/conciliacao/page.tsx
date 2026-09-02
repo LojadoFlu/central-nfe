@@ -79,8 +79,17 @@ export default function ConciliacaoPage() {
       ) : dados ? (
         <>
           <div className="space-y-3">
-            <LinhaConc titulo="Cartões" banco={dados.banco.cartao} previsto={dados.previsto.cartao} dif={dados.dif.cartao} manual={dados.manual?.cartao ?? 0}
-              nota="Banco: liquidações de cartão. Esperado = PDV + Maracanã (avulsas nas máquinas desta loja), líquidos na data de crédito — com antecipação, D+1 (fim de semana → segunda); sem antecipação, na data de vencimento (parcelado cai mês a mês)." />
+            {/* Um card por adquirente: comparar o esperado de todos contra um
+                extrato que é de um só transforma dinheiro de outra conta em
+                diferença. */}
+            {dados.porAdquirente?.length ? (
+              dados.porAdquirente.map((a) => (
+                <CardAdquirente key={a.adquirente} a={a} />
+              ))
+            ) : (
+              <LinhaConc titulo="Cartões" banco={dados.banco.cartao} previsto={dados.previsto.cartao} dif={dados.dif.cartao} manual={dados.manual?.cartao ?? 0}
+                nota="Banco: liquidações de cartão. Esperado = PDV + Maracanã (avulsas nas máquinas desta loja), líquidos na data de crédito." />
+            )}
             <LinhaConc titulo="PIX" banco={dados.banco.pix} previsto={dados.previsto.pix} dif={dados.dif.pix} manual={dados.manual?.pix ?? 0}
               nota="Banco: PIX recebido na maquininha. Esperado = PDV + Maracanã (avulsas em PIX nas máquinas desta loja)." />
           </div>
@@ -189,6 +198,67 @@ export default function ConciliacaoPage() {
         <p className="text-sm text-muted-foreground">Selecione a empresa e o período. Importe o extrato em Banco antes.</p>
       )}
     </div>
+  );
+}
+
+/** Um adquirente: o que caiu no banco, o que se esperava e, quando há
+ * integração, o que a própria adquirente diz que pagou. */
+function CardAdquirente({
+  a,
+}: {
+  a: NonNullable<Conciliacao["porAdquirente"]>[number];
+}) {
+  // Quem tem agenda é comparado com ela; quem não tem, com a nossa estimativa.
+  const referencia = a.agenda ?? a.previsto;
+  const dif = a.banco - referencia;
+  const d = direcao(dif, Math.max(50, Math.abs(referencia) * 0.02));
+  const semExtrato = a.banco === 0 && a.previsto > 0;
+  return (
+    <Card className={cn("relative overflow-hidden shadow-card", !d.ok && !semExtrato && "border-warning/50")}>
+      <div className={cn("pointer-events-none absolute inset-0 bg-gradient-to-br to-transparent", d.ok ? "from-success/[0.07]" : "from-warning/[0.09]")} />
+      <CardContent className="relative py-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[0.95rem] font-semibold tracking-tight">{a.adquirente}</h2>
+          {semExtrato ? (
+            <Badge variant="neutral">Cai em outra conta</Badge>
+          ) : d.ok ? (
+            <Badge variant="success"><CheckCircle2 className="mr-1 size-3.5" /> Confere</Badge>
+          ) : (
+            <Badge variant="warning"><AlertTriangle className="mr-1 size-3.5" /> {d.texto}</Badge>
+          )}
+        </div>
+        <div className={cn("grid gap-1 divide-x divide-border/50 text-center", a.agenda != null ? "grid-cols-4" : "grid-cols-3")}>
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Banco recebeu</p>
+            <p className="mt-1 text-[0.95rem] font-bold tnum sm:text-base">{formatBRL(a.banco)}</p>
+          </div>
+          {a.agenda != null ? (
+            <div className="px-1">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Agenda</p>
+              <p className="mt-1 text-[0.95rem] font-bold tnum sm:text-base">{formatBRL(a.agenda)}</p>
+              <p className="mt-1 text-[9px] text-muted-foreground">a adquirente diz</p>
+            </div>
+          ) : null}
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Esperado (PDV)</p>
+            <p className="mt-1 text-[0.95rem] font-bold tnum sm:text-base">{formatBRL(a.previsto)}</p>
+          </div>
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">{semExtrato ? "Sem extrato" : d.texto}</p>
+            <p className={cn("mt-1 text-[0.95rem] font-bold tnum sm:text-base", !d.ok && !semExtrato && "text-warning")}>
+              {semExtrato ? "—" : formatBRL(Math.abs(dif))}
+            </p>
+          </div>
+        </div>
+        <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
+          {semExtrato
+            ? "Nenhum crédito deste adquirente no extrato importado — o dinheiro dele cai em outra conta. Enquanto ela não for importada, o esperado aqui não tem com o que ser comparado."
+            : a.agenda != null
+              ? "Comparado com a agenda da própria adquirente, que sabe a taxa cobrada e a data do crédito. O esperado do PDV fica ao lado, para você ver o quanto a estimativa erra."
+              : "Comparado com o esperado do PDV: taxa cadastrada e data de crédito estimada. Sem integração com a adquirente, é o melhor que temos."}
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 
