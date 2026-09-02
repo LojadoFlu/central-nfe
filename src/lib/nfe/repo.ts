@@ -1018,6 +1018,9 @@ export interface DiaConc {
   bancoCartao: number;
   previstoCartao: number;
   difCartao: number;
+  /** Agenda da Stone: o que a adquirente diz que cai (ou caiu) no dia. */
+  stoneCartao?: number;
+  difStone?: number;
   bancoPix: number;
   previstoPix: number;
   difPix: number;
@@ -1030,7 +1033,17 @@ export interface Conciliacao {
   banco: { cartao: number; pix: number; outrasEntradas: number; saidas: number };
   previsto: { cartao: number; pix: number };
   manual?: { cartao: number; pix: number };
-  dif: { cartao: number; pix: number };
+  dif: { cartao: number; pix: number; stoneBanco?: number; stonePrevisto?: number };
+  /** Agenda da adquirente. `diasComArquivo` = quantos dias do período já foram baixados. */
+  stone?: {
+    cartao: number;
+    bruto: number;
+    taxa: number;
+    taxaPct: number;
+    liquidado: number;
+    antecipadas: number;
+    diasComArquivo: number;
+  };
   // Validação da taxa da Stone (agregada): bruto × taxa app (taxaApp) vs o que caiu (taxaStone).
   // `confiavel` = extrato cobre ≥ ~60 dias; abaixo disso o descasamento da antecipação distorce.
   taxaCartao?: { bruto: number; taxaApp: number; taxaStone: number; extratoDias: number; confiavel: boolean };

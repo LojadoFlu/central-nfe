@@ -85,6 +85,8 @@ export default function ConciliacaoPage() {
               nota="Banco: PIX recebido na maquininha. Esperado = PDV + Maracanã (avulsas em PIX nas máquinas desta loja)." />
           </div>
 
+          {dados.stone && dados.stone.diasComArquivo > 0 ? <AgendaStone s={dados.stone} dif={dados.dif} /> : null}
+
           {dados.taxaCartao && dados.taxaCartao.bruto > 0 ? <TaxaStoneCard t={dados.taxaCartao} /> : null}
 
           {(dados.manual && (dados.manual.cartao > 0 || dados.manual.pix > 0)) ? (
@@ -110,6 +112,7 @@ export default function ConciliacaoPage() {
                           <th className="py-1 pr-2 text-left font-medium">Dia</th>
                           <th className="py-1 px-2 font-medium">Banco (dia)</th>
                           <th className="py-1 px-2 font-medium">Previsto (dia)</th>
+                          <th className="py-1 px-2 font-medium">Stone (dia)</th>
                           <th className="py-1 px-2 font-medium">Banco acum.</th>
                           <th className="py-1 px-2 font-medium">Previsto acum.</th>
                           <th className="py-1 pl-2 font-medium">Dif. acum.</th>
@@ -128,6 +131,9 @@ export default function ConciliacaoPage() {
                                 <td className="py-1 pr-2 text-left font-medium">{formatarData(d.dia)}</td>
                                 <td className="py-1 px-2 text-muted-foreground">{formatBRL(banco)}</td>
                                 <td className="py-1 px-2 text-muted-foreground">{formatBRL(prev)}</td>
+                                <td className="py-1 px-2 text-muted-foreground">
+                                  {d.stoneCartao ? formatBRL(d.stoneCartao) : "—"}
+                                </td>
                                 <td className="py-1 px-2">{formatBRL(accB)}</td>
                                 <td className="py-1 px-2">{formatBRL(accP)}</td>
                                 <td className={`py-1 pl-2 font-semibold ${Math.abs(difAcum) > Math.max(200, accP * 0.03) ? "text-warning" : "text-muted-foreground"}`}>{difAcum >= 0 ? "+" : "−"}{formatBRL(Math.abs(difAcum))}</td>
@@ -175,6 +181,73 @@ export default function ConciliacaoPage() {
         <p className="text-sm text-muted-foreground">Selecione a empresa e o período. Importe o extrato em Banco antes.</p>
       )}
     </div>
+  );
+}
+
+/**
+ * A agenda da adquirente é a terceira fonte — e a única que sabe a taxa
+ * cobrada e a data em que o dinheiro caiu. As outras duas estimam: o PDV pela
+ * taxa cadastrada, o banco pelo que apareceu no extrato.
+ */
+function AgendaStone({
+  s,
+  dif,
+}: {
+  s: NonNullable<Conciliacao["stone"]>;
+  dif: Conciliacao["dif"];
+}) {
+  const difBanco = dif.stoneBanco ?? 0;
+  const difPrevisto = dif.stonePrevisto ?? 0;
+  const confere = Math.abs(difBanco) <= Math.max(50, s.cartao * 0.02);
+  return (
+    <Card className="mt-3 shadow-card">
+      <CardContent className="py-4">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-[0.95rem] font-semibold tracking-tight">Agenda da Stone</h2>
+          {confere ? (
+            <Badge variant="success"><CheckCircle2 className="mr-1 size-3.5" /> Bate com o banco</Badge>
+          ) : (
+            <Badge variant="warning"><AlertTriangle className="mr-1 size-3.5" /> Diverge do banco</Badge>
+          )}
+        </div>
+        <div className="grid grid-cols-3 gap-1 divide-x divide-border/50 text-center">
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+              Líquido na agenda
+            </p>
+            <p className="mt-1 text-[0.95rem] font-bold tnum sm:text-base">{formatBRL(s.cartao)}</p>
+            <p className="mt-1 text-[9px] text-muted-foreground">
+              {formatBRL(s.liquidado)} já creditado
+            </p>
+          </div>
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+              Taxa real
+            </p>
+            <p className="mt-1 text-[0.95rem] font-bold tnum sm:text-base">
+              {s.taxaPct.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%
+            </p>
+            <p className="mt-1 text-[9px] text-muted-foreground">{formatBRL(s.taxa)} sobre {formatBRL(s.bruto)}</p>
+          </div>
+          <div className="px-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+              Agenda × banco
+            </p>
+            <p className={cn("mt-1 text-[0.95rem] font-bold tnum sm:text-base", Math.abs(difBanco) > 0.5 && "text-warning")}>
+              {formatBRL(difBanco)}
+            </p>
+            <p className="mt-1 text-[9px] text-muted-foreground">
+              agenda × PDV {formatBRL(difPrevisto)}
+            </p>
+          </div>
+        </div>
+        <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
+          Vem do arquivo diário da Stone: taxa efetivamente cobrada e data em que o dinheiro caiu.
+          {s.antecipadas > 0 ? ` ${s.antecipadas} parcela(s) antecipada(s) no período.` : ""}{" "}
+          {s.diasComArquivo} dia(s) do período já baixados — dia sem arquivo entra como zero.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

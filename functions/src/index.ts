@@ -1710,6 +1710,52 @@ export const stoneSincronizar = onCall(
   },
 );
 
+/**
+ * Baixa o arquivo de ONTEM de cada empresa com StoneCode. Roda de manhã: o
+ * arquivo do dia só fecha no dia seguinte.
+ *
+ * Uma empresa que falhe não derruba as outras — cada uma tem sua chave e seu
+ * limite de consumo.
+ */
+export const stoneSyncAgendado = onSchedule(
+  {
+    schedule: "every day 08:30",
+    timeZone: "America/Sao_Paulo",
+    region: REGIAO,
+    memory: "512MiB",
+    timeoutSeconds: 540,
+  },
+  async () => {
+    const ontem = new Date(Date.now() - 86_400_000).toLocaleDateString("en-CA", {
+      timeZone: "America/Sao_Paulo",
+    });
+    const empresas = await db.collection("nfe_companies").where("ativo", "==", true).get();
+    for (const doc of empresas.docs) {
+      const emp = doc.data() as { stoneCode?: string };
+      if (!emp.stoneCode) continue;
+      try {
+        const chave = await lerChaveStone(doc.id);
+        const r = await sincronizarStone({
+          empresaId: doc.id,
+          stoneCode: emp.stoneCode,
+          chave,
+          dias: [ontem],
+        });
+        logger.info("stone: dia sincronizado", {
+          empresaId: doc.id,
+          dia: ontem,
+          parcelas: r.parcelas,
+        });
+      } catch (e) {
+        logger.error("stone: falha na sincronização diária", {
+          empresaId: doc.id,
+          erro: (e as Error).message,
+        });
+      }
+    }
+  },
+);
+
 /** Status da integração PDVnet (tem credenciais? qual baseUrl?). */
 export const pdvnetStatus = onCall(opcoes, async (req) => {
   if (!req.auth?.uid) throw new HttpsError("unauthenticated", "Autenticação necessária.");
@@ -3230,11 +3276,21 @@ export const conciliacao = onCall(
     const maquinasAlvo = [empresaId, ...aliases].slice(0, 10);                 // p/ manual_sales (Firestore "in" ≤ 10)
 
     // acumulador por dia
-    interface Dia { bancoCartao: number; bancoPix: number; previstoCartao: number; previstoPix: number }
+    interface Dia {
+      bancoCartao: number;
+      bancoPix: number;
+      previstoCartao: number;
+      previstoPix: number;
+      /** Agenda da adquirente: o que a Stone diz que cai (ou caiu) no dia. */
+      stoneCartao: number;
+    }
     const dias = new Map<string, Dia>();
     const bd = (dia: string): Dia => {
       let x = dias.get(dia);
-      if (!x) { x = { bancoCartao: 0, bancoPix: 0, previstoCartao: 0, previstoPix: 0 }; dias.set(dia, x); }
+      if (!x) {
+        x = { bancoCartao: 0, bancoPix: 0, previstoCartao: 0, previstoPix: 0, stoneCartao: 0 };
+        dias.set(dia, x);
+      }
       return x;
     };
 
@@ -3325,16 +3381,51 @@ export const conciliacao = onCall(
       // dinheiro: fica na loja, não vai ao banco → ignora
     }
 
+    const r2 = (n: number) => Math.round(n * 100) / 100;
+
+    // STONE — a agenda da própria adquirente. É a única das três fontes que sabe
+    // a taxa cobrada e a data em que o dinheiro efetivamente caiu; as outras
+    // duas estimam (o PDV pela taxa cadastrada, o banco pelo que apareceu).
+    // A parcela entra no dia do CRÉDITO: o pago, quando já liquidou; a previsão,
+    // enquanto não.
+    let stoneCartao = 0, stoneBruto = 0, stoneTaxa = 0, stoneLiquidado = 0, stoneAntecipadas = 0;
+    const stSnap = await db
+      .collection("stone_recebiveis")
+      .where("empresaId", "in", maquinasAlvo)
+      .get();
+    for (const doc of stSnap.docs) {
+      const p = doc.data();
+      const credito = d10(p.pagamentoEm ?? p.previsaoPagamento);
+      if (!credito || credito < de || credito > ate) continue;
+      const liq = Number(p.liquido) || 0;
+      stoneCartao += liq;
+      stoneBruto += Number(p.bruto) || 0;
+      stoneTaxa += Number(p.taxa) || 0;
+      if (p.liquidada) stoneLiquidado += liq;
+      if (p.antecipada) stoneAntecipadas++;
+      bd(credito).stoneCartao += liq;
+    }
+    // Cobertura: sem os arquivos do período baixados, a coluna da Stone fica
+    // vazia e pareceria divergência gigante. Melhor dizer que não há dado.
+    const stStates = await db
+      .collection("stone_sync_state")
+      .where("empresaId", "in", maquinasAlvo)
+      .get();
+    const diasStone = stStates.docs
+      .map((d) => String((d.data() as { dia?: string }).dia ?? ""))
+      .filter((x) => x >= de && x <= ate);
+
     const porDia = [...dias.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
       .map(([dia, x]) => ({
         dia,
         bancoCartao: x.bancoCartao, previstoCartao: x.previstoCartao, difCartao: x.bancoCartao - x.previstoCartao,
+        stoneCartao: x.stoneCartao,
+        difStone: x.bancoCartao - x.stoneCartao,
         bancoPix: x.bancoPix, previstoPix: x.previstoPix, difPix: x.bancoPix - x.previstoPix,
       }));
 
     // TAXA efetiva do cartão: esperada (app) × real da Stone (o que caiu no banco).
-    const r2 = (n: number) => Math.round(n * 100) / 100;
     const taxaApp = brutoCartao > 0 ? r2((1 - previstoCartao / brutoCartao) * 100) : 0;
     const taxaStone = brutoCartao > 0 ? r2((1 - bancoCartao / brutoCartao) * 100) : 0;
     const diasCob = cartaoMinDia && cartaoMaxDia
@@ -3344,8 +3435,22 @@ export const conciliacao = onCall(
       ok: true, de, ate, empresaId,
       banco: { cartao: bancoCartao, pix: bancoPix, outrasEntradas: bancoOutrasEnt, saidas: bancoSaidas },
       previsto: { cartao: previstoCartao, pix: previstoPix },
+      stone: {
+        cartao: r2(stoneCartao),
+        bruto: r2(stoneBruto),
+        taxa: r2(stoneTaxa),
+        taxaPct: stoneBruto > 0 ? r2((stoneTaxa / stoneBruto) * 100) : 0,
+        liquidado: r2(stoneLiquidado),
+        antecipadas: stoneAntecipadas,
+        diasComArquivo: diasStone.length,
+      },
       manual: { cartao: manualCartao, pix: manualPix },
-      dif: { cartao: bancoCartao - previstoCartao, pix: bancoPix - previstoPix },
+      dif: {
+        cartao: bancoCartao - previstoCartao,
+        pix: bancoPix - previstoPix,
+        stoneBanco: r2(bancoCartao - stoneCartao),
+        stonePrevisto: r2(stoneCartao - previstoCartao),
+      },
       // Validação da taxa da Stone (agregada). Só é confiável num extrato longo (≥ ~60 dias);
       // extrato curto tem descasamento de datas da antecipação.
       taxaCartao: { bruto: r2(brutoCartao), taxaApp, taxaStone, extratoDias: diasCob, confiavel: diasCob >= 60 },
