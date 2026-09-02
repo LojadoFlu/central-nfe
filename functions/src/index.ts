@@ -1541,7 +1541,17 @@ export const stoneSalvarCredenciais = onCall(opcoes, async (req) => {
   const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin"]);
   const d = req.data ?? {};
   const empresaId = texto(d.empresaId, 80);
-  const stoneCode = texto(d.stoneCode, 40).replace(/\D/g, "");
+  // Uma conta pode ter MAIS DE UM StoneCode liquidando nela — a loja do clube
+  // tem dois, e foi só por isso que faltava dinheiro na conciliação.
+  const stoneCodes = [
+    ...new Set(
+      String(d.stoneCode ?? "")
+        .split(/[^\d]+/)
+        .map((x) => x.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const stoneCode = stoneCodes[0] ?? "";
   const chave = String(d.chave ?? "").trim();
   if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
   if (!stoneCode) throw new HttpsError("invalid-argument", "Informe o StoneCode (só números).");
@@ -1566,10 +1576,10 @@ export const stoneSalvarCredenciais = onCall(opcoes, async (req) => {
   }
 
   await db.collection("nfe_companies").doc(empresaId).set(
-    { stoneCode, temChaveStone: true, stoneAtualizadoEm: agoraISO() },
+    { stoneCode, stoneCodes, temChaveStone: true, stoneAtualizadoEm: agoraISO() },
     { merge: true },
   );
-  await auditar(uid, "stone.salvarCredenciais", { empresaId, stoneCode });
+  await auditar(uid, "stone.salvarCredenciais", { empresaId, stoneCodes });
   return { ok: true };
 });
 
@@ -1587,9 +1597,10 @@ export const stoneTestar = onCall(
     const empresaId = texto(req.data?.empresaId, 80);
     if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
     const emp = (await db.collection("nfe_companies").doc(empresaId).get()).data() as
-      | { stoneCode?: string; nomeFantasia?: string; razaoSocial?: string }
+      | { stoneCode?: string; stoneCodes?: string[]; nomeFantasia?: string; razaoSocial?: string }
       | undefined;
-    if (!emp?.stoneCode) throw new HttpsError("failed-precondition", "Empresa sem StoneCode.");
+    const alvo = texto(req.data?.stoneCode, 40) || emp?.stoneCodes?.[0] || emp?.stoneCode || "";
+    if (!alvo) throw new HttpsError("failed-precondition", "Empresa sem StoneCode.");
 
     // Padrão: ontem. O arquivo do dia corrente costuma não estar fechado.
     const dia =
@@ -1606,10 +1617,10 @@ export const stoneTestar = onCall(
     }
 
     const layout = String(req.data?.layout) === "XML2_2" ? "XML2_2" : "XML2_4";
-    const r = await baixarArquivoConciliacao({ stoneCode: emp.stoneCode, data: dia, chave, layout });
+    const r = await baixarArquivoConciliacao({ stoneCode: alvo, data: dia, chave, layout });
 
     await db.collection("stone_sync_logs").add({
-      empresaId, stoneCode: emp.stoneCode, dia, layout,
+      empresaId, stoneCode: alvo, dia, layout,
       httpStatus: r.httpStatus, bytes: r.bytes, ok: !!r.xml, at: agoraISO(), uid,
     });
 
@@ -1629,7 +1640,7 @@ export const stoneTestar = onCall(
 
     // O arquivo cru vai para o Storage, como o XML da NF-e: a Stone só permite
     // 7 consultas por hora do mesmo dia, então cada download tem de valer.
-    const caminho = `stone/${emp.stoneCode}/${String(dia).replace(/-/g, "")}.xml`;
+    const caminho = `stone/${alvo}/${String(dia).replace(/-/g, "")}.xml`;
     try {
       await getStorage()
         .bucket()
@@ -1674,9 +1685,10 @@ export const stoneSincronizar = onCall(
     const empresaId = texto(req.data?.empresaId, 80);
     if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
     const emp = (await db.collection("nfe_companies").doc(empresaId).get()).data() as
-      | { stoneCode?: string }
+      | { stoneCode?: string; stoneCodes?: string[] }
       | undefined;
-    if (!emp?.stoneCode) throw new HttpsError("failed-precondition", "Empresa sem StoneCode.");
+    const codigos = emp?.stoneCodes?.length ? emp.stoneCodes : emp?.stoneCode ? [emp.stoneCode] : [];
+    if (codigos.length === 0) throw new HttpsError("failed-precondition", "Empresa sem StoneCode.");
 
     const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
     const ontem = new Date(Date.now() - 86_400_000).toLocaleDateString("en-CA", {
@@ -1699,20 +1711,26 @@ export const stoneSincronizar = onCall(
       throw new HttpsError("failed-precondition", "Chave da Stone não configurada.");
     }
 
-    const r = await sincronizarStone({
-      empresaId,
-      stoneCode: emp.stoneCode,
-      chave,
-      dias: diasDoPeriodo(de, ate),
-    });
+    const dias = diasDoPeriodo(de, ate);
+    const partes = [];
+    for (const stoneCode of codigos) {
+      partes.push(await sincronizarStone({ empresaId, stoneCode, chave, dias }));
+    }
     await auditar(uid, "stone.sincronizar", {
       empresaId,
       de,
       ate,
-      parcelas: r.parcelas,
-      dias: r.dias.length,
+      codigos,
+      parcelas: partes.reduce((s, p) => s + p.parcelas, 0),
     });
-    return { ok: true, ...r };
+    return {
+      ok: true,
+      empresaId,
+      codigos,
+      parcelas: partes.reduce((s, p) => s + p.parcelas, 0),
+      dias: partes[0]?.dias ?? [],
+      porCodigo: partes.map((p) => ({ stoneCode: p.stoneCode, parcelas: p.parcelas })),
+    };
   },
 );
 
@@ -1737,21 +1755,20 @@ export const stoneSyncAgendado = onSchedule(
     });
     const empresas = await db.collection("nfe_companies").where("ativo", "==", true).get();
     for (const doc of empresas.docs) {
-      const emp = doc.data() as { stoneCode?: string };
-      if (!emp.stoneCode) continue;
+      const emp = doc.data() as { stoneCode?: string; stoneCodes?: string[] };
+      const codigos = emp.stoneCodes?.length ? emp.stoneCodes : emp.stoneCode ? [emp.stoneCode] : [];
+      if (codigos.length === 0) continue;
       try {
         const chave = await lerChaveStone(doc.id);
-        const r = await sincronizarStone({
-          empresaId: doc.id,
-          stoneCode: emp.stoneCode,
-          chave,
-          dias: [ontem],
-        });
-        logger.info("stone: dia sincronizado", {
-          empresaId: doc.id,
-          dia: ontem,
-          parcelas: r.parcelas,
-        });
+        for (const stoneCode of codigos) {
+          const r = await sincronizarStone({ empresaId: doc.id, stoneCode, chave, dias: [ontem] });
+          logger.info("stone: dia sincronizado", {
+            empresaId: doc.id,
+            stoneCode,
+            dia: ontem,
+            parcelas: r.parcelas,
+          });
+        }
       } catch (e) {
         logger.error("stone: falha na sincronização diária", {
           empresaId: doc.id,

@@ -124,20 +124,57 @@ export async function sincronizarStone(opc: {
 
     let batch = db.batch();
     let ops = 0;
-    for (const p of [...c.capturadas, ...c.liquidadas]) {
-      if (!p.transacaoKey) continue;
-      batch.set(
-        db.collection("stone_recebiveis").doc(idDaParcela(opc.stoneCode, p)),
-        docDaParcela(opc.empresaId, opc.stoneCode, ref, p),
-        { merge: true },
-      );
+    const grava = (id: string, dados: Record<string, unknown>) => {
+      batch.set(db.collection("stone_recebiveis").doc(id), dados, { merge: true });
       ops++;
       parcelas++;
-      if (ops >= 400) {
-        await batch.commit();
-        batch = db.batch();
-        ops = 0;
-      }
+    };
+    for (const p of [...c.capturadas, ...c.liquidadas]) {
+      if (!p.transacaoKey) continue;
+      grava(idDaParcela(opc.stoneCode, p), docDaParcela(opc.empresaId, opc.stoneCode, ref, p));
+      if (ops >= 400) { await batch.commit(); batch = db.batch(); ops = 0; }
+    }
+    // Cancelamento: a Stone devolve ao cliente e COBRA do lojista. Entra como
+    // valor negativo na data da cobrança — é a única coisa que tira dinheiro da
+    // conta, e sem ela a agenda fica acima do banco.
+    for (const x of c.cancelamentos) {
+      if (!x.transacaoKey || !x.cobrado) continue;
+      grava(`${opc.stoneCode}_${x.transacaoKey}_canc_${x.operationKey || ref}`, {
+        empresaId: opc.empresaId,
+        stoneCode: opc.stoneCode,
+        tipo: "cancelamento",
+        transacaoKey: x.transacaoKey,
+        bruto: -Math.abs(x.devolvido),
+        liquido: -Math.abs(x.cobrado),
+        taxa: 0,
+        pagamentoEm: x.cobradoEm,
+        canceladoEm: x.canceladoEm,
+        paymentId: x.paymentId,
+        liquidada: true,
+        arquivoLiquidacao: ref,
+        atualizadoEm: new Date().toISOString(),
+      });
+      if (ops >= 400) { await batch.commit(); batch = db.batch(); ops = 0; }
+    }
+    // Eventos (balanceamento de saldo, cobrança, ajuste). Costumam vir aos
+    // pares e se anular; guardados porque quando NÃO se anulam, explicam
+    // diferença.
+    for (const [i, e] of c.eventos.entries()) {
+      if (!e.valor) continue;
+      grava(`${opc.stoneCode}_evt_${ref}_${e.eventId ?? i}_${e.valor > 0 ? "c" : "d"}_${i}`, {
+        empresaId: opc.empresaId,
+        stoneCode: opc.stoneCode,
+        tipo: "evento",
+        descricao: e.descricao,
+        bruto: e.valor,
+        liquido: e.valor,
+        taxa: 0,
+        pagamentoEm: e.data,
+        liquidada: true,
+        arquivoLiquidacao: ref,
+        atualizadoEm: new Date().toISOString(),
+      });
+      if (ops >= 400) { await batch.commit(); batch = db.batch(); ops = 0; }
     }
     if (ops > 0) await batch.commit();
 
@@ -149,6 +186,8 @@ export async function sincronizarStone(opc: {
         caminho,
         capturadas: c.capturadas.length,
         liquidadas: c.liquidadas.length,
+        cancelamentos: c.cancelamentos.length,
+        eventos: c.eventos.length,
         trailer: c.trailer,
         atualizadoEm: new Date().toISOString(),
       },

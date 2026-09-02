@@ -53,10 +53,38 @@ export interface ParcelaStone {
   origem: "capturada" | "liquidada";
 }
 
+/**
+ * Cancelamento de uma venda já paga: a Stone devolve o dinheiro ao cliente e
+ * COBRA de volta do lojista, numa data própria. Sem isso a agenda fica acima do
+ * banco — o cancelamento é o único lançamento que tira dinheiro da conta.
+ */
+export interface CancelamentoStone {
+  transacaoKey: string;
+  operationKey: string;
+  canceladoEm: string | null;
+  /** O que foi devolvido ao portador. */
+  devolvido: number;
+  /** O que a Stone cobra do lojista — é este que sai da conta. */
+  cobrado: number;
+  cobradoEm: string | null;
+  paymentId: string | null;
+}
+
+/** Evento financeiro (balanceamento de saldo, cobrança, ajuste). */
+export interface EventoStone {
+  eventId: string | null;
+  descricao: string | null;
+  tipo: string | null;
+  valor: number;
+  data: string | null;
+}
+
 export interface ConciliacaoStone {
   cabecalho: CabecalhoStone;
   capturadas: ParcelaStone[];
   liquidadas: ParcelaStone[];
+  cancelamentos: CancelamentoStone[];
+  eventos: EventoStone[];
   trailer: Record<string, number>;
 }
 
@@ -141,6 +169,44 @@ function transacoesDe(xml: string, container: string, origem: ParcelaStone["orig
   return out;
 }
 
+function cancelamentosDe(xml: string): CancelamentoStone[] {
+  const out: CancelamentoStone[] = [];
+  for (const t of xml.match(/<Transaction>[\s\S]*?<\/Transaction>/g) ?? []) {
+    const chave = tag(t, "AcquirerTransactionKey") ?? "";
+    const bloco = t.match(/<Cancellations>([\s\S]*?)<\/Cancellations>/);
+    if (!bloco) continue;
+    for (const c of bloco[1].match(/<Cancellation>[\s\S]*?<\/Cancellation>/g) ?? []) {
+      const billing = c.match(/<Billing>([\s\S]*?)<\/Billing>/)?.[1] ?? "";
+      out.push({
+        transacaoKey: chave,
+        operationKey: tag(c, "OperationKey") ?? "",
+        canceladoEm: dataHoraDoArquivo(tag(c, "CancellationDateTime")),
+        devolvido: num(tag(c, "ReturnedAmount")),
+        cobrado: num(tag(billing, "ChargedAmount")),
+        cobradoEm: dataDoArquivo(tag(billing, "ChargeDate")),
+        paymentId: tag(c, "PaymentId"),
+      });
+    }
+  }
+  return out;
+}
+
+function eventosDe(xml: string): EventoStone[] {
+  const bloco = xml.match(/<FinancialEvents>([\s\S]*?)<\/FinancialEvents>/);
+  if (!bloco) return [];
+  const out: EventoStone[] = [];
+  for (const e of bloco[1].match(/<Event>[\s\S]*?<\/Event>/g) ?? []) {
+    out.push({
+      eventId: tag(e, "EventId"),
+      descricao: tag(e, "Description"),
+      tipo: tag(e, "Type"),
+      valor: num(tag(e, "Amount")),
+      data: dataDoArquivo(tag(e, "PrevisionPaymentDate")),
+    });
+  }
+  return out;
+}
+
 export function parseConciliacaoStone(xml: string): ConciliacaoStone {
   const head = bloco(xml, "Header") ?? "";
   const trailerXml = bloco(xml, "Trailer") ?? "";
@@ -158,6 +224,8 @@ export function parseConciliacaoStone(xml: string): ConciliacaoStone {
     },
     capturadas: transacoesDe(xml, "FinancialTransactions", "capturada"),
     liquidadas: transacoesDe(xml, "FinancialTransactionsAccounts", "liquidada"),
+    cancelamentos: cancelamentosDe(xml),
+    eventos: eventosDe(xml),
     trailer,
   };
 }

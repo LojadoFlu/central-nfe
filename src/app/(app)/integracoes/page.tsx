@@ -175,7 +175,10 @@ export default function IntegracoesPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Badge variant={emp.temChaveStone ? "success" : "neutral"}>
                         <CreditCard className="size-3" />
-                        Stone {emp.temChaveStone ? `· ${emp.stoneCode}` : "· não configurada"}
+                        Stone{" "}
+                        {emp.temChaveStone
+                          ? `· ${(emp.stoneCodes?.length ? emp.stoneCodes : [emp.stoneCode]).filter(Boolean).join(" · ")}`
+                          : "· não configurada"}
                       </Badge>
                       <Button
                         size="sm"
@@ -183,7 +186,11 @@ export default function IntegracoesPage() {
                         onClick={() => {
                           const abrindo = stoneAberto !== emp.id;
                           setStoneAberto(abrindo ? emp.id : null);
-                          setStoneCode(abrindo ? (emp.stoneCode ?? "") : "");
+                          setStoneCode(
+                            abrindo
+                              ? (emp.stoneCodes?.length ? emp.stoneCodes.join(", ") : (emp.stoneCode ?? ""))
+                              : "",
+                          );
                           setStoneChave("");
                         }}
                       >
@@ -205,7 +212,7 @@ export default function IntegracoesPage() {
                     {stoneAberto === emp.id ? (
                       <div className="mt-2 grid gap-2 sm:grid-cols-3">
                         <Input
-                          placeholder="StoneCode (só números)"
+                          placeholder="StoneCode (vários? separe por vírgula)"
                           value={stoneCode}
                           onChange={(e) => setStoneCode(e.target.value)}
                         />
@@ -225,7 +232,8 @@ export default function IntegracoesPage() {
                         </Button>
                         <p className="text-[11px] text-muted-foreground sm:col-span-3">
                           A chave vai direto para o cofre de segredos do servidor. Ela não fica no
-                          navegador nem pode ser lida de volta — para trocar, digite outra.
+                          navegador nem pode ser lida de volta — para trocar, digite outra. Se a
+                          conta recebe de mais de um StoneCode, liste todos separados por vírgula.
                         </p>
                       </div>
                     ) : null}
