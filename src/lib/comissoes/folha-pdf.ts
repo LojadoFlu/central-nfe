@@ -100,7 +100,11 @@ export interface FolhaDaLoja {
 
 const cent = (n: number) => Math.round(n * 100) / 100;
 
-/** Agrupa a apuração por loja, já com piso e gratificação de cada pessoa. */
+/**
+ * Agrupa a apuração por loja, já com piso e gratificação de cada pessoa.
+ * No papel essa coluna se chama "Premiação" — o campo mantém o nome de dentro
+ * de casa, que é o mesmo do dashboard e da conta em custo.ts.
+ */
 export function folhaPorLoja(
   linhas: LinhaApuracao[],
   /** Cargos cuja gratificação não vai para o relatório da loja. */
@@ -199,7 +203,7 @@ export function montarPdfPorLoja(
           "Funcionário",
           "Cargo",
           { content: "Piso", styles: direita },
-          { content: "Gratificação", styles: direita },
+          { content: "Premiação", styles: direita },
           { content: "Desconto", styles: direita },
           { content: "Faltas / Suspensões", styles: direita },
         ],
@@ -232,8 +236,8 @@ export function montarPdfPorLoja(
     const depois = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable?.finalY ?? y;
     doc.setFontSize(7.5).setTextColor(110).setCharSpace(0);
     const nota = apuracao.congelado
-      ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. O que a pessoa recebe é piso + gratificação - desconto. Faltas e suspensões em dias, sem desconto aqui.`
-      : "Competência ainda aberta — os valores podem mudar até o fechamento. O que a pessoa recebe é piso + gratificação - desconto. Faltas e suspensões em dias, sem desconto aqui.";
+      ? `Valores congelados no fechamento${apuracao.fechadoEm ? ` de ${formatarDataHora(apuracao.fechadoEm)}` : ""}. O que a pessoa recebe é piso + premiação - desconto. Faltas e suspensões em dias, sem desconto aqui.`
+      : "Competência ainda aberta — os valores podem mudar até o fechamento. O que a pessoa recebe é piso + premiação - desconto. Faltas e suspensões em dias, sem desconto aqui.";
     // Quebra na largura útil: escrita de uma vez só, a nota saía cortada na
     // margem direita.
     doc.text(
