@@ -3387,11 +3387,16 @@ export const conciliacao = onCall(
         a.previsto += r.liquido; a.bruto += r.bruto;
       }
     }
+    // PIX do PDV. O pagamento guarda o valor CHEIO da venda, e a Stone credita
+    // já com a taxa dela descontada — comparar bruto com líquido fazia o PIX
+    // parecer sempre faltando uns 0,27% no banco.
+    const taxasPix = await carregarTaxasApp();
+    const taxaPixLoja = taxaAppDe(taxasPix.get(empresaId), "PIX", 1);
     const sp = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of sp.docs) {
       const p = doc.data();
       if (settle(String(p.conciliaEmpresaId ?? p.empresaId ?? "")) !== empresaId || p.forma !== "pix") continue;
-      const v = Number(p.valor ?? 0);
+      const v = liquidoApp(Number(p.valor ?? 0), taxaPixLoja);
       previstoPix += v;
       bd(d10(p.dia)).previstoPix += v;
     }
