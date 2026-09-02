@@ -26,6 +26,12 @@ import {
 import { PdvnetClient } from "./pdvnet/client";
 import { amostraDeElemento, baixarArquivoConciliacao, estruturaDoXml } from "./stone/client";
 import { diasDoPeriodo, sincronizarStone } from "./stone/sincronizacao";
+import {
+  adquirenteDoBanco,
+  adquirenteDoPdv,
+  ordenarAdquirentes,
+  type Adquirente,
+} from "./financeiro/adquirentes";
 import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-vendas";
 import { sincronizarVendedores } from "./comissoes/vendedores";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./comissoes/grupos";
@@ -2721,13 +2727,31 @@ function liquidoApp(bruto: number, taxaPct: number): number {
  */
 async function recebiveisNoCredito(
   de: string, ate: string, daEmpresa: (cid: string) => boolean,
-): Promise<Array<{ empresaId: string; liquido: number; bruto: number; credito: string; dia: string; pix: boolean }>> {
+): Promise<
+  Array<{
+    empresaId: string;
+    liquido: number;
+    bruto: number;
+    credito: string;
+    dia: string;
+    pix: boolean;
+    descricao: string | null;
+  }>
+> {
   const ant = await carregarAntecipacao();
   const taxasApp = await carregarTaxasApp();
   const d10 = (s: unknown) => (s ? String(s).slice(0, 10) : "");
   const liqDe = (r: FirebaseFirestore.DocumentData, cid: string) =>
     liquidoApp(Number(r.valor ?? 0), taxaAppDe(taxasApp.get(cid), r.descricaoCartao, Number(r.parcela ?? 1) || 1));
-  const out: Array<{ empresaId: string; liquido: number; bruto: number; credito: string; dia: string; pix: boolean }>= [];
+  const out: Array<{
+    empresaId: string;
+    liquido: number;
+    bruto: number;
+    credito: string;
+    dia: string;
+    pix: boolean;
+    descricao: string | null;
+  }> = [];
   // LIGADA — pela data da venda (crédito D+1 / fds→seg)
   const qOn = await db.collection("card_receivables")
     .where("dia", ">=", menosDiasISO(de, 4)).where("dia", "<=", ate).get();
@@ -2741,7 +2765,7 @@ async function recebiveisNoCredito(
     if (ant.get(cid) === false && r.dataVencimento) continue;
     const credito = dataCreditoCartao(d10(r.dia));
     if (!credito || credito < de || credito > ate) continue;
-    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia), pix: ehRecebivelPix(r.descricaoCartao) });
+    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia), pix: ehRecebivelPix(r.descricaoCartao), descricao: (r.descricaoCartao as string) ?? null });
   }
   // DESLIGADA — pela data de vencimento real do recebível
   const qOff = await db.collection("card_receivables")
@@ -2752,7 +2776,7 @@ async function recebiveisNoCredito(
     if (!daEmpresa(cid) || ant.get(cid) !== false) continue;
     const credito = d10(r.dataVencimento);
     if (!credito || credito < de || credito > ate) continue;
-    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia), pix: ehRecebivelPix(r.descricaoCartao) });
+    out.push({ empresaId: cid, liquido: liqDe(r, cid), bruto: Number(r.valor ?? 0), credito, dia: d10(r.dia), pix: ehRecebivelPix(r.descricaoCartao), descricao: (r.descricaoCartao as string) ?? null });
   }
   return out;
 }
@@ -3297,6 +3321,24 @@ export const conciliacao = onCall(
     // BANCO (extrato) — por categoria, no período (pela data do lançamento)
     let bancoCartao = 0, bancoPix = 0, bancoOutrasEnt = 0, bancoSaidas = 0;
     let cartaoMinDia = "", cartaoMaxDia = ""; // cobertura do extrato de cartão no período
+    // Por adquirente: comparar o esperado de todos contra um extrato que pode
+    // ser de UM só transforma dinheiro de outra conta em "diferença".
+    interface PorAdq { banco: number; previsto: number; bruto: number; stone: number }
+    const adq = new Map<Adquirente, PorAdq>();
+    const ad = (nome: Adquirente): PorAdq => {
+      let x = adq.get(nome);
+      if (!x) { x = { banco: 0, previsto: 0, bruto: 0, stone: 0 }; adq.set(nome, x); }
+      return x;
+    };
+    // Instituição de cada conta da loja: numa conta de adquirente, o histórico
+    // genérico ("Recebimento vendas") só pode ser dela.
+    const contasSnap = await db.collection("bank_accounts").where("empresaId", "==", empresaId).get();
+    const orgPorConta = new Map<string, string>();
+    for (const d of contasSnap.docs) {
+      const a = d.data() as { contaId?: string; org?: string };
+      if (a.contaId) orgPorConta.set(String(a.contaId), String(a.org ?? ""));
+    }
+    const orgUnica = [...new Set([...orgPorConta.values()])];
     const bt = await db.collection("bank_transactions").where("empresaId", "==", empresaId).get();
     for (const doc of bt.docs) {
       const t = doc.data();
@@ -3305,6 +3347,8 @@ export const conciliacao = onCall(
       const v = Number(t.valor ?? 0);
       if (t.categoria === "cartao_credito" || t.categoria === "cartao_debito") {
         bancoCartao += v; bd(dia).bancoCartao += v;
+        const org = orgPorConta.get(String(t.contaId ?? "")) ?? (orgUnica.length === 1 ? orgUnica[0] : "");
+        ad(adquirenteDoBanco(t.memo as string | undefined, org)).banco += v;
         if (!cartaoMinDia || dia < cartaoMinDia) cartaoMinDia = dia;
         if (dia > cartaoMaxDia) cartaoMaxDia = dia;
       } else if (t.categoria === "pix_venda") { bancoPix += v; bd(dia).bancoPix += v; }
@@ -3320,7 +3364,11 @@ export const conciliacao = onCall(
     for (const r of rc) {
       // PIX da maquininha (STONE PIX) vem como recebível de cartão — vai pro PIX, não pro cartão.
       if (r.pix) { previstoPix += r.liquido; bd(r.credito).previstoPix += r.liquido; }
-      else { previstoCartao += r.liquido; brutoCartao += r.bruto; bd(r.credito).previstoCartao += r.liquido; }
+      else {
+        previstoCartao += r.liquido; brutoCartao += r.bruto; bd(r.credito).previstoCartao += r.liquido;
+        const a = ad(adquirenteDoPdv(r.descricao));
+        a.previsto += r.liquido; a.bruto += r.bruto;
+      }
     }
     const sp = await db.collection("sale_payments").where("dia", ">=", de).where("dia", "<=", ate).get();
     for (const doc of sp.docs) {
@@ -3404,6 +3452,7 @@ export const conciliacao = onCall(
       if (p.liquidada) stoneLiquidado += liq;
       if (p.antecipada) stoneAntecipadas++;
       bd(credito).stoneCartao += liq;
+      ad("Stone").stone += liq;
     }
     // Cobertura: sem os arquivos do período baixados, a coluna da Stone fica
     // vazia e pareceria divergência gigante. Melhor dizer que não há dado.
@@ -3455,6 +3504,18 @@ export const conciliacao = onCall(
       // extrato curto tem descasamento de datas da antecipação.
       taxaCartao: { bruto: r2(brutoCartao), taxaApp, taxaStone, extratoDias: diasCob, confiavel: diasCob >= 60 },
       porDia,
+      porAdquirente: ordenarAdquirentes(
+        [...adq.entries()].map(([adquirente, x]) => ({
+          adquirente,
+          banco: r2(x.banco),
+          previsto: r2(x.previsto),
+          bruto: r2(x.bruto),
+          // A agenda só existe para quem tem integração; nos outros fica nula
+          // em vez de zero, que se leria como "não recebeu nada".
+          agenda: adquirente === "Stone" && diasStone.length > 0 ? r2(x.stone) : null,
+          dif: r2(x.banco - x.previsto),
+        })),
+      ),
     };
   },
 );

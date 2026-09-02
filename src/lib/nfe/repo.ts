@@ -1048,6 +1048,16 @@ export interface Conciliacao {
   // `confiavel` = extrato cobre ≥ ~60 dias; abaixo disso o descasamento da antecipação distorce.
   taxaCartao?: { bruto: number; taxaApp: number; taxaStone: number; extratoDias: number; confiavel: boolean };
   porDia: DiaConc[];
+  /** Uma linha por adquirente: Stone com Stone, Mercado Pago com Mercado Pago. */
+  porAdquirente?: {
+    adquirente: string;
+    banco: number;
+    previsto: number;
+    bruto: number;
+    /** Agenda da adquirente; nulo em quem não tem integração. */
+    agenda: number | null;
+    dif: number;
+  }[];
 }
 export async function obterConciliacao(empresaId: string, de: string, ate: string): Promise<Conciliacao> {
   const { functions } = fb();
