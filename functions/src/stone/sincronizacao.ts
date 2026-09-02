@@ -38,12 +38,19 @@ function docDaParcela(
     empresaId,
     stoneCode,
     transacaoKey: p.transacaoKey,
-    iniciadorKey: p.iniciadorKey,
     parcela: p.parcela,
-    parcelas: p.parcelas,
     bruto: p.bruto,
     liquido: p.liquido,
     taxa: p.taxa,
+    atualizadoEm: new Date().toISOString(),
+  };
+  // Identificação da venda: maquininha, bandeira, cartão, autorização. O bloco
+  // da LIQUIDAÇÃO não repete esses campos — gravar o nulo dele por cima apagava
+  // o que a captura tinha trazido, e a conta ficava sem saber de qual máquina
+  // veio o dinheiro.
+  const somenteSeVier: Record<string, unknown> = {
+    iniciadorKey: p.iniciadorKey,
+    parcelas: p.parcelas,
     autorizacao: p.autorizacao,
     serialPos: p.serialPos,
     bandeiraId: p.bandeiraId,
@@ -53,8 +60,8 @@ function docDaParcela(
     capturadoEm: p.capturadoEm,
     /** Dia da venda, para casar com o que o PDV registrou. */
     diaVenda: (p.capturadoEm ?? p.autorizadoEm ?? "").slice(0, 10) || null,
-    atualizadoEm: new Date().toISOString(),
   };
+  for (const [k, v] of Object.entries(somenteSeVier)) if (v != null) doc[k] = v;
   if (p.origem === "capturada") {
     doc.previsaoPagamento = p.previsaoPagamento;
     doc.arquivoCaptura = referenceDate;
