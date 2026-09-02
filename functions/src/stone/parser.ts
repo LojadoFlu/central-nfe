@@ -173,7 +173,9 @@ function cancelamentosDe(xml: string): CancelamentoStone[] {
   const out: CancelamentoStone[] = [];
   for (const t of xml.match(/<Transaction>[\s\S]*?<\/Transaction>/g) ?? []) {
     const chave = tag(t, "AcquirerTransactionKey") ?? "";
-    const bloco = t.match(/<Cancellations>([\s\S]*?)<\/Cancellations>/);
+    // Cuidado: dentro de <Events> existe um CONTADOR com o mesmo nome
+    // (<Cancellations>0</Cancellations>). Só serve o bloco que contém a lista.
+    const bloco = t.match(/<Cancellations>\s*(<Cancellation>[\s\S]*?)<\/Cancellations>/);
     if (!bloco) continue;
     for (const c of bloco[1].match(/<Cancellation>[\s\S]*?<\/Cancellation>/g) ?? []) {
       const billing = c.match(/<Billing>([\s\S]*?)<\/Billing>/)?.[1] ?? "";

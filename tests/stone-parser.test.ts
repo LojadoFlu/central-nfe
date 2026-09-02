@@ -122,8 +122,10 @@ describe("dias do período", () => {
 describe("cancelamento e eventos financeiros", () => {
   // Trecho real do arquivo de 14/08: a venda foi cancelada e a Stone cobra o
   // valor de volta do lojista em 14/08.
+  // O <Events> no começo tem um CONTADOR chamado <Cancellations> — é a
+  // armadilha que fez o parser achar zero cancelamento no arquivo real.
   const XML = `<Conciliation><Header><StoneCode>146659798</StoneCode><ReferenceDate>20260814</ReferenceDate></Header>
-  <FinancialTransactionsAccounts><Transaction><AcquirerTransactionKey>32563692311703</AcquirerTransactionKey><CaptureLocalDateTime>20260813125536</CaptureLocalDateTime><Cancellations><Cancellation><OperationKey>jrrtbeqfgwa13cxrhgy6rwy9c</OperationKey><CancellationDateTime>20260813125624</CancellationDateTime><ReturnedAmount>724.980000</ReturnedAmount><Billing><ChargedAmount>704.028079</ChargedAmount><ChargeDate>20260814</ChargeDate><OriginalChargeDate>20260814</OriginalChargeDate></Billing><PaymentId>5886393599</PaymentId></Cancellation></Cancellations></Transaction></FinancialTransactionsAccounts>
+  <FinancialTransactionsAccounts><Transaction><Events><CancellationCharges>1</CancellationCharges><Cancellations>0</Cancellations><Captures>0</Captures></Events><AcquirerTransactionKey>32563692311703</AcquirerTransactionKey><CaptureLocalDateTime>20260813125536</CaptureLocalDateTime><Cancellations><Cancellation><OperationKey>jrrtbeqfgwa13cxrhgy6rwy9c</OperationKey><CancellationDateTime>20260813125624</CancellationDateTime><ReturnedAmount>724.980000</ReturnedAmount><Billing><ChargedAmount>704.028079</ChargedAmount><ChargeDate>20260814</ChargeDate><OriginalChargeDate>20260814</OriginalChargeDate></Billing><PaymentId>5886393599</PaymentId></Cancellation></Cancellations></Transaction></FinancialTransactionsAccounts>
   <FinancialEvents><Event><EventId>283875520</EventId><Description>CrossBalance</Description><Type>11</Type><PrevisionPaymentDate>20260814</PrevisionPaymentDate><Amount>-704.030000</Amount></Event><Event><EventId>283875520</EventId><Description>CrossBalance</Description><Type>11</Type><PrevisionPaymentDate>20260814</PrevisionPaymentDate><Amount>704.030000</Amount></Event></FinancialEvents>
   <Trailer><ChargedCancellationsQuantity>1</ChargedCancellationsQuantity></Trailer></Conciliation>`;
 
