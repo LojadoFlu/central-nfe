@@ -115,7 +115,9 @@ export default function ConciliacaoPage() {
                           <th className="py-1 px-2 font-medium">Stone (dia)</th>
                           <th className="py-1 px-2 font-medium">Banco acum.</th>
                           <th className="py-1 px-2 font-medium">Previsto acum.</th>
-                          <th className="py-1 pl-2 font-medium">Dif. acum.</th>
+                          <th className="py-1 pl-2 font-medium" title="Banco acumulado menos previsto acumulado: negativo = faltou no banco">
+                            Dif. acum. (banco − previsto)
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="tnum">
@@ -136,7 +138,13 @@ export default function ConciliacaoPage() {
                                 </td>
                                 <td className="py-1 px-2">{formatBRL(accB)}</td>
                                 <td className="py-1 px-2">{formatBRL(accP)}</td>
-                                <td className={`py-1 pl-2 font-semibold ${Math.abs(difAcum) > Math.max(200, accP * 0.03) ? "text-warning" : "text-muted-foreground"}`}>{difAcum >= 0 ? "+" : "−"}{formatBRL(Math.abs(difAcum))}</td>
+                                <td
+                                  className={`py-1 pl-2 font-semibold ${Math.abs(difAcum) > Math.max(200, accP * 0.03) ? "text-warning" : "text-muted-foreground"}`}
+                                  title={difAcum < 0 ? "faltou no banco" : "sobrou no banco"}
+                                >
+                                  {difAcum >= 0 ? "+" : "−"}
+                                  {formatBRL(Math.abs(difAcum))}
+                                </td>
                               </tr>
                             );
                           });
@@ -185,6 +193,18 @@ export default function ConciliacaoPage() {
 }
 
 /**
+ * O sinal sozinho não diz nada: "−1.200" tanto pode ser dinheiro faltando
+ * quanto sobrando, dependendo de quem está subtraindo quem. Aqui a direção vem
+ * escrita.
+ */
+function direcao(dif: number, tolerancia = 0.5): { texto: string; falta: boolean; ok: boolean } {
+  if (Math.abs(dif) <= tolerancia) return { texto: "Bate", falta: false, ok: true };
+  return dif < 0
+    ? { texto: "Faltou no banco", falta: true, ok: false }
+    : { texto: "Sobrou no banco", falta: false, ok: false };
+}
+
+/**
  * A agenda da adquirente é a terceira fonte — e a única que sabe a taxa
  * cobrada e a data em que o dinheiro caiu. As outras duas estimam: o PDV pela
  * taxa cadastrada, o banco pelo que apareceu no extrato.
@@ -207,7 +227,10 @@ function AgendaStone({
           {confere ? (
             <Badge variant="success"><CheckCircle2 className="mr-1 size-3.5" /> Bate com o banco</Badge>
           ) : (
-            <Badge variant="warning"><AlertTriangle className="mr-1 size-3.5" /> Diverge do banco</Badge>
+            <Badge variant="warning">
+              <AlertTriangle className="mr-1 size-3.5" />
+              {difBanco < 0 ? "Faltou no banco" : "Sobrou no banco"}
+            </Badge>
           )}
         </div>
         <div className="grid grid-cols-3 gap-1 divide-x divide-border/50 text-center">
@@ -231,13 +254,21 @@ function AgendaStone({
           </div>
           <div className="px-1">
             <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
-              Agenda × banco
+              {direcao(difBanco).texto}
             </p>
-            <p className={cn("mt-1 text-[0.95rem] font-bold tnum sm:text-base", Math.abs(difBanco) > 0.5 && "text-warning")}>
-              {formatBRL(difBanco)}
+            <p className={cn("mt-1 text-[0.95rem] font-bold tnum sm:text-base", !direcao(difBanco).ok && "text-warning")}>
+              {formatBRL(Math.abs(difBanco))}
             </p>
-            <p className="mt-1 text-[9px] text-muted-foreground">
-              agenda × PDV {formatBRL(difPrevisto)}
+            <p className="mt-1 text-[9px] leading-tight text-muted-foreground">
+              o banco recebeu{" "}
+              {difBanco < 0 ? "menos" : difBanco > 0 ? "mais" : "o mesmo"} que a agenda
+              {Math.abs(difPrevisto) > 0.5 ? (
+                <>
+                  <br />
+                  agenda {difPrevisto > 0 ? "acima" : "abaixo"} do PDV em{" "}
+                  {formatBRL(Math.abs(difPrevisto))}
+                </>
+              ) : null}
             </p>
           </div>
         </div>
@@ -282,9 +313,18 @@ function LinhaConc({ titulo, banco, previsto, dif, nota, manual = 0 }: { titulo:
             ) : null}
           </div>
           <div className="px-1">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">Diferença</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.05em] text-muted-foreground">
+              {direcao(dif, tolerancia).texto}
+            </p>
             <p className={cn("mt-1 text-[0.95rem] font-bold leading-none tracking-[-0.01em] tnum sm:text-base", confere ? "text-muted-foreground" : "text-warning")}>
-              {dif >= 0 ? "+" : "−"}{formatBRL(Math.abs(dif))}
+              {formatBRL(Math.abs(dif))}
+            </p>
+            <p className="mt-1 text-[9px] leading-tight text-muted-foreground">
+              {dif < 0
+                ? "o banco recebeu menos que o esperado"
+                : dif > 0
+                  ? "o banco recebeu mais que o esperado"
+                  : "banco e esperado batem"}
             </p>
           </div>
         </div>
