@@ -24,7 +24,8 @@ import {
   lerSegredoPdvnet,
 } from "./lib/secrets";
 import { PdvnetClient } from "./pdvnet/client";
-import { baixarArquivoConciliacao, estruturaDoXml } from "./stone/client";
+import { amostraDeElemento, baixarArquivoConciliacao, estruturaDoXml } from "./stone/client";
+import { diasDoPeriodo, sincronizarStone } from "./stone/sincronizacao";
 import { sincronizarVendas, materializarLojas } from "./pdvnet/sincronizar-vendas";
 import { sincronizarVendedores } from "./comissoes/vendedores";
 import { canonizar, canonizarLista, construirGrupos, type LojaBruta } from "./comissoes/grupos";
@@ -1620,7 +1621,18 @@ export const stoneTestar = onCall(
       return { ok: false, httpStatus: r.httpStatus, dia, dica, detalhe: r.erro?.slice(0, 200) ?? null };
     }
 
-    // Só o mapa da estrutura e uma amostra — nada do conteúdo é gravado ainda.
+    // O arquivo cru vai para o Storage, como o XML da NF-e: a Stone só permite
+    // 7 consultas por hora do mesmo dia, então cada download tem de valer.
+    const caminho = `stone/${emp.stoneCode}/${String(dia).replace(/-/g, "")}.xml`;
+    try {
+      await getStorage()
+        .bucket()
+        .file(caminho)
+        .save(Buffer.from(r.xml, "utf8"), { contentType: "application/xml", resumable: false });
+    } catch (e) {
+      logger.error("stone: falha ao guardar o arquivo", { erro: (e as Error).message });
+    }
+
     const estrutura = estruturaDoXml(r.xml).slice(0, 40);
     return {
       ok: true,
@@ -1629,9 +1641,72 @@ export const stoneTestar = onCall(
       layout,
       bytes: r.bytes,
       tamanhoXml: r.xml.length,
+      caminho,
       estrutura,
       amostra: r.xml.slice(0, 1500),
+      // Um exemplo inteiro de cada container que interessa, para escrever o
+      // parser contra o arquivo real (a doc pública não lista os campos).
+      exemplos: Object.fromEntries(
+        estrutura
+          .filter((e) => /transaction|event|payment|header|record|item/i.test(e.tag))
+          .slice(0, 8)
+          .map((e) => [e.tag, amostraDeElemento(r.xml!, e.tag, 1200)]),
+      ),
     };
+  },
+);
+
+/**
+ * Sincroniza os arquivos da Stone de um período e materializa a agenda de
+ * recebíveis. Idempotente: reprocessar o mesmo dia atualiza os mesmos
+ * registros.
+ */
+export const stoneSincronizar = onCall(
+  { ...opcoes, memory: "512MiB", timeoutSeconds: 540 },
+  async (req) => {
+    const { uid } = await exigirAcao(req, "integracoes.sincronizar", ["admin", "financeiro"]);
+    const empresaId = texto(req.data?.empresaId, 80);
+    if (!empresaId) throw new HttpsError("invalid-argument", "Selecione a empresa.");
+    const emp = (await db.collection("nfe_companies").doc(empresaId).get()).data() as
+      | { stoneCode?: string }
+      | undefined;
+    if (!emp?.stoneCode) throw new HttpsError("failed-precondition", "Empresa sem StoneCode.");
+
+    const hoje = new Date().toLocaleDateString("en-CA", { timeZone: "America/Sao_Paulo" });
+    const ontem = new Date(Date.now() - 86_400_000).toLocaleDateString("en-CA", {
+      timeZone: "America/Sao_Paulo",
+    });
+    const de = texto(req.data?.de, 10) || ontem;
+    const ate = texto(req.data?.ate, 10) || ontem;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(de) || !/^\d{4}-\d{2}-\d{2}$/.test(ate) || de > ate) {
+      throw new HttpsError("invalid-argument", "Período inválido.");
+    }
+    if (ate >= hoje) {
+      // O arquivo do dia corrente ainda não fechou; pedir só gasta o limite.
+      throw new HttpsError("invalid-argument", "O arquivo do dia só fica pronto no dia seguinte.");
+    }
+
+    let chave: string;
+    try {
+      chave = await lerChaveStone(empresaId);
+    } catch {
+      throw new HttpsError("failed-precondition", "Chave da Stone não configurada.");
+    }
+
+    const r = await sincronizarStone({
+      empresaId,
+      stoneCode: emp.stoneCode,
+      chave,
+      dias: diasDoPeriodo(de, ate),
+    });
+    await auditar(uid, "stone.sincronizar", {
+      empresaId,
+      de,
+      ate,
+      parcelas: r.parcelas,
+      dias: r.dias.length,
+    });
+    return { ok: true, ...r };
   },
 );
 

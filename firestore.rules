@@ -215,6 +215,20 @@ service cloud.firestore {
       allow read: if ativo();
       allow write: if false;
     }
+    // Stone — agenda de recebíveis da adquirente e estado da importação.
+    match /stone_recebiveis/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+    match /stone_sync_state/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+    match /stone_sync_logs/{id} {
+      allow read: if ativo();
+      allow write: if false;
+    }
+
     // Configurações gerais (inclui flag/baseUrl do PDVnet — sem segredos).
     match /configuracoes/{id} {
       allow read: if isAuth();

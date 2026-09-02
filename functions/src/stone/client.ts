@@ -95,3 +95,14 @@ export function estruturaDoXml(xml: string): { tag: string; qtd: number }[] {
     .map(([tag, qtd]) => ({ tag, qtd }))
     .sort((a, b) => b.qtd - a.qtd || a.tag.localeCompare(b.tag));
 }
+
+/**
+ * Primeira ocorrência inteira de um elemento, com o conteúdo. Serve para ver um
+ * exemplo real de cada container antes de escrever o parser.
+ */
+export function amostraDeElemento(xml: string, nome: string, max = 1800): string | null {
+  const re = new RegExp(`<${nome}\\b[^>]*>[\\s\\S]*?</${nome}>`);
+  const m = xml.match(re);
+  if (!m) return null;
+  return m[0].slice(0, max);
+}
